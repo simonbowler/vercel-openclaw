@@ -14,6 +14,8 @@ import {
   buildImageGenScript,
   buildImageGenSkill,
   OPENCLAW_AI_GATEWAY_API_KEY_PATH,
+  OPENCLAW_BUILTIN_IMAGE_GEN_SCRIPT_PATH,
+  OPENCLAW_BUILTIN_IMAGE_GEN_SKILL_PATH,
   OPENCLAW_CONFIG_PATH,
   OPENCLAW_IMAGE_GEN_SCRIPT_PATH,
   OPENCLAW_IMAGE_GEN_SKILL_PATH,
@@ -500,6 +502,14 @@ async function restoreSandboxFromSnapshot(origin: string): Promise<SingleMeta> {
       },
       {
         path: OPENCLAW_IMAGE_GEN_SCRIPT_PATH,
+        content: Buffer.from(buildImageGenScript()),
+      },
+      {
+        path: OPENCLAW_BUILTIN_IMAGE_GEN_SKILL_PATH,
+        content: Buffer.from(buildImageGenSkill()),
+      },
+      {
+        path: OPENCLAW_BUILTIN_IMAGE_GEN_SCRIPT_PATH,
         content: Buffer.from(buildImageGenScript()),
       },
     ]);

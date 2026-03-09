@@ -8,6 +8,14 @@ export const OPENCLAW_AI_GATEWAY_API_KEY_PATH = `${OPENCLAW_STATE_DIR}/.ai-gatew
 export const OPENCLAW_FORCE_PAIR_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/.force-pair.mjs`;
 export const OPENCLAW_IMAGE_GEN_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/openai-image-gen/SKILL.md`;
 export const OPENCLAW_IMAGE_GEN_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/skills/openai-image-gen/scripts/gen.mjs`;
+
+// The built-in skill shipped with the openclaw npm package uses a Python
+// gen.py script that requires a direct sk-* OPENAI_API_KEY.  We overwrite
+// it so that even if OpenClaw loads the built-in before the user skills
+// dir, it picks up our AI-Gateway-compatible version.
+const OPENCLAW_PKG_DIR = "/home/vercel-sandbox/.global/npm/lib/node_modules/openclaw";
+export const OPENCLAW_BUILTIN_IMAGE_GEN_SKILL_PATH = `${OPENCLAW_PKG_DIR}/skills/openai-image-gen/SKILL.md`;
+export const OPENCLAW_BUILTIN_IMAGE_GEN_SCRIPT_PATH = `${OPENCLAW_PKG_DIR}/skills/openai-image-gen/scripts/gen.mjs`;
 export const OPENCLAW_LOG_FILE = "/tmp/openclaw.log";
 export const OPENCLAW_STARTUP_SCRIPT_PATH = "/vercel/sandbox/.on-restore.sh";
 

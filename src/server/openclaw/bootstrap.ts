@@ -12,6 +12,8 @@ import {
   OPENCLAW_CONFIG_PATH,
   OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
   OPENCLAW_GATEWAY_TOKEN_PATH,
+  OPENCLAW_BUILTIN_IMAGE_GEN_SCRIPT_PATH,
+  OPENCLAW_BUILTIN_IMAGE_GEN_SKILL_PATH,
   OPENCLAW_IMAGE_GEN_SCRIPT_PATH,
   OPENCLAW_IMAGE_GEN_SKILL_PATH,
   OPENCLAW_STARTUP_SCRIPT_PATH,
@@ -65,6 +67,14 @@ export async function setupOpenClaw(
     },
     {
       path: OPENCLAW_IMAGE_GEN_SCRIPT_PATH,
+      content: Buffer.from(buildImageGenScript()),
+    },
+    {
+      path: OPENCLAW_BUILTIN_IMAGE_GEN_SKILL_PATH,
+      content: Buffer.from(buildImageGenSkill()),
+    },
+    {
+      path: OPENCLAW_BUILTIN_IMAGE_GEN_SCRIPT_PATH,
       content: Buffer.from(buildImageGenScript()),
     },
   ]);
