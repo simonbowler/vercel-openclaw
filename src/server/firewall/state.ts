@@ -21,20 +21,20 @@ export async function setFirewallMode(
   mode: FirewallState["mode"],
 ): Promise<FirewallState> {
   logInfo("firewall.mode_change", { to: mode });
-  return (
-    await mutateMeta((meta) => {
-      if (mode === "enforcing" && meta.firewall.allowlist.length === 0) {
-        throw new ApiError(
-          409,
-          "FIREWALL_ALLOWLIST_EMPTY",
-          "Cannot enable enforcing mode with an empty allowlist.",
-        );
-      }
+  const meta = await mutateMeta((meta) => {
+    if (mode === "enforcing" && meta.firewall.allowlist.length === 0) {
+      throw new ApiError(
+        409,
+        "FIREWALL_ALLOWLIST_EMPTY",
+        "Cannot enable enforcing mode with an empty allowlist.",
+      );
+    }
 
-      meta.firewall.mode = mode;
-      meta.firewall.updatedAt = Date.now();
-    })
-  ).firewall;
+    meta.firewall.mode = mode;
+    meta.firewall.updatedAt = Date.now();
+  });
+  await syncFirewallPolicyAfterMutation("setFirewallMode");
+  return meta.firewall;
 }
 
 export async function approveDomains(domains: string[]): Promise<FirewallState> {
@@ -44,30 +44,30 @@ export async function approveDomains(domains: string[]): Promise<FirewallState> 
     throw new ApiError(400, "INVALID_DOMAINS", "One or more domains are invalid.");
   }
 
-  return (
-    await mutateMeta((meta) => {
-      const now = Date.now();
-      const allowlist = new Set(meta.firewall.allowlist);
-      for (const domain of normalized.valid) {
-        allowlist.add(domain);
-      }
-      meta.firewall.allowlist = [...allowlist].sort((left, right) =>
-        left.localeCompare(right),
-      );
-      meta.firewall.learned = meta.firewall.learned.filter(
-        (entry) => !allowlist.has(entry.domain),
-      );
-      meta.firewall.updatedAt = now;
-      prependFirewallEvent(meta.firewall, {
-        id: eventId(),
-        timestamp: now,
-        action: "allowlist_updated",
-        decision: "allowed",
-        reason: `Approved ${normalized.valid.length} domain(s)`,
-        source: "api",
-      });
-    })
-  ).firewall;
+  const meta = await mutateMeta((meta) => {
+    const now = Date.now();
+    const allowlist = new Set(meta.firewall.allowlist);
+    for (const domain of normalized.valid) {
+      allowlist.add(domain);
+    }
+    meta.firewall.allowlist = [...allowlist].sort((left, right) =>
+      left.localeCompare(right),
+    );
+    meta.firewall.learned = meta.firewall.learned.filter(
+      (entry) => !allowlist.has(entry.domain),
+    );
+    meta.firewall.updatedAt = now;
+    prependFirewallEvent(meta.firewall, {
+      id: eventId(),
+      timestamp: now,
+      action: "allowlist_updated",
+      decision: "allowed",
+      reason: `Approved ${normalized.valid.length} domain(s)`,
+      source: "api",
+    });
+  });
+  await syncFirewallPolicyAfterMutation("approveDomains");
+  return meta.firewall;
 }
 
 export async function removeDomains(domains: string[]): Promise<FirewallState> {
@@ -76,56 +76,72 @@ export async function removeDomains(domains: string[]): Promise<FirewallState> {
     throw new ApiError(400, "INVALID_DOMAINS", "One or more domains are invalid.");
   }
 
-  return (
-    await mutateMeta((meta) => {
-      const now = Date.now();
-      const removals = new Set(normalized.valid);
-      meta.firewall.allowlist = meta.firewall.allowlist.filter(
-        (domain) => !removals.has(domain),
-      );
-      meta.firewall.updatedAt = now;
-      prependFirewallEvent(meta.firewall, {
-        id: eventId(),
-        timestamp: now,
-        action: "allowlist_updated",
-        decision: "allowed",
-        reason: `Removed ${normalized.valid.length} domain(s)`,
-        source: "api",
-      });
-    })
-  ).firewall;
+  const meta = await mutateMeta((meta) => {
+    const now = Date.now();
+    const removals = new Set(normalized.valid);
+    meta.firewall.allowlist = meta.firewall.allowlist.filter(
+      (domain) => !removals.has(domain),
+    );
+    meta.firewall.updatedAt = now;
+    prependFirewallEvent(meta.firewall, {
+      id: eventId(),
+      timestamp: now,
+      action: "allowlist_updated",
+      decision: "allowed",
+      reason: `Removed ${normalized.valid.length} domain(s)`,
+      source: "api",
+    });
+  });
+  await syncFirewallPolicyAfterMutation("removeDomains");
+  return meta.firewall;
 }
 
 export async function promoteLearnedDomainsToEnforcing(): Promise<FirewallState> {
-  return (
-    await mutateMeta((meta) => {
-      const learnedNames = meta.firewall.learned.map((entry) => entry.domain);
-      const nextAllowlist = new Set([...meta.firewall.allowlist, ...learnedNames]);
-      if (nextAllowlist.size === 0) {
-        throw new ApiError(
-          409,
-          "FIREWALL_ALLOWLIST_EMPTY",
-          "Cannot enable enforcing mode with an empty allowlist.",
-        );
-      }
-
-      const now = Date.now();
-      meta.firewall.allowlist = [...nextAllowlist].sort((left, right) =>
-        left.localeCompare(right),
+  const meta = await mutateMeta((meta) => {
+    const learnedNames = meta.firewall.learned.map((entry) => entry.domain);
+    const nextAllowlist = new Set([...meta.firewall.allowlist, ...learnedNames]);
+    if (nextAllowlist.size === 0) {
+      throw new ApiError(
+        409,
+        "FIREWALL_ALLOWLIST_EMPTY",
+        "Cannot enable enforcing mode with an empty allowlist.",
       );
-      meta.firewall.learned = [];
-      meta.firewall.mode = "enforcing";
-      meta.firewall.updatedAt = now;
-      prependFirewallEvent(meta.firewall, {
-        id: eventId(),
-        timestamp: now,
-        action: "mode_updated",
-        decision: "allowed",
-        reason: `Promoted ${learnedNames.length} learned domain(s) to enforcing`,
-        source: "api",
-      });
-    })
-  ).firewall;
+    }
+
+    const now = Date.now();
+    meta.firewall.allowlist = [...nextAllowlist].sort((left, right) =>
+      left.localeCompare(right),
+    );
+    meta.firewall.learned = [];
+    meta.firewall.mode = "enforcing";
+    meta.firewall.updatedAt = now;
+    prependFirewallEvent(meta.firewall, {
+      id: eventId(),
+      timestamp: now,
+      action: "mode_updated",
+      decision: "allowed",
+      reason: `Promoted ${learnedNames.length} learned domain(s) to enforcing`,
+      source: "api",
+    });
+  });
+  await syncFirewallPolicyAfterMutation("promoteLearnedDomainsToEnforcing");
+  return meta.firewall;
+}
+
+async function syncFirewallPolicyAfterMutation(mutation: string): Promise<void> {
+  try {
+    await syncFirewallPolicyIfRunning();
+  } catch (error) {
+    logWarn("firewall.sync_failed_after_mutation", {
+      mutation,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw new ApiError(
+      502,
+      "FIREWALL_SYNC_FAILED",
+      "Failed to sync firewall policy to the running sandbox.",
+    );
+  }
 }
 
 export async function syncFirewallPolicyIfRunning(): Promise<{
