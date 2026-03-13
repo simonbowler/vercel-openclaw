@@ -23,6 +23,7 @@ import {
   firewallRead,
   channelsSummary,
   sshEcho,
+  chatCompletions,
   ensureRunning,
   snapshotStop,
   restoreFromSnapshot,
@@ -134,6 +135,10 @@ function buildPhaseList(destructive: boolean): PhaseFn[] {
     (b, _t, r) => firewallRead(b, { requestTimeoutMs: r }),
     (b, _t, r) => channelsSummary(b, { requestTimeoutMs: r }),
     (b, _t, r) => sshEcho(b, { requestTimeoutMs: r }),
+    // chatCompletions needs a running sandbox — only runs in safe mode if
+    // the sandbox happens to be running already. Gracefully fails with
+    // SANDBOX_NOT_READY (202) if not.
+    (b, _t, _r) => chatCompletions(b, { requestTimeoutMs: 60_000 }),
   ];
 
   if (!destructive) return safe;
@@ -158,6 +163,8 @@ function buildPhaseList(destructive: boolean): PhaseFn[] {
       return result;
     },
     (b, t, r) => restoreFromSnapshot(b, capturedSnapshotId, t, { requestTimeoutMs: r }),
+    // Verify the restored sandbox can actually answer a question
+    (b, _t, _r) => chatCompletions(b, { requestTimeoutMs: 60_000 }),
   ];
 
   return [...safe, ...destroy];

@@ -523,6 +523,117 @@ export async function sshEcho(baseUrl: string, opts?: PhaseOptions): Promise<Pha
   }
 }
 
+export async function chatCompletions(baseUrl: string, opts?: PhaseOptions): Promise<PhaseResult> {
+  const phase = "chatCompletions";
+  const endpoint = "/gateway/v1/chat/completions";
+  const timeout = opts?.requestTimeoutMs ?? 60_000; // LLM responses can be slow
+  try {
+    const hdrs = {
+      ...authHeaders({ mutation: true }),
+      "Content-Type": "application/json",
+    };
+    const body = JSON.stringify({
+      model: "default",
+      messages: [{ role: "user", content: "Reply with exactly: smoke-ok" }],
+      stream: false,
+    });
+
+    const [res, ms] = await timed(() =>
+      fetchWithTimeout(url(baseUrl, endpoint), { method: "POST", headers: hdrs, body }, timeout),
+    );
+
+    const bodyText = await res.text();
+
+    // Check for auth/redirect issues first
+    const classified = classifyResponse(res.status, bodyText, res.headers);
+    if (classified) {
+      log(phase, "classified", { errorCode: classified.errorCode, httpStatus: res.status });
+      return {
+        phase, passed: false, durationMs: ms, endpoint,
+        httpStatus: res.status, error: classified.error, errorCode: classified.errorCode, hint: classified.hint,
+      };
+    }
+
+    // 202 = waiting page (sandbox not ready yet)
+    if (res.status === 202) {
+      log(phase, "waiting", { status: 202 });
+      return {
+        phase, passed: false, durationMs: ms, endpoint,
+        httpStatus: 202,
+        error: "Sandbox not ready — gateway returned waiting page",
+        errorCode: "SANDBOX_NOT_READY",
+        hint: "Run with --destructive to ensure the sandbox is running first, or wait for bootstrap to complete",
+      };
+    }
+
+    if (!res.ok) {
+      log(phase, "failed", { status: res.status, body: bodyText.slice(0, 500) });
+      return failFromHttp(phase, endpoint, res.status, `HTTP ${res.status}`, {
+        durationMs: ms,
+        detail: { bodyPreview: bodyText.slice(0, 500) },
+      });
+    }
+
+    // Try to parse as OpenAI-compatible response
+    const parsed = parseJsonBody(bodyText);
+    if (!parsed.ok) {
+      // Non-JSON response — could be streaming or HTML
+      const hasContent = bodyText.length > 10;
+      log(phase, hasContent ? "non-json-response" : "empty-response", { bodyLength: bodyText.length });
+      return {
+        phase,
+        passed: hasContent, // pass if we got any substantial response
+        durationMs: ms,
+        endpoint,
+        detail: {
+          bodyLength: bodyText.length,
+          bodyPreview: bodyText.slice(0, 200),
+          format: "non-json",
+        },
+        ...(hasContent ? {} : {
+          error: "Empty response from completions endpoint",
+          errorCode: "EMPTY_RESPONSE",
+          hint: "OpenClaw may not be fully bootstrapped or the model is not responding",
+        }),
+      };
+    }
+
+    const data = parsed.data;
+
+    // OpenAI format: { choices: [{ message: { content: "..." } }] }
+    const choices = data.choices as Array<{ message?: { content?: string } }> | undefined;
+    const content = choices?.[0]?.message?.content ?? "";
+    const hasContent = content.length > 0;
+
+    log(phase, hasContent ? "ok" : "empty-content", {
+      status: res.status,
+      contentLength: content.length,
+      contentPreview: content.slice(0, 200),
+      model: data.model,
+    });
+
+    return {
+      phase,
+      passed: hasContent,
+      durationMs: ms,
+      endpoint,
+      detail: {
+        model: data.model,
+        contentLength: content.length,
+        contentPreview: content.slice(0, 200),
+        ...(data.usage ? { usage: data.usage } : {}),
+      },
+      ...(hasContent ? {} : {
+        error: "Completions response had no content",
+        errorCode: "EMPTY_CONTENT",
+        hint: "The endpoint responded with valid JSON but the assistant message was empty",
+      }),
+    };
+  } catch (err) {
+    return failFromError(phase, endpoint, err);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Destructive phases (opt-in)
 // ---------------------------------------------------------------------------

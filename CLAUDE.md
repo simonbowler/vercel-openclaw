@@ -64,8 +64,8 @@ Output:
 - Human-readable progress to stderr (suppressed by `--json-only`)
 - Exit code 0 (all pass) or 1 (any fail)
 
-Safe phases (always run): `health`, `status`, `gatewayProbe`, `firewallRead`, `channelsSummary`, `sshEcho`.
-Destructive phases (opt-in): `ensureRunning`, `snapshotStop`, `restoreFromSnapshot`.
+Safe phases (always run): `health`, `status`, `gatewayProbe`, `firewallRead`, `channelsSummary`, `sshEcho`, `chatCompletions`.
+Destructive phases (opt-in): `ensureRunning`, `snapshotStop`, `restoreFromSnapshot`, `chatCompletions` (post-restore).
 
 ## Architecture
 
