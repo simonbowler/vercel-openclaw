@@ -20,6 +20,9 @@ export type SnapshotResult = {
 };
 
 export type CreateParams = {
+  ports?: number[];
+  timeout?: number;
+  resources?: { vcpus: number };
   source?: { type: "snapshot"; snapshotId: string };
   env?: Record<string, string>;
 };
@@ -53,14 +56,12 @@ export interface SandboxController {
 }
 
 // ---------------------------------------------------------------------------
-// Real implementation — wraps @vercel/sandbox v2
+// Real implementation — wraps @vercel/sandbox
 // ---------------------------------------------------------------------------
 
 function wrapSandbox(sandbox: Sandbox): SandboxHandle {
   return {
-    // v2 renamed sandboxId to name; our interface keeps sandboxId for
-    // compatibility with the rest of the codebase and test harness.
-    sandboxId: sandbox.name,
+    sandboxId: sandbox.sandboxId,
     async runCommand(command, args) {
       const result = await sandbox.runCommand(command, args ?? []);
       return {
@@ -90,13 +91,13 @@ function wrapSandbox(sandbox: Sandbox): SandboxHandle {
 const realController: SandboxController = {
   async create(params) {
     const { Sandbox: SandboxClass } = await import("@vercel/sandbox");
+    // CreateParams is a simplified subset — cast to satisfy the SDK's union type.
     const sandbox = await SandboxClass.create(params as Parameters<typeof SandboxClass.create>[0]);
     return wrapSandbox(sandbox);
   },
   async get(params) {
     const { Sandbox: SandboxClass } = await import("@vercel/sandbox");
-    // v2 renamed sandboxId to name in GetSandboxParams.
-    const sandbox = await SandboxClass.get({ name: params.sandboxId });
+    const sandbox = await SandboxClass.get(params);
     return wrapSandbox(sandbox);
   },
 };

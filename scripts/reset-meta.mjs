@@ -1,0 +1,34 @@
+import { Redis } from "@upstash/redis";
+import { readFileSync } from "fs";
+
+const lines = readFileSync(".env.local", "utf8").split("\n");
+const env = {};
+for (const l of lines) {
+  if (l.startsWith("#") || !l.includes("=")) continue;
+  const i = l.indexOf("=");
+  env[l.slice(0, i).trim()] = l.slice(i + 1).trim().replace(/^"|"$/g, "");
+}
+
+const redis = new Redis({ url: env.KV_REST_API_URL, token: env.KV_REST_API_TOKEN });
+const raw = await redis.get("openclaw-single:meta");
+console.log("Raw type:", typeof raw);
+console.log("Raw value (first 200):", JSON.stringify(raw).slice(0, 200));
+
+const meta = typeof raw === "string" ? JSON.parse(raw) : raw;
+if (!meta) {
+  console.log("No metadata found — nothing to reset");
+  process.exit(0);
+}
+
+console.log("Current sandboxId:", meta.sandboxId);
+console.log("Current status:", meta.status);
+console.log("Current snapshotId:", meta.snapshotId);
+
+meta.sandboxId = null;
+meta.snapshotId = null;
+meta.status = "uninitialized";
+meta.lastError = null;
+meta.portUrls = {};
+
+await redis.set("openclaw-single:meta", JSON.stringify(meta));
+console.log("Reset to stopped — will create fresh v2 sandbox on next ensure");

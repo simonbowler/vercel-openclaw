@@ -84,7 +84,7 @@ test("controller: FakeSandboxHandle conforms to SandboxHandle interface", async 
 
 test("controller: FakeSandboxController.create tracks events", async () => {
   const controller = new FakeSandboxController();
-  const handle = await controller.create({});
+  const handle = await controller.create({ ports: [3000] });
 
   assert.ok(handle.sandboxId.startsWith("sbx-fake-"));
   assert.equal(controller.created.length, 1);
@@ -95,6 +95,7 @@ test("controller: FakeSandboxController.create tracks events", async () => {
 test("controller: FakeSandboxController.create with snapshot source records restore event", async () => {
   const controller = new FakeSandboxController();
   const params: CreateParams = {
+    ports: [3000],
     source: { type: "snapshot", snapshotId: "snap-123" },
   };
   await controller.create(params);
@@ -175,7 +176,7 @@ test("controller: FakeSandboxController.eventsOfKind filters correctly", async (
 
 test("controller: type exports are accessible", () => {
   // Compile-time check — these types should be importable
-  const _params: CreateParams = {};
+  const _params: CreateParams = { ports: [3000] };
   const _result: CommandResult = { exitCode: 0, output: async () => "" };
   const _snap: SnapshotResult = { snapshotId: "snap-1" };
   assert.ok(true, "type exports are accessible");

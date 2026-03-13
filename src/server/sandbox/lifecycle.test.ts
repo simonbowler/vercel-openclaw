@@ -199,7 +199,7 @@ async function withTestEnv(
 
 test("FakeSandboxController implements the SandboxController interface", async () => {
   const fake = new FakeSandboxController();
-  const handle = await fake.create({});
+  const handle = await fake.create({ ports: [3000], timeout: 60_000 });
 
   assert.ok(handle.sandboxId.startsWith("sbx-fake-"));
 

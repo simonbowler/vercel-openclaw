@@ -32,6 +32,7 @@ import {
 } from "@/server/store/store";
 
 const OPENCLAW_PORT = 3000;
+const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000;
 const SANDBOX_PORTS = [OPENCLAW_PORT];
 const EXTEND_TIMEOUT_MS = 15 * 60 * 1000;
 const ACCESS_TOUCH_THROTTLE_MS = 30_000;
@@ -417,6 +418,9 @@ async function createAndBootstrapSandbox(origin: string): Promise<SingleMeta> {
     });
 
     const sandbox = await getSandboxController().create({
+      ports: SANDBOX_PORTS,
+      timeout: DEFAULT_TIMEOUT_MS,
+      resources: { vcpus: 1 },
       ...(await buildRuntimeEnv()),
     });
 
@@ -467,6 +471,9 @@ async function restoreSandboxFromSnapshot(origin: string): Promise<SingleMeta> {
     });
 
     const sandbox = await getSandboxController().create({
+      ports: SANDBOX_PORTS,
+      timeout: DEFAULT_TIMEOUT_MS,
+      resources: { vcpus: 1 },
       source: {
         type: "snapshot",
         snapshotId: current.snapshotId,
