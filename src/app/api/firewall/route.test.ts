@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { withHarness } from "@/test-utils/harness";
 import {
   _resetStoreForTesting,
   mutateMeta,
@@ -177,6 +178,32 @@ test("PUT /api/firewall: transitions firewall mode with CSRF", async () => {
   });
 });
 
+test("PUT /api/firewall: syncs sandbox policy exactly once for a mode change", async () => {
+  await withHarness(async (h) => {
+    await h.mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sandbox-123";
+    });
+
+    const route = getFirewallRoute();
+    const before = h.controller.eventsOfKind("update_network_policy").length;
+    const request = buildAuthPutRequest(
+      "/api/firewall",
+      JSON.stringify({ mode: "learning" }),
+    );
+    const result = await callRoute(route.PUT!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as { firewall: { mode: string } };
+    assert.equal(body.firewall.mode, "learning");
+    assert.equal(
+      h.controller.eventsOfKind("update_network_policy").length - before,
+      1,
+      "expected exactly one sandbox policy update for a mode change",
+    );
+  });
+});
+
 test("PUT /api/firewall: rejects invalid mode with 400", async () => {
   await withTestEnv(async () => {
     const route = getFirewallRoute();
@@ -193,15 +220,17 @@ test("PUT /api/firewall: rejects invalid mode with 400", async () => {
 });
 
 test("PUT /api/firewall: same-mode transition is idempotent (no mutation)", async () => {
-  await withTestEnv(async () => {
-    // Set initial mode to learning
-    await mutateMeta((meta) => {
+  await withHarness(async (h) => {
+    await h.mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sandbox-123";
       meta.firewall.mode = "learning";
       meta.firewall.learningStartedAt = 5000;
       meta.firewall.commandsObserved = 10;
     });
 
     const route = getFirewallRoute();
+    const before = h.controller.eventsOfKind("update_network_policy").length;
     const request = buildAuthPutRequest(
       "/api/firewall",
       JSON.stringify({ mode: "learning" }),
@@ -214,6 +243,11 @@ test("PUT /api/firewall: same-mode transition is idempotent (no mutation)", asyn
     // learningStartedAt and commandsObserved should be preserved, not reset
     assert.equal(body.firewall.learningStartedAt, 5000);
     assert.equal(body.firewall.commandsObserved, 10);
+    assert.equal(
+      h.controller.eventsOfKind("update_network_policy").length - before,
+      0,
+      "expected no sandbox policy update for a same-mode transition",
+    );
   });
 });
 

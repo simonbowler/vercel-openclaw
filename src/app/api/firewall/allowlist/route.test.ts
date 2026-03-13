@@ -114,12 +114,18 @@ test("firewall/allowlist DELETE: removes domains", async () => {
 });
 
 // ===========================================================================
-// No double sync — response has no separate `policy` key
+// No double sync — exactly one policy update per mutation
 // ===========================================================================
 
-test("firewall/allowlist POST: response has no separate policy key (no double sync)", async () => {
-  await withHarness(async () => {
+test("firewall/allowlist POST: syncs sandbox policy exactly once", async () => {
+  await withHarness(async (h) => {
+    await h.mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sandbox-123";
+    });
+
     const route = getFirewallAllowlistRoute();
+    const before = h.controller.eventsOfKind("update_network_policy").length;
     const req = buildAuthPostRequest(
       "/api/firewall/allowlist",
       JSON.stringify({ domains: ["api.openai.com"] }),
@@ -129,17 +135,25 @@ test("firewall/allowlist POST: response has no separate policy key (no double sy
     assert.equal(result.status, 200);
     const body = result.json as Record<string, unknown>;
     assert.ok(body.firewall, "response should have firewall key");
-    assert.equal(body.policy, undefined, "response should NOT have separate policy key (no double sync)");
+    assert.equal(body.policy, undefined, "response should NOT have separate policy key");
+    assert.equal(
+      h.controller.eventsOfKind("update_network_policy").length - before,
+      1,
+      "expected exactly one sandbox policy update for allowlist approval",
+    );
   });
 });
 
-test("firewall/allowlist DELETE: response has no separate policy key (no double sync)", async () => {
+test("firewall/allowlist DELETE: syncs sandbox policy exactly once", async () => {
   await withHarness(async (h) => {
     await h.mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sandbox-123";
       meta.firewall.allowlist = ["api.openai.com"];
     });
 
     const route = getFirewallAllowlistRoute();
+    const before = h.controller.eventsOfKind("update_network_policy").length;
     const req = buildAuthDeleteRequest(
       "/api/firewall/allowlist",
       JSON.stringify({ domains: ["api.openai.com"] }),
@@ -149,6 +163,42 @@ test("firewall/allowlist DELETE: response has no separate policy key (no double 
     assert.equal(result.status, 200);
     const body = result.json as Record<string, unknown>;
     assert.ok(body.firewall, "response should have firewall key");
-    assert.equal(body.policy, undefined, "response should NOT have separate policy key (no double sync)");
+    assert.equal(body.policy, undefined, "response should NOT have separate policy key");
+    assert.equal(
+      h.controller.eventsOfKind("update_network_policy").length - before,
+      1,
+      "expected exactly one sandbox policy update for allowlist removal",
+    );
+  });
+});
+
+test("firewall/allowlist DELETE: cannot empty allowlist while enforcing", async () => {
+  await withHarness(async (h) => {
+    await h.mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sandbox-123";
+      meta.firewall.mode = "enforcing";
+      meta.firewall.allowlist = ["api.openai.com"];
+    });
+
+    const route = getFirewallAllowlistRoute();
+    const before = h.controller.eventsOfKind("update_network_policy").length;
+    const req = buildAuthDeleteRequest(
+      "/api/firewall/allowlist",
+      JSON.stringify({ domains: ["api.openai.com"] }),
+    );
+    const result = await callRoute(route.DELETE!, req);
+
+    assert.equal(result.status, 409);
+    const body = result.json as { error: string };
+    assert.equal(body.error, "FIREWALL_ALLOWLIST_EMPTY");
+    assert.equal(
+      h.controller.eventsOfKind("update_network_policy").length - before,
+      0,
+      "expected no sandbox policy update when removal is rejected",
+    );
+
+    const meta = await h.getMeta();
+    assert.deepEqual(meta.firewall.allowlist, ["api.openai.com"]);
   });
 });
