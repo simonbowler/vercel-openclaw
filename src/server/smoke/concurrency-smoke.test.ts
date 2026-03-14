@@ -7,7 +7,7 @@
  *   3. Rapid enqueue-then-drain across channels → no duplicate restores
  *   4. Crash mid-bootstrap → metadata in error state, not stuck
  *   5. Restore from error state after clearing the error
- *   6. Dead-letter queue receives max-retry failures
+ *   6. Failed queue receives max-retry failures
  *
  * Run: pnpm test
  */
@@ -41,7 +41,7 @@ import { drainDiscordQueue } from "@/server/channels/discord/runtime";
 import {
   channelQueueKey,
   channelProcessingKey,
-  channelDeadLetterKey,
+  channelFailedKey,
 } from "@/server/channels/keys";
 
 // ---------------------------------------------------------------------------
@@ -393,10 +393,10 @@ test("concurrency: restore from error state works after error is cleared", async
 });
 
 // ---------------------------------------------------------------------------
-// Test 6: Dead-letter queue receives jobs after max retries
+// Test 6: Failed queue receives jobs after max retries
 // ---------------------------------------------------------------------------
 
-test("concurrency: dead-letter queue receives jobs that fail after max retries", async (t) => {
+test("concurrency: failed queue receives jobs that fail after max retries", async (t) => {
   const h = createScenarioHarness();
   try {
     // Drive to running so drains can proceed
@@ -444,12 +444,12 @@ test("concurrency: dead-letter queue receives jobs that fail after max retries",
       // Single drain should move the non-retryable failure to DLQ
       await drainSlackQueue();
 
-      // Check dead-letter queue has the failed job
-      const dlqKey = channelDeadLetterKey(channel);
+      // Check failed queue has the failed job
+      const dlqKey = channelFailedKey(channel);
       const dlqLength = await store.getQueueLength(dlqKey);
       assert.ok(
         dlqLength >= 1,
-        `Dead-letter queue should have at least 1 entry, got ${dlqLength}`,
+        `Failed queue should have at least 1 entry, got ${dlqLength}`,
       );
 
       // Main queue should be clean

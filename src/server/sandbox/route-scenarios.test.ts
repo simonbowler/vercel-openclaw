@@ -87,23 +87,20 @@ async function driveToRunning(h: ScenarioHarness): Promise<void> {
 // Auth gate tests
 // ===========================================================================
 
-test("Auth gate: unauthenticated GET /gateway returns redirect when auth mode is sign-in-with-vercel", async () => {
+test("Auth gate: unauthenticated GET /gateway returns 401 when no bearer token", async () => {
   const h = createScenarioHarness();
   try {
-    // Switch to sign-in-with-vercel mode — requires session cookie
-    process.env.VERCEL_AUTH_MODE = "sign-in-with-vercel";
+    // Request without bearer token or admin session cookie
+    const mod = getGatewayRoute();
+    const request = buildGetRequest("/gateway");
+    const response = await mod.GET(request, {
+      params: Promise.resolve({ path: undefined }),
+    });
+    const text = await response.text();
 
-    const result = await callGatewayGet("/");
-
-    // Should be a 302 redirect to /api/auth/authorize
-    assert.equal(result.status, 302);
-    const location = result.response.headers.get("location") ?? "";
-    assert.ok(
-      location.includes("/api/auth/authorize"),
-      `Expected redirect to authorize, got location: ${location}`,
-    );
+    // Should be 401 — no bearer token, no admin session cookie
+    assert.equal(response.status, 401);
   } finally {
-    delete process.env.VERCEL_AUTH_MODE;
     h.teardown();
   }
 });

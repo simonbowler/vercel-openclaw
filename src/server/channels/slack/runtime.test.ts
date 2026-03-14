@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { withHarness } from "@/test-utils/harness";
 import { enqueueChannelJob, type QueuedChannelJob } from "@/server/channels/driver";
-import { channelDeadLetterKey, channelQueueKey, channelProcessingKey } from "@/server/channels/keys";
+import { channelFailedKey, channelQueueKey, channelProcessingKey } from "@/server/channels/keys";
 import { drainSlackQueue } from "@/server/channels/slack/runtime";
 
 // ---------------------------------------------------------------------------
@@ -137,7 +137,7 @@ test("[slack runtime] drain handles chat completions 500 with retry", async () =
       await drainSlackQueue();
 
       const store = h.getStore();
-      // Job should be in processing queue (parked for retry), not dead-lettered yet
+      // Job should be in processing queue (parked for retry), not permanently failed yet
       const processingLen = await store.getQueueLength(channelProcessingKey("slack"));
       assert.ok(processingLen >= 1, "Job should be parked for retry in processing queue");
     } finally {
@@ -189,7 +189,7 @@ test("[slack runtime] drain handles chat completions network error with retry", 
 // Drain handles non-retryable gateway failure (e.g. 400)
 // ---------------------------------------------------------------------------
 
-test("[slack runtime] drain handles gateway 400 -> dead letter", async () => {
+test("[slack runtime] drain handles gateway 400 -> failed queue", async () => {
   await withHarness(async (h) => {
     h.fakeFetch.onPost(/\/v1\/chat\/completions/, () =>
       new Response("Bad Request", { status: 400 }),
@@ -215,9 +215,9 @@ test("[slack runtime] drain handles gateway 400 -> dead letter", async () => {
       await drainSlackQueue();
 
       const store = h.getStore();
-      // Non-retryable error -> dead letter
-      const dlEntry = await store.dequeue(channelDeadLetterKey("slack"));
-      assert.ok(dlEntry, "Job should be dead-lettered on non-retryable gateway error");
+      // Non-retryable error -> failed queue
+      const dlEntry = await store.dequeue(channelFailedKey("slack"));
+      assert.ok(dlEntry, "Job should be permanently failed on non-retryable gateway error");
       const parsed = JSON.parse(dlEntry);
       assert.equal(parsed.channel, "slack");
       assert.ok(parsed.error.includes("gateway_failed"), `Error should mention gateway_failed, got: ${parsed.error}`);

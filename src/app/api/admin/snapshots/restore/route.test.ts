@@ -63,6 +63,7 @@ test("admin/snapshots/restore POST: invalid JSON returns 400", async () => {
   await withHarness(async () => {
     const route = getAdminRestoreRoute();
     const req = buildPostRequest("/api/admin/snapshots/restore", "not-json", {
+      authorization: "Bearer test-admin-secret-for-scenarios",
       origin: "http://localhost:3000",
       "x-requested-with": "XMLHttpRequest",
     });

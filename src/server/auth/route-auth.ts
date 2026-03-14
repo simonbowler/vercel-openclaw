@@ -1,57 +1,44 @@
 import { jsonError, jsonOk } from "@/shared/http";
-import { verifyCsrf } from "@/server/auth/csrf";
-import { logWarn } from "@/server/log";
-import { requireRouteAuth } from "@/server/auth/vercel-auth";
+import { requireAdminAuth, requireAdminMutationAuth } from "@/server/auth/admin-auth";
 
-type RouteAuthResult = Exclude<Awaited<ReturnType<typeof requireRouteAuth>>, Response>;
+type AdminAuthResult = Exclude<
+  Awaited<ReturnType<typeof requireAdminAuth>>,
+  Response
+>;
 
 /**
- * Require JSON-mode auth **and** CSRF verification for mutation methods.
- * Used by channel config and other JSON API routes.
+ * Require admin auth for JSON API routes.
+ * For mutations (POST/PUT/DELETE), also enforces CSRF for cookie sessions.
  */
 export async function requireJsonRouteAuth(
   request: Request,
-): Promise<Response | RouteAuthResult> {
-  const csrfBlock = verifyCsrf(request);
-  if (csrfBlock) {
-    logWarn("auth.csrf_blocked", { method: request.method, url: request.url });
-    return csrfBlock;
+): Promise<Response | AdminAuthResult> {
+  const method = request.method.toUpperCase();
+  const isMutation = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
+
+  if (isMutation) {
+    return requireAdminMutationAuth(request);
   }
 
-  const auth = await requireRouteAuth(request, { mode: "json" });
-  if (auth instanceof Response) {
-    return auth;
-  }
-
-  return auth;
+  return requireAdminAuth(request);
 }
 
 /**
- * Require auth + CSRF for admin mutation routes that call requireRouteAuth
- * directly.  Returns a 403 Response for CSRF failures, delegates to
- * requireRouteAuth for auth failures.
+ * Require admin auth + CSRF for mutation routes.
  */
 export async function requireMutationAuth(
   request: Request,
-): Promise<Response | RouteAuthResult> {
-  const csrfBlock = verifyCsrf(request);
-  if (csrfBlock) return csrfBlock;
-
-  const auth = await requireRouteAuth(request, { mode: "json" });
-  if (auth instanceof Response) {
-    return auth;
-  }
-
-  return auth;
+): Promise<Response | AdminAuthResult> {
+  return requireAdminMutationAuth(request);
 }
 
 export function authJsonOk<T>(
   data: T,
-  auth: { setCookieHeader: string | null },
+  auth: { setCookieHeader: string | null } | null,
   init?: ResponseInit,
 ): Response {
   const response = jsonOk(data, init);
-  if (auth.setCookieHeader) {
+  if (auth?.setCookieHeader) {
     response.headers.append("Set-Cookie", auth.setCookieHeader);
   }
   return response;

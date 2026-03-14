@@ -12,7 +12,7 @@ import type { Store } from "@/server/store/store";
 import {
   channelQueueKey,
   channelProcessingKey,
-  channelDeadLetterKey,
+  channelFailedKey,
 } from "@/server/channels/keys";
 import type { ChannelName } from "@/shared/channels";
 
@@ -82,7 +82,7 @@ export function assertGatewayRequest(
 // ---------------------------------------------------------------------------
 
 /**
- * Assert that the main queue, processing queue, and (optionally) dead-letter
+ * Assert that the main queue, processing queue, and (optionally) failed
  * queue for a channel are all at expected lengths (default: empty).
  */
 export async function assertQueuesDrained(
@@ -91,12 +91,12 @@ export async function assertQueuesDrained(
   options?: {
     queue?: number;
     processing?: number;
-    deadLetter?: number;
+    failed?: number;
   },
 ): Promise<void> {
   const expectedQueue = options?.queue ?? 0;
   const expectedProcessing = options?.processing ?? 0;
-  const expectedDeadLetter = options?.deadLetter ?? 0;
+  const expectedFailed = options?.failed ?? 0;
 
   assert.equal(
     await store.getQueueLength(channelQueueKey(channel)),
@@ -109,9 +109,9 @@ export async function assertQueuesDrained(
     `${channel} processing queue expected ${expectedProcessing} item(s)`,
   );
   assert.equal(
-    await store.getQueueLength(channelDeadLetterKey(channel)),
-    expectedDeadLetter,
-    `${channel} dead-letter queue expected ${expectedDeadLetter} item(s)`,
+    await store.getQueueLength(channelFailedKey(channel)),
+    expectedFailed,
+    `${channel} failed queue expected ${expectedFailed} item(s)`,
   );
 }
 

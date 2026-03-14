@@ -1,5 +1,4 @@
-import { requireRouteAuth } from "@/server/auth/vercel-auth";
-import { verifyCsrf } from "@/server/auth/csrf";
+import { requireJsonRouteAuth } from "@/server/auth/route-auth";
 import { getPublicChannelState } from "@/server/channels/state";
 import { getAuthMode } from "@/server/env";
 import { computeWouldBlock } from "@/server/firewall/state";
@@ -9,7 +8,7 @@ import { getStore, getInitializedMeta } from "@/server/store/store";
 import { jsonError } from "@/shared/http";
 
 export async function GET(request: Request): Promise<Response> {
-  const auth = await requireRouteAuth(request, { mode: "json" });
+  const auth = await requireJsonRouteAuth(request);
   if (auth instanceof Response) {
     return auth;
   }
@@ -41,7 +40,7 @@ export async function GET(request: Request): Promise<Response> {
       lastError: meta.lastError,
       firewall: { ...meta.firewall, wouldBlock: computeWouldBlock(meta.firewall) },
       channels: await getPublicChannelState(request, meta),
-      user: auth.session.user,
+      user: { sub: "admin", name: "Admin" },
     });
 
     if (auth.setCookieHeader) {
@@ -59,10 +58,7 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const csrfBlock = verifyCsrf(request);
-  if (csrfBlock) return csrfBlock;
-
-  const auth = await requireRouteAuth(request, { mode: "json" });
+  const auth = await requireJsonRouteAuth(request);
   if (auth instanceof Response) {
     return auth;
   }

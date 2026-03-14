@@ -1,8 +1,8 @@
 /**
- * Auth fixture helpers for smoke tests.
+ * Auth fixture helpers for tests.
  *
- * Provides pre-built auth artifacts for both auth modes so route-level
- * tests can exercise authenticated paths without real OAuth flows.
+ * Provides pre-built auth artifacts so route-level tests can exercise
+ * authenticated paths without real OAuth flows or admin secret setup.
  */
 
 import {
@@ -12,7 +12,17 @@ import {
 } from "@/server/auth/session";
 
 // ---------------------------------------------------------------------------
-// Defaults
+// Admin auth constants (used by the harness)
+// ---------------------------------------------------------------------------
+
+/** Fixed admin secret used in all test scenarios. */
+export const TEST_ADMIN_SECRET = "test-admin-secret-for-scenarios";
+
+/** Fixed session secret used in all test scenarios. */
+export const TEST_SESSION_SECRET = "test-session-secret-for-smoke-tests";
+
+// ---------------------------------------------------------------------------
+// Defaults for sign-in-with-vercel (optional login method)
 // ---------------------------------------------------------------------------
 
 const DEFAULT_USER: SessionUser = {
@@ -22,35 +32,45 @@ const DEFAULT_USER: SessionUser = {
   preferredUsername: "testuser",
 };
 
-const DEFAULT_SESSION_SECRET = "test-session-secret-for-smoke-tests";
 const DEFAULT_CLIENT_ID = "oac_test_client_id";
 const DEFAULT_CLIENT_SECRET = "test_client_secret";
 
 // ---------------------------------------------------------------------------
-// sign-in-with-vercel helpers
+// Admin auth helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Return headers that authenticate as admin via bearer token.
+ * Includes CSRF headers for mutation safety.
+ */
+export function buildAdminHeaders(): Record<string, string> {
+  return {
+    authorization: `Bearer ${TEST_ADMIN_SECRET}`,
+    origin: "http://localhost:3000",
+    "x-requested-with": "XMLHttpRequest",
+  };
+}
+
+/**
+ * Return just the bearer token header for admin auth.
+ */
+export function buildAdminBearerHeader(): Record<string, string> {
+  return {
+    authorization: `Bearer ${TEST_ADMIN_SECRET}`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// sign-in-with-vercel helpers (for testing the optional OAuth flow)
 // ---------------------------------------------------------------------------
 
 export type SessionCookieOptions = {
-  /** Override the default test user. */
   user?: Partial<SessionUser>;
-  /** Access token value. Defaults to "test-access-token". */
   accessToken?: string;
-  /** Refresh token value. Defaults to "test-refresh-token". */
   refreshToken?: string | null;
-  /** Token expiry timestamp. Defaults to 1 hour from now. */
   expiresAt?: number;
 };
 
-/**
- * Build an encrypted session cookie string suitable for injecting into
- * request headers when testing sign-in-with-vercel auth mode.
- *
- * Requires `SESSION_SECRET` to be set in the environment (the harness
- * sets it automatically when `authMode: 'sign-in-with-vercel'`).
- *
- * @returns The full `Set-Cookie` header value (name=encrypted; attributes).
- *          Pass the cookie *value* portion to a `Cookie` request header.
- */
 export async function buildSessionCookie(
   options?: SessionCookieOptions,
 ): Promise<string> {
@@ -61,33 +81,17 @@ export async function buildSessionCookie(
     expiresAt: options?.expiresAt ?? Date.now() + 60 * 60 * 1000,
     user,
   };
-
-  // secure=false for test requests (plain http)
   return serializeSessionCookie(session, false);
 }
 
-/**
- * Extract just the `cookie` header value from a Set-Cookie string
- * so it can be passed as `{ cookie: value }` in a Request.
- *
- * `serializeSessionCookie` returns `name=value; Path=/; ...`.
- * Browsers send only `name=value`, so we strip the attributes.
- */
 export function setCookieToCookieHeader(setCookie: string): string {
   return setCookie.split(";")[0]!;
 }
 
 // ---------------------------------------------------------------------------
-// deployment-protection helpers
+// deployment-protection helpers (legacy, for backward compat in tests)
 // ---------------------------------------------------------------------------
 
-/**
- * Return headers that simulate Vercel deployment protection.
- *
- * In deployment-protection mode the app trusts that Vercel's edge
- * layer has already authenticated the request, so no cookie is needed.
- * These headers mirror what Vercel injects on protected deployments.
- */
 export function buildDeploymentProtectionHeaders(): Record<string, string> {
   return {
     "x-vercel-protection-bypass": "true",
@@ -102,15 +106,17 @@ export function buildDeploymentProtectionHeaders(): Record<string, string> {
 /** Env overrides for sign-in-with-vercel mode. */
 export const SIGN_IN_ENV: Record<string, string> = {
   VERCEL_AUTH_MODE: "sign-in-with-vercel",
-  SESSION_SECRET: DEFAULT_SESSION_SECRET,
+  SESSION_SECRET: TEST_SESSION_SECRET,
   NEXT_PUBLIC_VERCEL_APP_CLIENT_ID: DEFAULT_CLIENT_ID,
   VERCEL_APP_CLIENT_SECRET: DEFAULT_CLIENT_SECRET,
+  ADMIN_SECRET: TEST_ADMIN_SECRET,
 };
 
-/** Env overrides for deployment-protection mode (the default). */
+/** Env overrides for the default admin-secret auth mode. */
 export const DEPLOYMENT_PROTECTION_ENV: Record<string, string | undefined> = {
   VERCEL_AUTH_MODE: undefined,
-  SESSION_SECRET: undefined,
+  SESSION_SECRET: TEST_SESSION_SECRET,
   NEXT_PUBLIC_VERCEL_APP_CLIENT_ID: undefined,
   VERCEL_APP_CLIENT_SECRET: undefined,
+  ADMIN_SECRET: TEST_ADMIN_SECRET,
 };

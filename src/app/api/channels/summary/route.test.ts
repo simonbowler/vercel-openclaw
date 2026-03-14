@@ -1,7 +1,7 @@
 /**
  * Smoke tests for GET /api/channels/summary.
  *
- * Covers auth-gated channel summary with queue depth and dead letter counts.
+ * Covers auth-gated channel summary with queue depth and failed counts.
  *
  * Run: pnpm test src/app/api/channels/summary/route.test.ts
  */
@@ -37,6 +37,8 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
     "UPSTASH_REDIS_REST_TOKEN",
     "KV_REST_API_URL",
     "KV_REST_API_TOKEN",
+    "ADMIN_SECRET",
+    "SESSION_SECRET",
   ];
   const originals: Record<string, string | undefined> = {};
 
@@ -51,6 +53,8 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
   delete process.env.UPSTASH_REDIS_REST_TOKEN;
   delete process.env.KV_REST_API_URL;
   delete process.env.KV_REST_API_TOKEN;
+  process.env.ADMIN_SECRET = "test-admin-secret-for-scenarios";
+  process.env.SESSION_SECRET = "test-session-secret-for-smoke-tests";
 
   _resetStoreForTesting();
 
@@ -81,9 +85,9 @@ test("GET /api/channels/summary: returns summary for all three channels", async 
 
     assert.equal(result.status, 200);
     const body = result.json as {
-      slack: { connected: boolean; queueDepth: number; deadLetterCount: number };
-      telegram: { connected: boolean; queueDepth: number; deadLetterCount: number };
-      discord: { connected: boolean; queueDepth: number; deadLetterCount: number };
+      slack: { connected: boolean; queueDepth: number; failedCount: number };
+      telegram: { connected: boolean; queueDepth: number; failedCount: number };
+      discord: { connected: boolean; queueDepth: number; failedCount: number };
     };
 
     // All channels disconnected by default
@@ -129,13 +133,15 @@ test("GET /api/channels/summary: reflects connected channel state", async () => 
   });
 });
 
-test("GET /api/channels/summary: works without explicit CSRF headers (GET exempt)", async () => {
+test("GET /api/channels/summary: works without CSRF headers when bearer token is present", async () => {
   await withTestEnv(async () => {
     const route = getChannelsSummaryRoute();
-    const request = buildGetRequest("/api/channels/summary");
+    const request = buildGetRequest("/api/channels/summary", {
+      authorization: "Bearer test-admin-secret-for-scenarios",
+    });
     const result = await callRoute(route.GET!, request);
 
-    // In deployment-protection mode, GET requests pass auth without special headers
+    // Bearer token provides auth; CSRF headers not needed for GET
     assert.equal(result.status, 200);
   });
 });

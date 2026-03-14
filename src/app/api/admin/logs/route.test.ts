@@ -40,6 +40,8 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
     "UPSTASH_REDIS_REST_TOKEN",
     "KV_REST_API_URL",
     "KV_REST_API_TOKEN",
+    "ADMIN_SECRET",
+    "SESSION_SECRET",
   ];
   const originals: Record<string, string | undefined> = {};
 
@@ -54,6 +56,8 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
   delete process.env.UPSTASH_REDIS_REST_TOKEN;
   delete process.env.KV_REST_API_URL;
   delete process.env.KV_REST_API_TOKEN;
+  process.env.ADMIN_SECRET = "test-admin-secret-for-scenarios";
+  process.env.SESSION_SECRET = "test-session-secret-for-smoke-tests";
 
   _resetStoreForTesting();
   _resetLogBuffer();
@@ -115,12 +119,13 @@ test("GET /api/admin/logs: supports source filter parameter", async () => {
   });
 });
 
-test("GET /api/admin/logs: GET without CSRF headers still works (GET exempt from CSRF)", async () => {
+test("GET /api/admin/logs: GET with bearer token but without CSRF headers still works", async () => {
   await withTestEnv(async () => {
     const route = getAdminLogsRoute();
-    // GET requests are exempt from CSRF but still require auth.
-    // In deployment-protection mode (default in test), no auth headers needed.
-    const request = buildGetRequest("/api/admin/logs");
+    // GET requests are exempt from CSRF but still require admin auth (bearer token).
+    const request = buildGetRequest("/api/admin/logs", {
+      authorization: "Bearer test-admin-secret-for-scenarios",
+    });
     const result = await callRoute(route.GET!, request);
 
     assert.equal(result.status, 200);

@@ -9,7 +9,7 @@ import {
   type QueuedChannelJob,
 } from "@/server/channels/driver";
 import {
-  channelDeadLetterKey,
+  channelFailedKey,
   channelProcessingKey,
   channelQueueKey,
 } from "@/server/channels/keys";
@@ -174,10 +174,10 @@ test("[drain] lock unavailable -> drainChannelQueue returns immediately", async 
 });
 
 // ---------------------------------------------------------------------------
-// Edge-branch: malformed leased job -> dead letter
+// Edge-branch: malformed leased job -> failed queue
 // ---------------------------------------------------------------------------
 
-test("[drain] malformed job JSON -> ack and write to dead letter", async () => {
+test("[drain] malformed job JSON -> ack and write to failed queue", async () => {
   await withEnv(TEST_ENV, async () => {
     const channel: ChannelName = "slack";
     const store = getStore();
@@ -199,8 +199,8 @@ test("[drain] malformed job JSON -> ack and write to dead letter", async () => {
     assert.equal(adapterCalled, false);
     // Queue should be empty (acked)
     assert.equal(await getChannelQueueDepth(channel), 0);
-    // Dead letter should have an entry
-    const dlEntry = await store.dequeue(channelDeadLetterKey(channel));
+    // Failed queue should have an entry
+    const dlEntry = await store.dequeue(channelFailedKey(channel));
     assert.ok(dlEntry);
     const parsed = JSON.parse(dlEntry);
     assert.equal(parsed.channel, channel);
@@ -292,10 +292,10 @@ test("[enqueue] nextAttemptAt set -> enqueues to front (retry path)", async () =
 });
 
 // ---------------------------------------------------------------------------
-// Failure path: extractMessage throws -> dead-lettered without retry
+// Failure path: extractMessage throws -> permanently failed without retry
 // ---------------------------------------------------------------------------
 
-test("[drain] adapter extractMessage throws -> job dead-lettered without retry", async () => {
+test("[drain] adapter extractMessage throws -> job permanently failed without retry", async () => {
   await withEnv(TEST_ENV, async () => {
     const channel: ChannelName = "slack";
     const store = getStore();
@@ -321,23 +321,23 @@ test("[drain] adapter extractMessage throws -> job dead-lettered without retry",
     // Main and processing queues should be empty
     assert.equal(await store.getQueueLength(channelQueueKey(channel)), 0);
     assert.equal(await store.getQueueLength(channelProcessingKey(channel)), 0);
-    // Dead letter should have exactly 1 entry
-    const dlEntry = await store.dequeue(channelDeadLetterKey(channel));
+    // Failed queue should have exactly 1 entry
+    const dlEntry = await store.dequeue(channelFailedKey(channel));
     assert.ok(dlEntry);
     const parsed = JSON.parse(dlEntry);
     assert.equal(parsed.channel, channel);
     assert.match(parsed.error, /payload_parse_failure/);
-    // No second dead letter entry
-    const dlEntry2 = await store.dequeue(channelDeadLetterKey(channel));
+    // No second failed queue entry
+    const dlEntry2 = await store.dequeue(channelFailedKey(channel));
     assert.equal(dlEntry2, null);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Failure path: getConfig returns null -> dead-lettered (not configured)
+// Failure path: getConfig returns null -> permanently failed (not configured)
 // ---------------------------------------------------------------------------
 
-test("[drain] getConfig returns null -> job dead-lettered with not_configured error", async () => {
+test("[drain] getConfig returns null -> job permanently failed with not_configured error", async () => {
   await withEnv(TEST_ENV, async () => {
     const channel: ChannelName = "telegram";
     const store = getStore();
@@ -355,8 +355,8 @@ test("[drain] getConfig returns null -> job dead-lettered with not_configured er
     // Main and processing queues should be empty
     assert.equal(await store.getQueueLength(channelQueueKey(channel)), 0);
     assert.equal(await store.getQueueLength(channelProcessingKey(channel)), 0);
-    // Dead letter should have 1 entry with not_configured error
-    const dlEntry = await store.dequeue(channelDeadLetterKey(channel));
+    // Failed queue should have 1 entry with not_configured error
+    const dlEntry = await store.dequeue(channelFailedKey(channel));
     assert.ok(dlEntry);
     const parsed = JSON.parse(dlEntry);
     assert.equal(parsed.channel, channel);
@@ -365,10 +365,10 @@ test("[drain] getConfig returns null -> job dead-lettered with not_configured er
 });
 
 // ---------------------------------------------------------------------------
-// Failure path: multiple malformed jobs in sequence -> all dead-lettered
+// Failure path: multiple malformed jobs in sequence -> all permanently failed
 // ---------------------------------------------------------------------------
 
-test("[drain] multiple malformed jobs -> all dead-lettered, adapter never called", async () => {
+test("[drain] multiple malformed jobs -> all permanently failed, adapter never called", async () => {
   await withEnv(TEST_ENV, async () => {
     const channel: ChannelName = "discord";
     const store = getStore();
@@ -393,14 +393,14 @@ test("[drain] multiple malformed jobs -> all dead-lettered, adapter never called
     // Main and processing queues should be empty
     assert.equal(await store.getQueueLength(channelQueueKey(channel)), 0);
     assert.equal(await store.getQueueLength(channelProcessingKey(channel)), 0);
-    // Dead letter should have exactly 3 entries
-    const dl1 = await store.dequeue(channelDeadLetterKey(channel));
-    const dl2 = await store.dequeue(channelDeadLetterKey(channel));
-    const dl3 = await store.dequeue(channelDeadLetterKey(channel));
+    // Failed queue should have exactly 3 entries
+    const dl1 = await store.dequeue(channelFailedKey(channel));
+    const dl2 = await store.dequeue(channelFailedKey(channel));
+    const dl3 = await store.dequeue(channelFailedKey(channel));
     assert.ok(dl1);
     assert.ok(dl2);
     assert.ok(dl3);
-    const dl4 = await store.dequeue(channelDeadLetterKey(channel));
+    const dl4 = await store.dequeue(channelFailedKey(channel));
     assert.equal(dl4, null);
   });
 });
@@ -446,7 +446,7 @@ test("[drain] job with nextAttemptAt in the past -> processed, not parked", asyn
 // Retry semantics: RetryableChannelError triggers retry, permanent does not
 // ---------------------------------------------------------------------------
 
-test("[drain] retryable error (TimeoutError) -> job requeued in processing, not dead-lettered", async () => {
+test("[drain] retryable error (TimeoutError) -> job requeued in processing, not permanently failed", async () => {
   await withEnv(TEST_ENV, async () => {
     const channel: ChannelName = "slack";
     const store = getStore();
@@ -473,13 +473,13 @@ test("[drain] retryable error (TimeoutError) -> job requeued in processing, not 
       (await store.getQueueLength(channelProcessingKey(channel))) >= 1,
       "Retried job should be parked in processing queue",
     );
-    // Dead letter should be empty (not a permanent failure)
-    const dlEntry = await store.dequeue(channelDeadLetterKey(channel));
-    assert.equal(dlEntry, null, "Should NOT be dead-lettered on retryable error");
+    // Failed queue should be empty (not a permanent failure)
+    const dlEntry = await store.dequeue(channelFailedKey(channel));
+    assert.equal(dlEntry, null, "Should NOT be permanently failed on retryable error");
   });
 });
 
-test("[drain] RetryableSendError triggers retry, not dead-letter", async () => {
+test("[drain] RetryableSendError triggers retry, not failed", async () => {
   await withEnv(TEST_ENV, async () => {
     const channel: ChannelName = "telegram";
     const store = getStore();
@@ -504,13 +504,13 @@ test("[drain] RetryableSendError triggers retry, not dead-letter", async () => {
       (await store.getQueueLength(channelProcessingKey(channel))) >= 1,
       "Retried job should be parked in processing queue",
     );
-    // Dead letter should be empty
-    const dlEntry = await store.dequeue(channelDeadLetterKey(channel));
-    assert.equal(dlEntry, null, "RetryableSendError should not dead-letter");
+    // Failed queue should be empty
+    const dlEntry = await store.dequeue(channelFailedKey(channel));
+    assert.equal(dlEntry, null, "RetryableSendError should not failed");
   });
 });
 
-test("[drain] permanent error (plain Error) -> dead-lettered immediately, no retry", async () => {
+test("[drain] permanent error (plain Error) -> permanently failed immediately, no retry", async () => {
   await withEnv(TEST_ENV, async () => {
     const channel: ChannelName = "discord";
     const store = getStore();
@@ -528,12 +528,12 @@ test("[drain] permanent error (plain Error) -> dead-lettered immediately, no ret
       }),
     });
 
-    // Both queues should be empty (job acked after dead-letter)
+    // Both queues should be empty (job acked after failed)
     assert.equal(await store.getQueueLength(channelQueueKey(channel)), 0);
     assert.equal(await store.getQueueLength(channelProcessingKey(channel)), 0);
-    // Dead letter should have exactly 1 entry
-    const dlEntry = await store.dequeue(channelDeadLetterKey(channel));
-    assert.ok(dlEntry, "Permanent error should produce a dead-letter entry");
+    // Failed queue should have exactly 1 entry
+    const dlEntry = await store.dequeue(channelFailedKey(channel));
+    assert.ok(dlEntry, "Permanent error should produce a failed entry");
     const parsed = JSON.parse(dlEntry);
     assert.match(parsed.error, /permanent_auth_failure/);
     assert.equal(parsed.channel, channel);
@@ -653,10 +653,10 @@ test("[drain] backoff caps at 5 minutes (300000ms)", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Max 8 retries then dead-letter
+// Max 8 retries then failed
 // ---------------------------------------------------------------------------
 
-test("[drain] max 8 retries exhausted -> dead-lettered on next retryable error", async () => {
+test("[drain] max 8 retries exhausted -> permanently failed on next retryable error", async () => {
   await withEnv(TEST_ENV, async () => {
     const channel: ChannelName = "slack";
     const store = getStore();
@@ -685,15 +685,15 @@ test("[drain] max 8 retries exhausted -> dead-lettered on next retryable error",
     assert.equal(await store.getQueueLength(channelQueueKey(channel)), 0);
     assert.equal(await store.getQueueLength(channelProcessingKey(channel)), 0);
 
-    // Dead letter should have exactly 1 entry
-    const dlEntry = await store.dequeue(channelDeadLetterKey(channel));
-    assert.ok(dlEntry, "Exhausted retries should produce a dead-letter entry");
+    // Failed queue should have exactly 1 entry
+    const dlEntry = await store.dequeue(channelFailedKey(channel));
+    assert.ok(dlEntry, "Exhausted retries should produce a failed entry");
     const parsed = JSON.parse(dlEntry);
     assert.equal(parsed.channel, channel);
     assert.match(parsed.error, /fetch failed/);
 
-    // No second dead-letter entry
-    assert.equal(await store.dequeue(channelDeadLetterKey(channel)), null);
+    // No second failed entry
+    assert.equal(await store.dequeue(channelFailedKey(channel)), null);
   });
 });
 
@@ -720,15 +720,15 @@ test("[drain] retryCount 7 still retries (not exhausted yet)", async () => {
       }),
     });
 
-    // Should be retried (in processing queue), NOT dead-lettered
+    // Should be retried (in processing queue), NOT permanently failed
     assert.ok(
       (await store.getQueueLength(channelProcessingKey(channel))) >= 1,
       "RetryCount 7 should still retry",
     );
     assert.equal(
-      await store.dequeue(channelDeadLetterKey(channel)),
+      await store.dequeue(channelFailedKey(channel)),
       null,
-      "Should not be dead-lettered at retryCount 7",
+      "Should not be permanently failed at retryCount 7",
     );
   });
 });

@@ -1,6 +1,5 @@
 import { jsonError } from "@/shared/http";
-import { verifyCsrf } from "@/server/auth/csrf";
-import { requireRouteAuth } from "@/server/auth/vercel-auth";
+import { requireJsonRouteAuth } from "@/server/auth/route-auth";
 import { dismissLearnedDomains } from "@/server/firewall/state";
 import { extractRequestId } from "@/server/log";
 
@@ -9,10 +8,7 @@ type DomainBody = {
 };
 
 export async function DELETE(request: Request): Promise<Response> {
-  const csrfBlock = verifyCsrf(request);
-  if (csrfBlock) return csrfBlock;
-
-  const auth = await requireRouteAuth(request, { mode: "json" });
+  const auth = await requireJsonRouteAuth(request);
   if (auth instanceof Response) {
     return auth;
   }

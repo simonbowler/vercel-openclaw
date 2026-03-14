@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { withHarness } from "@/test-utils/harness";
 import { enqueueChannelJob, type QueuedChannelJob } from "@/server/channels/driver";
-import { channelDeadLetterKey, channelProcessingKey, channelQueueKey } from "@/server/channels/keys";
+import { channelFailedKey, channelProcessingKey, channelQueueKey } from "@/server/channels/keys";
 import { drainTelegramQueue } from "@/server/channels/telegram/runtime";
 
 // ---------------------------------------------------------------------------
@@ -174,10 +174,10 @@ test("[telegram runtime] drain handles chat completions network error with retry
 });
 
 // ---------------------------------------------------------------------------
-// Drain handles non-retryable gateway failure -> dead letter
+// Drain handles non-retryable gateway failure -> failed queue
 // ---------------------------------------------------------------------------
 
-test("[telegram runtime] drain handles gateway 400 -> dead letter", async () => {
+test("[telegram runtime] drain handles gateway 400 -> failed queue", async () => {
   await withHarness(async (h) => {
     h.fakeFetch.onPost(/\/v1\/chat\/completions/, () =>
       new Response("Bad Request", { status: 400 }),
@@ -203,8 +203,8 @@ test("[telegram runtime] drain handles gateway 400 -> dead letter", async () => 
       await drainTelegramQueue();
 
       const store = h.getStore();
-      const dlEntry = await store.dequeue(channelDeadLetterKey("telegram"));
-      assert.ok(dlEntry, "Job should be dead-lettered on non-retryable gateway error");
+      const dlEntry = await store.dequeue(channelFailedKey("telegram"));
+      assert.ok(dlEntry, "Job should be permanently failed on non-retryable gateway error");
       const parsed = JSON.parse(dlEntry);
       assert.equal(parsed.channel, "telegram");
       assert.ok(parsed.error.includes("gateway_failed"));
@@ -253,10 +253,10 @@ test("[telegram runtime] drain handles gateway 410 sandbox_gone with retry", asy
 });
 
 // ---------------------------------------------------------------------------
-// Telegram channel not configured -> dead letter
+// Telegram channel not configured -> failed queue
 // ---------------------------------------------------------------------------
 
-test("[telegram runtime] not configured -> dead letter", async () => {
+test("[telegram runtime] not configured -> failed queue", async () => {
   await withHarness(async (h) => {
     h.installDefaultGatewayHandlers();
     await h.driveToRunning();
@@ -270,8 +270,8 @@ test("[telegram runtime] not configured -> dead letter", async () => {
       await drainTelegramQueue();
 
       const store = h.getStore();
-      const dlEntry = await store.dequeue(channelDeadLetterKey("telegram"));
-      assert.ok(dlEntry, "Job should be dead-lettered when channel not configured");
+      const dlEntry = await store.dequeue(channelFailedKey("telegram"));
+      assert.ok(dlEntry, "Job should be permanently failed when channel not configured");
       const parsed = JSON.parse(dlEntry);
       assert.ok(parsed.error.includes("not_configured"));
     } finally {

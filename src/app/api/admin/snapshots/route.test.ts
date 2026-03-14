@@ -40,6 +40,8 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
     "UPSTASH_REDIS_REST_TOKEN",
     "KV_REST_API_URL",
     "KV_REST_API_TOKEN",
+    "ADMIN_SECRET",
+    "SESSION_SECRET",
   ];
   const originals: Record<string, string | undefined> = {};
 
@@ -54,6 +56,8 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
   delete process.env.UPSTASH_REDIS_REST_TOKEN;
   delete process.env.KV_REST_API_URL;
   delete process.env.KV_REST_API_TOKEN;
+  process.env.ADMIN_SECRET = "test-admin-secret-for-scenarios";
+  process.env.SESSION_SECRET = "test-session-secret-for-smoke-tests";
 
   _resetStoreForTesting();
 

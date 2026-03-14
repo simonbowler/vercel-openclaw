@@ -1,6 +1,6 @@
-import { requireRouteAuth } from "@/server/auth/vercel-auth";
+import { requireJsonRouteAuth } from "@/server/auth/route-auth";
 import { getChannelQueueDepth } from "@/server/channels/driver";
-import { channelDeadLetterKey } from "@/server/channels/keys";
+import { channelFailedKey } from "@/server/channels/keys";
 import { logError } from "@/server/log";
 import { getStore, getInitializedMeta } from "@/server/store/store";
 import { jsonError } from "@/shared/http";
@@ -8,7 +8,7 @@ import { jsonError } from "@/shared/http";
 type ChannelSummaryEntry = {
   connected: boolean;
   queueDepth: number;
-  deadLetterCount: number;
+  failedCount: number;
   lastError: string | null;
 };
 
@@ -18,16 +18,16 @@ type ChannelSummaryResponse = {
   discord: ChannelSummaryEntry;
 };
 
-async function getDeadLetterCount(channel: "slack" | "telegram" | "discord"): Promise<number> {
+async function getFailedCount(channel: "slack" | "telegram" | "discord"): Promise<number> {
   try {
-    return await getStore().getQueueLength(channelDeadLetterKey(channel));
+    return await getStore().getQueueLength(channelFailedKey(channel));
   } catch {
     return 0;
   }
 }
 
 export async function GET(request: Request): Promise<Response> {
-  const auth = await requireRouteAuth(request, { mode: "json" });
+  const auth = await requireJsonRouteAuth(request);
   if (auth instanceof Response) {
     return auth;
   }
@@ -45,28 +45,28 @@ export async function GET(request: Request): Promise<Response> {
       getChannelQueueDepth("slack"),
       getChannelQueueDepth("telegram"),
       getChannelQueueDepth("discord"),
-      getDeadLetterCount("slack"),
-      getDeadLetterCount("telegram"),
-      getDeadLetterCount("discord"),
+      getFailedCount("slack"),
+      getFailedCount("telegram"),
+      getFailedCount("discord"),
     ]);
 
     const body: ChannelSummaryResponse = {
       slack: {
         connected: meta.channels.slack !== null,
         queueDepth: slackQueue,
-        deadLetterCount: slackDL,
+        failedCount: slackDL,
         lastError: meta.channels.slack?.lastError ?? null,
       },
       telegram: {
         connected: meta.channels.telegram !== null,
         queueDepth: telegramQueue,
-        deadLetterCount: telegramDL,
+        failedCount: telegramDL,
         lastError: meta.channels.telegram?.lastError ?? null,
       },
       discord: {
         connected: meta.channels.discord !== null,
         queueDepth: discordQueue,
-        deadLetterCount: discordDL,
+        failedCount: discordDL,
         lastError: meta.channels.discord?.endpointError ?? null,
       },
     };

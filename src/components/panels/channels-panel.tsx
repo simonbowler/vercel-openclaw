@@ -12,7 +12,7 @@ import { DiscordPanel } from "@/components/panels/discord-panel";
 type ChannelSummaryEntry = {
   connected: boolean;
   queueDepth: number;
-  deadLetterCount: number;
+  failedCount: number;
   lastError: string | null;
 };
 
@@ -75,9 +75,9 @@ export function ChannelsPanel({
     (summary?.discord.queueDepth ?? 0);
 
   const totalDL =
-    (summary?.slack.deadLetterCount ?? 0) +
-    (summary?.telegram.deadLetterCount ?? 0) +
-    (summary?.discord.deadLetterCount ?? 0);
+    (summary?.slack.failedCount ?? 0) +
+    (summary?.telegram.failedCount ?? 0) +
+    (summary?.discord.failedCount ?? 0);
 
   return (
     <article className="panel-card full-span">
@@ -91,7 +91,7 @@ export function ChannelsPanel({
             <ChannelPill variant="good">{totalQueue} queued</ChannelPill>
           )}
           {totalDL > 0 && (
-            <ChannelPill variant="bad">{totalDL} dead-letter</ChannelPill>
+            <ChannelPill variant="bad">{totalDL} failed</ChannelPill>
           )}
           <button
             className="button ghost"

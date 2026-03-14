@@ -556,15 +556,32 @@ async function restoreSandboxFromSnapshot(origin: string): Promise<SingleMeta> {
     });
 
     await applyFirewallPolicyToSandbox(sandbox, next);
-    const probe = await probeGatewayReady();
-    if (!probe.ready) {
-      await mutateMeta((meta) => {
-        meta.status = "booting";
-      });
-    } else {
-      await syncFirewallPolicyIfRunning();
+
+    // Poll for gateway readiness — matches moltbot's waitForGatewayReady pattern.
+    // Without this loop the function returns with status "booting" after a single
+    // probe and never retries, leaving the sandbox permanently stuck if the
+    // gateway isn't ready on the first check.
+    const maxAttempts = 60;
+    let ready = false;
+    for (let i = 0; i < maxAttempts; i++) {
+      const probe = await probeGatewayReady();
+      if (probe.ready) {
+        ready = true;
+        break;
+      }
+      if (i > 0 && i % 10 === 0) {
+        logInfo("sandbox.restore_gateway_poll", { attempt: i, maxAttempts });
+      }
+      await wait(1_000);
     }
 
+    if (!ready) {
+      const msg = `Gateway did not become ready within ${maxAttempts} seconds after restore`;
+      logError("sandbox.restore_gateway_timeout", { sandboxId: sandbox.sandboxId });
+      throw new Error(msg);
+    }
+
+    await syncFirewallPolicyIfRunning();
     return getInitializedMeta();
   });
 }

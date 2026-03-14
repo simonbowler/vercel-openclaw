@@ -1,9 +1,9 @@
 /**
- * Retry and dead-letter drain scenarios.
+ * Retry and failed drain scenarios.
  *
  * Validates that transient gateway/send failures are retried with correct
  * backoff, that 410 triggers retry (sandbox gone → restore on next drain),
- * and that exhausted retries land in the dead-letter queue.
+ * and that exhausted retries land in the failed queue.
  *
  * Run: pnpm test
  */
@@ -39,7 +39,7 @@ import { drainDiscordQueue } from "@/server/channels/discord/runtime";
 import {
   channelQueueKey,
   channelProcessingKey,
-  channelDeadLetterKey,
+  channelFailedKey,
 } from "@/server/channels/keys";
 
 // ---------------------------------------------------------------------------
@@ -101,7 +101,7 @@ function makeSlackJob(signingSecret: string): QueuedChannelJob<unknown> {
   };
 }
 
-type DeadLetterEntry = {
+type FailedEntry = {
   failedAt: number;
   error: string;
   channel: string;
@@ -112,7 +112,7 @@ type DeadLetterEntry = {
 // Tests
 // ---------------------------------------------------------------------------
 
-test("Drain retry: gateway 5xx with Retry-After → job re-parked in processing queue, not dead-lettered", async (t) => {
+test("Drain retry: gateway 5xx with Retry-After → job re-parked in processing queue, not permanently failed", async (t) => {
   const h = createScenarioHarness();
   try {
     const signingSecret = configureSlack(h);
@@ -159,11 +159,11 @@ test("Drain retry: gateway 5xx with Retry-After → job re-parked in processing 
         "Job should be parked in processing queue",
       );
 
-      // Dead letter should be empty — this is a retryable failure
+      // Failed should be empty — this is a retryable failure
       assert.equal(
-        await store.getQueueLength(channelDeadLetterKey("slack")),
+        await store.getQueueLength(channelFailedKey("slack")),
         0,
-        "No dead letter should be written for retryable failure",
+        "No failed should be written for retryable failure",
       );
 
       // Verify the parked entry contains correct retry metadata
@@ -239,11 +239,11 @@ test("Drain retry: gateway 410 → job retried (sandbox treated as gone)", async
       // First drain — gateway 410 → retryable, job re-parked
       await drainSlackQueue();
 
-      // Should NOT be dead-lettered
+      // Should NOT be permanently failed
       assert.equal(
-        await store.getQueueLength(channelDeadLetterKey("slack")),
+        await store.getQueueLength(channelFailedKey("slack")),
         0,
-        "410 should be retryable, not dead-lettered",
+        "410 should be retryable, not permanently failed",
       );
 
       // Should be parked in processing
@@ -309,11 +309,11 @@ test("Drain retry: outbound send failure (RetryableSendError) → job re-parked 
 
       await drainSlackQueue();
 
-      // Should NOT be dead-lettered — RetryableSendError is retryable
+      // Should NOT be permanently failed — RetryableSendError is retryable
       assert.equal(
-        await store.getQueueLength(channelDeadLetterKey("slack")),
+        await store.getQueueLength(channelFailedKey("slack")),
         0,
-        "RetryableSendError should not dead-letter",
+        "RetryableSendError should not failed",
       );
 
       // Should be parked in processing
@@ -344,7 +344,7 @@ test("Drain retry: outbound send failure (RetryableSendError) → job re-parked 
   }
 });
 
-test("Drain retry: retries exhausted (retryCount >= 8) → job moved to dead-letter with error details", async (t) => {
+test("Drain retry: retries exhausted (retryCount >= 8) → job moved to failed with error details", async (t) => {
   const h = createScenarioHarness();
   try {
     const signingSecret = configureSlack(h);
@@ -401,44 +401,44 @@ test("Drain retry: retries exhausted (retryCount >= 8) → job moved to dead-let
         "Main queue should be empty",
       );
 
-      // Processing should be empty (ACKed after dead-lettering)
+      // Processing should be empty (ACKed after faileding)
       assert.equal(
         await store.getQueueLength(channelProcessingKey("slack")),
         0,
-        "Processing queue should be empty after dead-lettering",
+        "Processing queue should be empty after faileding",
       );
 
-      // Dead letter should have exactly one entry
+      // Failed should have exactly one entry
       assert.equal(
-        await store.getQueueLength(channelDeadLetterKey("slack")),
+        await store.getQueueLength(channelFailedKey("slack")),
         1,
-        "Dead letter queue should have one entry",
+        "Failed queue should have one entry",
       );
 
-      // Verify dead-letter entry contents
-      const dlRaw = await store.dequeue(channelDeadLetterKey("slack"));
-      assert.ok(dlRaw, "Dead letter entry should exist");
+      // Verify failed entry contents
+      const dlRaw = await store.dequeue(channelFailedKey("slack"));
+      assert.ok(dlRaw, "Failed entry should exist");
 
-      const dl = JSON.parse(dlRaw) as DeadLetterEntry;
-      assert.equal(dl.channel, "slack", "Dead letter should contain channel name");
+      const dl = JSON.parse(dlRaw) as FailedEntry;
+      assert.equal(dl.channel, "slack", "Failed should contain channel name");
       assert.ok(
         typeof dl.failedAt === "number" && dl.failedAt > 0,
-        "Dead letter should have failedAt timestamp",
+        "Failed should have failedAt timestamp",
       );
       assert.ok(
         dl.error.includes("gateway_retryable_500"),
-        `Dead letter error should describe the failure, got: ${dl.error}`,
+        `Failed error should describe the failure, got: ${dl.error}`,
       );
-      assert.ok(dl.job, "Dead letter should contain original job payload");
+      assert.ok(dl.job, "Failed should contain original job payload");
       assert.equal(
         (dl.job.payload as { type: string }).type,
         "event_callback",
-        "Dead letter job should preserve original payload",
+        "Failed job should preserve original payload",
       );
       assert.equal(
         dl.job.retryCount,
         8,
-        "Dead letter job should preserve retryCount from last attempt",
+        "Failed job should preserve retryCount from last attempt",
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -520,11 +520,11 @@ test("Drain retry: Telegram RetryableSendError (sendMessage 429) → job re-park
 
       await drainTelegramQueue();
 
-      // Should NOT be dead-lettered — RetryableSendError is retryable
+      // Should NOT be permanently failed — RetryableSendError is retryable
       assert.equal(
-        await store.getQueueLength(channelDeadLetterKey("telegram")),
+        await store.getQueueLength(channelFailedKey("telegram")),
         0,
-        "Telegram RetryableSendError should not dead-letter",
+        "Telegram RetryableSendError should not failed",
       );
 
       // Should be parked in processing
@@ -633,11 +633,11 @@ test("Drain retry: Discord RetryableSendError (webhook PATCH 429) → job re-par
 
       await drainDiscordQueue();
 
-      // Should NOT be dead-lettered — RetryableSendError is retryable
+      // Should NOT be permanently failed — RetryableSendError is retryable
       assert.equal(
-        await store.getQueueLength(channelDeadLetterKey("discord")),
+        await store.getQueueLength(channelFailedKey("discord")),
         0,
-        "Discord RetryableSendError should not dead-letter",
+        "Discord RetryableSendError should not failed",
       );
 
       // Should be parked in processing
@@ -830,11 +830,11 @@ test("Drain retry: adapter send timeout on first job does not block processing o
         "First job should be parked in processing (timeout is retryable)",
       );
 
-      // No dead letters — timeout is retryable
+      // No faileds — timeout is retryable
       assert.equal(
-        await store.getQueueLength(channelDeadLetterKey("slack")),
+        await store.getQueueLength(channelFailedKey("slack")),
         0,
-        "No dead letters — timeout is retryable",
+        "No faileds — timeout is retryable",
       );
 
       // Second job should have been sent successfully
@@ -863,7 +863,7 @@ test("Drain retry: adapter send timeout on first job does not block processing o
   }
 });
 
-test("Drain retry: dead-letter entry contains channel, payload, error, and timestamp", async (t) => {
+test("Drain retry: failed entry contains channel, payload, error, and timestamp", async (t) => {
   const h = createScenarioHarness();
   try {
     const signingSecret = configureSlack(h);
@@ -892,18 +892,18 @@ test("Drain retry: dead-letter entry contains channel, payload, error, and times
       const beforeDrain = Date.now();
       await drainSlackQueue();
 
-      // Non-retryable error → immediate dead letter
+      // Non-retryable error → immediate failed
       assert.equal(
-        await store.getQueueLength(channelDeadLetterKey("slack")),
+        await store.getQueueLength(channelFailedKey("slack")),
         1,
-        "Non-retryable error should immediately dead-letter",
+        "Non-retryable error should immediately failed",
       );
 
-      // Verify all required fields in dead-letter entry
-      const dlRaw = await store.dequeue(channelDeadLetterKey("slack"));
+      // Verify all required fields in failed entry
+      const dlRaw = await store.dequeue(channelFailedKey("slack"));
       assert.ok(dlRaw);
 
-      const dl = JSON.parse(dlRaw) as DeadLetterEntry;
+      const dl = JSON.parse(dlRaw) as FailedEntry;
 
       // channel name
       assert.equal(dl.channel, "slack", "Must contain channel name");

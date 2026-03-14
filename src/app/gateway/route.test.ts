@@ -79,6 +79,7 @@ async function callGatewayPost(
       method: "POST",
       headers: {
         "content-type": "application/json",
+        authorization: "Bearer test-admin-secret-for-scenarios",
         ...headers,
       },
       body,
@@ -103,19 +104,16 @@ async function callGatewayPost(
 // 1. Unauthenticated request returns redirect to auth flow
 // ===========================================================================
 
-test("Gateway: unauthenticated GET returns redirect to auth when using sign-in-with-vercel", async () => {
+test("Gateway: unauthenticated GET returns 401 when no bearer token", async () => {
   const h = createScenarioHarness();
   try {
-    process.env.VERCEL_AUTH_MODE = "sign-in-with-vercel";
-    const result = await callGatewayGet("/");
-    assert.equal(result.status, 302);
-    const location = result.response.headers.get("location") ?? "";
-    assert.ok(
-      location.includes("/api/auth/authorize"),
-      `Expected redirect to authorize, got: ${location}`,
-    );
+    const mod = getGatewayRoute();
+    const request = buildGetRequest("/gateway");
+    const response = await mod.GET(request, {
+      params: Promise.resolve({ path: undefined }),
+    });
+    assert.equal(response.status, 401);
   } finally {
-    delete process.env.VERCEL_AUTH_MODE;
     h.teardown();
   }
 });
@@ -472,6 +470,7 @@ test("Gateway: query params are forwarded to upstream (sensitive params stripped
       const mod = getGatewayRoute();
       const request = buildGetRequest(
         "/gateway/search?q=test&page=2&token=secret&_internal=x",
+        { authorization: "Bearer test-admin-secret-for-scenarios" },
       );
       const response = await mod.GET(request, {
         params: Promise.resolve({ path: ["search"] }),
@@ -836,19 +835,21 @@ test("Gateway: OPTIONS is forwarded to upstream and returns response", async () 
 // ===========================================================================
 
 for (const method of ["PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const) {
-  test(`Gateway: unauthenticated ${method} returns redirect when using sign-in-with-vercel`, async () => {
+  test(`Gateway: unauthenticated ${method} returns 401 when no bearer token`, async () => {
     const h = createScenarioHarness();
     try {
-      process.env.VERCEL_AUTH_MODE = "sign-in-with-vercel";
-      const result = await callGatewayMethod(method, "/");
-      assert.equal(result.status, 302);
-      const location = result.response.headers.get("location") ?? "";
-      assert.ok(
-        location.includes("/api/auth/authorize"),
-        `Expected redirect to authorize for ${method}, got: ${location}`,
-      );
+      const mod = getGatewayRoute();
+      const url = "http://localhost:3000/gateway";
+      const request = new Request(url, { method });
+      const handler = mod[method] as (
+        req: Request,
+        ctx: { params: Promise<{ path?: string[] }> },
+      ) => Promise<Response>;
+      const response = await handler(request, {
+        params: Promise.resolve({ path: undefined }),
+      });
+      assert.equal(response.status, 401);
     } finally {
-      delete process.env.VERCEL_AUTH_MODE;
       h.teardown();
     }
   });
@@ -882,9 +883,13 @@ for (const method of ["PUT", "PATCH", "DELETE"] as const) {
           `http://localhost:3000/gateway/search?q=test&page=2`,
           {
             method,
-            ...(method !== "DELETE"
-              ? { body: "{}", headers: { "content-type": "application/json" } }
-              : {}),
+            headers: {
+              authorization: "Bearer test-admin-secret-for-scenarios",
+              ...(method !== "DELETE"
+                ? { "content-type": "application/json" }
+                : {}),
+            },
+            ...(method !== "DELETE" ? { body: "{}" } : {}),
           },
         );
         const response = await handler(request, {

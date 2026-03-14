@@ -1,8 +1,8 @@
-import { requireRouteAuth } from "@/server/auth/vercel-auth";
+import { requireJsonRouteAuth } from "@/server/auth/route-auth";
 import { getFirewallDiagnostics } from "@/server/firewall/state";
 
 export async function GET(request: Request): Promise<Response> {
-  const auth = await requireRouteAuth(request, { mode: "json" });
+  const auth = await requireJsonRouteAuth(request);
   if (auth instanceof Response) {
     return auth;
   }

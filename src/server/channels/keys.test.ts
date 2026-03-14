@@ -11,7 +11,7 @@ import type { ChannelName } from "@/shared/channels";
 import {
   channelQueueKey,
   channelProcessingKey,
-  channelDeadLetterKey,
+  channelFailedKey,
   channelDrainLockKey,
   channelSessionHistoryKey,
   channelDedupKey,
@@ -43,13 +43,13 @@ test("keys: channelProcessingKey uses correct prefix and suffix", () => {
 });
 
 // ---------------------------------------------------------------------------
-// channelDeadLetterKey
+// channelFailedKey
 // ---------------------------------------------------------------------------
 
-test("keys: channelDeadLetterKey uses correct prefix and suffix", () => {
+test("keys: channelFailedKey uses correct prefix and suffix", () => {
   for (const ch of CHANNELS) {
-    const key = channelDeadLetterKey(ch);
-    assert.equal(key, `${PREFIX}:channels:${ch}:deadletter`);
+    const key = channelFailedKey(ch);
+    assert.equal(key, `${PREFIX}:channels:${ch}:failed`);
   }
 });
 
@@ -100,7 +100,7 @@ test("keys: all key functions produce unique keys per channel", () => {
   for (const ch of CHANNELS) {
     allKeys.add(channelQueueKey(ch));
     allKeys.add(channelProcessingKey(ch));
-    allKeys.add(channelDeadLetterKey(ch));
+    allKeys.add(channelFailedKey(ch));
     allKeys.add(channelDrainLockKey(ch));
     allKeys.add(channelSessionHistoryKey(ch, "s1"));
     allKeys.add(channelDedupKey(ch, "d1"));
@@ -118,7 +118,7 @@ test("keys: different key functions for same channel produce distinct keys", () 
   const keys = [
     channelQueueKey(ch),
     channelProcessingKey(ch),
-    channelDeadLetterKey(ch),
+    channelFailedKey(ch),
     channelDrainLockKey(ch),
     channelSessionHistoryKey(ch, "s"),
     channelDedupKey(ch, "d"),

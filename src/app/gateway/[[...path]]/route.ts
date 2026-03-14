@@ -1,6 +1,6 @@
 import { after } from "next/server";
 
-import { requireRouteAuth } from "@/server/auth/vercel-auth";
+import { requireAdminAuth } from "@/server/auth/admin-auth";
 import { getBaseOrigin } from "@/server/env";
 import { extractRequestId, logError, logInfo, logWarn } from "@/server/log";
 import { injectWrapperScript } from "@/server/proxy/htmlInjection";
@@ -67,7 +67,7 @@ async function handleProxy(request: Request, path: string): Promise<Response> {
     return new Response("Invalid path", { status: 400 });
   }
 
-  const auth = await requireRouteAuth(request, { mode: "redirect" });
+  const auth = await requireAdminAuth(request);
   if (auth instanceof Response) {
     logWarn("gateway.auth_failure", { ...reqCtx, status: auth.status });
     return auth;

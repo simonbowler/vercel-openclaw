@@ -53,7 +53,7 @@ import { drainDiscordQueue } from "@/server/channels/discord/runtime";
 import {
   channelQueueKey,
   channelProcessingKey,
-  channelDeadLetterKey,
+  channelFailedKey,
 } from "@/server/channels/keys";
 import {
   setFirewallMode,
@@ -502,14 +502,14 @@ test("full-smoke: complete lifecycle with channels, firewall, and proxy", async 
       const store = h.getStore();
       const meta = await h.getMeta();
 
-      // --- Clean queues for all channels (including dead-letter) ---
+      // --- Clean queues for all channels (including failed) ---
       const channels: ChannelName[] = ["slack", "telegram", "discord"];
       for (const ch of channels) {
         await assertQueuesDrained(store, ch);
 
-        // Also verify no dead letters accumulated
-        const dlLen = await store.getQueueLength(channelDeadLetterKey(ch));
-        assert.equal(dlLen, 0, `${ch} dead-letter queue should be empty`);
+        // Also verify no failed entries accumulated
+        const dlLen = await store.getQueueLength(channelFailedKey(ch));
+        assert.equal(dlLen, 0, `${ch} failed queue should be empty`);
 
         // Verify processing queues are also empty
         const procLen = await store.getQueueLength(channelProcessingKey(ch));

@@ -20,6 +20,7 @@ import {
   callRoute,
   buildGetRequest,
   buildPostRequest,
+  buildAuthGetRequest,
   buildAuthPostRequest,
   getStatusRoute,
   patchNextServerAfter,
@@ -48,6 +49,8 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
     "NEXT_PUBLIC_APP_URL",
     "NEXT_PUBLIC_BASE_DOMAIN",
     "BASE_DOMAIN",
+    "ADMIN_SECRET",
+    "SESSION_SECRET",
   ];
   const originals: Record<string, string | undefined> = {};
 
@@ -65,6 +68,8 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
   delete process.env.AI_GATEWAY_API_KEY;
   delete process.env.VERCEL_OIDC_TOKEN;
   process.env.NEXT_PUBLIC_BASE_DOMAIN = "http://localhost:3000";
+  process.env.ADMIN_SECRET = "test-admin-secret-for-scenarios";
+  process.env.SESSION_SECRET = "test-session-secret-for-smoke-tests";
 
   _resetStoreForTesting();
 
@@ -91,7 +96,7 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
 test("GET /api/status: returns uninitialized status by default", async () => {
   await withTestEnv(async () => {
     const route = getStatusRoute();
-    const request = buildGetRequest("/api/status");
+    const request = buildAuthGetRequest("/api/status");
     const result = await callRoute(route.GET!, request);
 
     assert.equal(result.status, 200);
@@ -112,7 +117,7 @@ test("GET /api/status: returns running status when sandbox is running", async ()
     });
 
     const route = getStatusRoute();
-    const request = buildGetRequest("/api/status");
+    const request = buildAuthGetRequest("/api/status");
     const result = await callRoute(route.GET!, request);
 
     assert.equal(result.status, 200);
@@ -134,7 +139,7 @@ test("GET /api/status: includes firewall and channel state", async () => {
     });
 
     const route = getStatusRoute();
-    const request = buildGetRequest("/api/status");
+    const request = buildAuthGetRequest("/api/status");
     const result = await callRoute(route.GET!, request);
 
     assert.equal(result.status, 200);

@@ -528,8 +528,15 @@ export function buildDeleteRequest(
 }
 
 // ---------------------------------------------------------------------------
-// CSRF-authenticated request builders
+// Admin-authenticated request builders
 // ---------------------------------------------------------------------------
+
+/**
+ * The test admin secret must match what the harness sets via ADMIN_SECRET env.
+ * Imported lazily to avoid circular deps — the value is the same constant used
+ * in auth-fixtures.ts.
+ */
+const TEST_ADMIN_BEARER = "Bearer test-admin-secret-for-scenarios";
 
 export function buildAuthPostRequest(
   path: string,
@@ -537,6 +544,7 @@ export function buildAuthPostRequest(
   headers?: Record<string, string>,
 ): Request {
   return buildPostRequest(path, body, {
+    authorization: TEST_ADMIN_BEARER,
     origin: "http://localhost:3000",
     "x-requested-with": "XMLHttpRequest",
     ...headers,
@@ -548,6 +556,7 @@ export function buildAuthGetRequest(
   headers?: Record<string, string>,
 ): Request {
   return buildGetRequest(path, {
+    authorization: TEST_ADMIN_BEARER,
     origin: "http://localhost:3000",
     "x-requested-with": "XMLHttpRequest",
     ...headers,
@@ -560,6 +569,7 @@ export function buildAuthPutRequest(
   headers?: Record<string, string>,
 ): Request {
   return buildPutRequest(path, body, {
+    authorization: TEST_ADMIN_BEARER,
     origin: "http://localhost:3000",
     "x-requested-with": "XMLHttpRequest",
     ...headers,
@@ -572,6 +582,7 @@ export function buildAuthDeleteRequest(
   headers?: Record<string, string>,
 ): Request {
   return buildDeleteRequest(path, body, {
+    authorization: TEST_ADMIN_BEARER,
     origin: "http://localhost:3000",
     "x-requested-with": "XMLHttpRequest",
     ...headers,
@@ -592,7 +603,10 @@ export async function callGatewayGet(
 ): Promise<RouteCallResult> {
   const mod = getGatewayRoute();
   const pathSegments = subPath === "/" ? [] : subPath.replace(/^\//, "").split("/");
-  const request = buildGetRequest(`/gateway${subPath === "/" ? "" : subPath}`, headers);
+  const request = buildGetRequest(`/gateway${subPath === "/" ? "" : subPath}`, {
+    authorization: TEST_ADMIN_BEARER,
+    ...headers,
+  });
   const response = await mod.GET(request, {
     params: Promise.resolve({ path: pathSegments.length ? pathSegments : undefined }),
   });
@@ -616,7 +630,10 @@ export async function callGatewayMethod(
   const url = `http://localhost:3000/gateway${subPath === "/" ? "" : subPath}`;
   const init: RequestInit = {
     method,
-    headers: options?.headers ?? {},
+    headers: {
+      authorization: TEST_ADMIN_BEARER,
+      ...(options?.headers ?? {}),
+    },
   };
   if (options?.body && !["GET", "HEAD"].includes(method)) {
     (init.headers as Record<string, string>)["content-type"] = "application/json";
@@ -642,6 +659,7 @@ export async function callAdminPost(
   body = "{}",
 ): Promise<RouteCallResult> {
   const request = buildPostRequest(path, body, {
+    authorization: TEST_ADMIN_BEARER,
     origin: "http://localhost:3000",
     "x-requested-with": "XMLHttpRequest",
   });

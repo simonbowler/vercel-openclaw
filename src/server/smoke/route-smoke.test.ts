@@ -37,6 +37,7 @@ import {
   callRoute,
   callAdminPost,
   callGatewayGet,
+  getGatewayRoute,
   buildGetRequest,
   buildPostRequest,
   buildPutRequest,
@@ -69,10 +70,6 @@ import {
   getAuthCallbackRoute,
   getAuthSignoutRoute,
 } from "@/test-utils/route-caller";
-import {
-  buildSessionCookie,
-  setCookieToCookieHeader,
-} from "@/test-utils/auth-fixtures";
 
 // Patch before any route modules are loaded
 patchNextServerAfter();
@@ -111,7 +108,7 @@ test("route-smoke: GET /api/status returns metadata", async (t) => {
   process.env.NEXT_PUBLIC_BASE_DOMAIN = "http://localhost:3000";
   try {
     const route = getStatusRoute();
-    const result = await callRoute(route.GET!, buildGetRequest("/api/status"));
+    const result = await callRoute(route.GET!, buildAuthGetRequest("/api/status"));
     assert.equal(result.status, 200);
     const body = result.json as { status: string; authMode: string; storeBackend: string };
     assert.equal(body.status, "uninitialized");
@@ -891,13 +888,18 @@ test("route-smoke: GET /api/status without session returns 401 in sign-in-with-v
   }
 });
 
-test("route-smoke: POST /api/admin/ensure without session returns 401 in sign-in-with-vercel mode", async (t) => {
+test("route-smoke: POST /api/admin/ensure without bearer or session returns 403 in sign-in-with-vercel mode", async (t) => {
   const h = createScenarioHarness({ authMode: "sign-in-with-vercel" });
   try {
     const route = getAdminEnsureRoute();
+    // No bearer token, no session cookie — only CSRF headers.
+    // requireAdminMutationAuth: no bearer → CSRF passes → no cookie → 401
     const result = await callRoute(
       route.POST,
-      buildAuthPostRequest("/api/admin/ensure", "{}"),
+      buildPostRequest("/api/admin/ensure", "{}", {
+        origin: "http://localhost:3000",
+        "x-requested-with": "XMLHttpRequest",
+      }),
     );
     assert.equal(result.status, 401);
   } catch (err) {
@@ -922,22 +924,20 @@ test("route-smoke: GET /api/firewall without session returns 401 in sign-in-with
   }
 });
 
-test("route-smoke: authenticated request with session cookie succeeds in sign-in-with-vercel mode", async (t) => {
-  const h = createScenarioHarness({ authMode: "sign-in-with-vercel" });
+test("route-smoke: authenticated request with bearer token succeeds", async (t) => {
+  const h = createScenarioHarness();
   // Status route needs NEXT_PUBLIC_BASE_DOMAIN for Discord URL generation
   const origBaseDomain = process.env.NEXT_PUBLIC_BASE_DOMAIN;
   process.env.NEXT_PUBLIC_BASE_DOMAIN = "http://localhost:3000";
   try {
-    const setCookie = await buildSessionCookie();
-    const cookie = setCookieToCookieHeader(setCookie);
     const route = getStatusRoute();
     const result = await callRoute(
       route.GET!,
-      buildGetRequest("/api/status", { cookie }),
+      buildAuthGetRequest("/api/status"),
     );
     assert.equal(result.status, 200);
-    const body = result.json as { user: { email: string } };
-    assert.equal(body.user.email, "dev@example.com");
+    const body = result.json as { user: { sub: string } };
+    assert.equal(body.user.sub, "admin");
   } catch (err) {
     await dumpDiagnostics(t, h);
     throw err;
@@ -1057,14 +1057,16 @@ test("route-smoke: gateway proxies HTML with injection when running", async (t) 
   }
 });
 
-test("route-smoke: gateway in sign-in-with-vercel mode redirects unauthenticated", async (t) => {
-  const h = createScenarioHarness({ authMode: "sign-in-with-vercel" });
+test("route-smoke: gateway without bearer token returns 401", async (t) => {
+  const h = createScenarioHarness();
   try {
-    const result = await callGatewayGet("/");
-    assert.ok(
-      [301, 302, 303, 307, 308].includes(result.status),
-      `Expected redirect for unauthenticated gateway, got ${result.status}`,
-    );
+    const mod = getGatewayRoute();
+    const request = buildGetRequest("/gateway");
+    const response = await mod.GET(request, {
+      params: Promise.resolve({ path: undefined }),
+    });
+
+    assert.equal(response.status, 401);
   } catch (err) {
     await dumpDiagnostics(t, h);
     throw err;

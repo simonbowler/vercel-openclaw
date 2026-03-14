@@ -12,14 +12,31 @@ export function isProduction(): boolean {
   return process.env.NODE_ENV === "production";
 }
 
+/**
+ * Session encryption key used for cookie encryption.
+ * In production without an env var, a deterministic fallback derived from
+ * UPSTASH_REDIS_REST_TOKEN is used so the key survives cold starts without
+ * extra configuration. Local dev uses a static placeholder.
+ */
 export function getSessionSecret(): string {
   const configured = process.env.SESSION_SECRET?.trim();
   if (configured) {
     return configured;
   }
 
-  if (isProduction() && getAuthMode() === "sign-in-with-vercel") {
-    throw new Error("SESSION_SECRET is required when using sign-in-with-vercel.");
+  // Derive from the Upstash token — available on every Vercel deployment that
+  // has the Upstash integration, so this is effectively zero-config.
+  const upstashToken =
+    process.env.UPSTASH_REDIS_REST_TOKEN?.trim() ??
+    process.env.KV_REST_API_TOKEN?.trim();
+  if (upstashToken) {
+    return `openclaw-session-derived-${upstashToken}`;
+  }
+
+  if (isProduction()) {
+    throw new Error(
+      "SESSION_SECRET or UPSTASH_REDIS_REST_TOKEN is required in production.",
+    );
   }
 
   return "openclaw-single-local-session-secret-change-me";

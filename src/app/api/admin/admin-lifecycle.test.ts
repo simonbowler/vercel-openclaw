@@ -77,6 +77,8 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
     "KV_REST_API_TOKEN",
     "AI_GATEWAY_API_KEY",
     "VERCEL_OIDC_TOKEN",
+    "ADMIN_SECRET",
+    "SESSION_SECRET",
   ];
   const originals: Record<string, string | undefined> = {};
 
@@ -93,6 +95,8 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
   delete process.env.KV_REST_API_TOKEN;
   delete process.env.AI_GATEWAY_API_KEY;
   delete process.env.VERCEL_OIDC_TOKEN;
+  process.env.ADMIN_SECRET = "test-admin-secret-for-scenarios";
+  process.env.SESSION_SECRET = "test-session-secret-for-smoke-tests";
 
   _resetStoreForTesting();
 
@@ -118,6 +122,7 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
 
 function authPost(path: string, body = "{}"): Request {
   return buildPostRequest(path, body, {
+    authorization: "Bearer test-admin-secret-for-scenarios",
     origin: "http://localhost:3000",
     "x-requested-with": "XMLHttpRequest",
   });
@@ -125,6 +130,7 @@ function authPost(path: string, body = "{}"): Request {
 
 function authGet(path: string): Request {
   return buildGetRequest(path, {
+    authorization: "Bearer test-admin-secret-for-scenarios",
     origin: "http://localhost:3000",
     host: "localhost:3000",
     "x-requested-with": "XMLHttpRequest",

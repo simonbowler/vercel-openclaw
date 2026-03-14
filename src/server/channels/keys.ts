@@ -10,8 +10,8 @@ export function channelProcessingKey(channel: ChannelName): string {
   return `${PREFIX}:channels:${channel}:processing`;
 }
 
-export function channelDeadLetterKey(channel: ChannelName): string {
-  return `${PREFIX}:channels:${channel}:deadletter`;
+export function channelFailedKey(channel: ChannelName): string {
+  return `${PREFIX}:channels:${channel}:failed`;
 }
 
 export function channelDrainLockKey(channel: ChannelName): string {

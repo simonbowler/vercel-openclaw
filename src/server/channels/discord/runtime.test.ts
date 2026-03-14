@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { withHarness } from "@/test-utils/harness";
 import { enqueueChannelJob, type QueuedChannelJob } from "@/server/channels/driver";
-import { channelDeadLetterKey, channelProcessingKey, channelQueueKey } from "@/server/channels/keys";
+import { channelFailedKey, channelProcessingKey, channelQueueKey } from "@/server/channels/keys";
 import { drainDiscordQueue } from "@/server/channels/discord/runtime";
 
 // ---------------------------------------------------------------------------
@@ -177,10 +177,10 @@ test("[discord runtime] drain handles chat completions network error with retry"
 });
 
 // ---------------------------------------------------------------------------
-// Drain handles non-retryable gateway failure -> dead letter
+// Drain handles non-retryable gateway failure -> failed queue
 // ---------------------------------------------------------------------------
 
-test("[discord runtime] drain handles gateway 400 -> dead letter", async () => {
+test("[discord runtime] drain handles gateway 400 -> failed queue", async () => {
   await withHarness(async (h) => {
     h.fakeFetch.onPost(/\/v1\/chat\/completions/, () =>
       new Response("Bad Request", { status: 400 }),
@@ -205,8 +205,8 @@ test("[discord runtime] drain handles gateway 400 -> dead letter", async () => {
       await drainDiscordQueue();
 
       const store = h.getStore();
-      const dlEntry = await store.dequeue(channelDeadLetterKey("discord"));
-      assert.ok(dlEntry, "Job should be dead-lettered on non-retryable gateway error");
+      const dlEntry = await store.dequeue(channelFailedKey("discord"));
+      assert.ok(dlEntry, "Job should be permanently failed on non-retryable gateway error");
       const parsed = JSON.parse(dlEntry);
       assert.equal(parsed.channel, "discord");
       assert.ok(parsed.error.includes("gateway_failed"));

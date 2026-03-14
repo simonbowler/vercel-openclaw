@@ -10,7 +10,7 @@ import type {
 } from "@/server/channels/core/types";
 import { appendSessionHistory, readSessionHistory } from "@/server/channels/history";
 import {
-  channelDeadLetterKey,
+  channelFailedKey,
   channelDedupKey,
   channelDrainLockKey,
   channelProcessingKey,
@@ -43,7 +43,7 @@ export type QueuedChannelJob<TPayload = unknown> = {
   dedupId?: string;
 };
 
-type DeadLetterEntry = {
+type FailedEntry = {
   failedAt: number;
   error: string;
   channel: ChannelName;
@@ -167,7 +167,7 @@ export async function drainChannelQueue<
         job = JSON.parse(leasedEntry.job) as QueuedChannelJob<TPayload>;
       } catch (error) {
         await store.ackQueueItem(processingKey, leasedValue);
-        await writeDeadLetter(options.channel, {
+        await writeFailed(options.channel, {
           failedAt: Date.now(),
           error: formatError(error),
           channel: options.channel,
@@ -250,7 +250,7 @@ export async function drainChannelQueue<
             channel: options.channel,
             error: formatError(error),
           });
-          await writeDeadLetter(options.channel, {
+          await writeFailed(options.channel, {
             failedAt: Date.now(),
             error: formatError(error),
             channel: options.channel,
@@ -264,7 +264,7 @@ export async function drainChannelQueue<
           channel: options.channel,
           error: formatError(error),
         });
-        await writeDeadLetter(options.channel, {
+        await writeFailed(options.channel, {
           failedAt: Date.now(),
           error: formatError(error),
           channel: options.channel,
@@ -636,11 +636,11 @@ function resolveAppOrigin(origin: string | null | undefined): string {
   throw new Error("NEXT_PUBLIC_APP_URL is required for background channel jobs.");
 }
 
-async function writeDeadLetter(
+async function writeFailed(
   channel: ChannelName,
-  entry: DeadLetterEntry,
+  entry: FailedEntry,
 ): Promise<void> {
-  await getStore().enqueue(channelDeadLetterKey(channel), JSON.stringify(entry));
+  await getStore().enqueue(channelFailedKey(channel), JSON.stringify(entry));
 }
 
 function formatError(error: unknown): string {
