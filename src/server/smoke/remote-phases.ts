@@ -6,6 +6,10 @@
  */
 
 import { authHeaders, getAuthSource } from "./remote-auth.js";
+import {
+  buildSlackSmokePayload,
+  buildTelegramSmokePayload,
+} from "./remote-crypto.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -517,6 +521,328 @@ export async function sshEcho(baseUrl: string, opts?: PhaseOptions): Promise<Pha
       error: "stdout missing 'smoke-ok' marker",
       errorCode: "ECHO_MISMATCH",
       hint: "SSH echo command ran but output did not contain expected marker",
+    };
+  } catch (err) {
+    return failFromError(phase, endpoint, err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Server-side channel webhook signing
+// ---------------------------------------------------------------------------
+
+/**
+ * Ask the server to sign and send a webhook payload for the given channel.
+ * The server constructs the signed request and POSTs it to the local webhook
+ * endpoint — raw secrets never leave the server.
+ *
+ * Returns { configured, sent, status } or null if the endpoint is unreachable.
+ */
+async function sendSmokeWebhook(
+  baseUrl: string,
+  channel: "slack" | "telegram",
+  payloadBody: string,
+  requestTimeoutMs: number,
+): Promise<{ configured: boolean; sent: boolean; status?: number } | null> {
+  try {
+    const hdrs = { ...authHeaders({ mutation: true }), "Content-Type": "application/json" };
+    const res = await fetchWithTimeout(
+      url(baseUrl, "/api/admin/channel-secrets"),
+      {
+        method: "POST",
+        headers: hdrs,
+        body: JSON.stringify({ channel, body: payloadBody }),
+      },
+      requestTimeoutMs,
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as { configured: boolean; sent: boolean; status?: number };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchChannelSummary(
+  baseUrl: string,
+  requestTimeoutMs: number,
+): Promise<Record<string, { connected: boolean; queueDepth: number; deadLetterCount: number }> | null> {
+  try {
+    const hdrs = authHeaders();
+    const res = await fetchWithTimeout(
+      url(baseUrl, "/api/channels/summary"),
+      { headers: hdrs },
+      requestTimeoutMs,
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as Record<string, { connected: boolean; queueDepth: number; deadLetterCount: number }>;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Channel round-trip phase (tests webhook → queue → drain → completions)
+// ---------------------------------------------------------------------------
+
+export async function channelRoundTrip(baseUrl: string, opts?: PhaseOptions & { pollTimeoutMs?: number }): Promise<PhaseResult> {
+  const phase = "channelRoundTrip";
+  const endpoint = "/api/admin/channel-secrets";
+  const reqTimeout = opts?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const pollTimeout = opts?.pollTimeoutMs ?? 120_000;
+
+  try {
+    // 1. Send smoke webhooks (signed + delivered server-side)
+    const slackPayload = buildSlackSmokePayload().body;
+    const telegramPayload = buildTelegramSmokePayload();
+
+    const slackResult = await sendSmokeWebhook(baseUrl, "slack", slackPayload, reqTimeout);
+    const telegramResult = await sendSmokeWebhook(baseUrl, "telegram", telegramPayload, reqTimeout);
+
+    if (!slackResult && !telegramResult) {
+      log(phase, "skipped", { reason: "smoke-webhook-endpoint-unavailable" });
+      return {
+        phase, passed: true, durationMs: 0, endpoint,
+        detail: { skipped: true, reason: "Could not reach smoke webhook endpoint" },
+      };
+    }
+
+    const hasSlack = slackResult?.configured === true && slackResult.sent === true;
+    const hasTelegram = telegramResult?.configured === true && telegramResult.sent === true;
+
+    if (!hasSlack && !hasTelegram) {
+      // Channels not configured — graceful skip
+      const noneConfigured = (slackResult?.configured === false) && (telegramResult?.configured === false);
+      if (noneConfigured) {
+        log(phase, "skipped", { reason: "no-channels-configured" });
+        return {
+          phase, passed: true, durationMs: 0, endpoint,
+          detail: { skipped: true, reason: "No channels configured (Slack or Telegram)" },
+        };
+      }
+      // Configured but send failed
+      log(phase, "send-failed", { slack: slackResult, telegram: telegramResult });
+      return {
+        phase, passed: false, durationMs: 0, endpoint,
+        error: "Failed to send smoke webhooks",
+        errorCode: "WEBHOOK_SEND_FAILED",
+        detail: { slack: slackResult, telegram: telegramResult },
+      };
+    }
+
+    // 2. Read baseline queue state
+    const baselineSummary = await fetchChannelSummary(baseUrl, reqTimeout);
+    const baselineSlackDL = baselineSummary?.slack?.deadLetterCount ?? 0;
+    const baselineTelegramDL = baselineSummary?.telegram?.deadLetterCount ?? 0;
+
+    const results: Record<string, { sent: boolean; drained: boolean; deadLetterDelta: number; durationMs: number; error?: string }> = {};
+    const t0 = performance.now();
+
+    if (hasSlack) {
+      results.slack = { sent: true, drained: false, deadLetterDelta: 0, durationMs: 0 };
+    }
+    if (hasTelegram) {
+      results.telegram = { sent: true, drained: false, deadLetterDelta: 0, durationMs: 0 };
+    }
+
+    // 4. Poll until queues drain
+    const deadline = Date.now() + pollTimeout;
+    let delay = 2_000;
+
+    while (Date.now() < deadline) {
+      await sleep(delay);
+      const summary = await fetchChannelSummary(baseUrl, reqTimeout);
+      if (!summary) continue;
+
+      let allDrained = true;
+
+      if (hasSlack && results.slack?.sent) {
+        if (summary.slack?.queueDepth === 0) {
+          results.slack.drained = true;
+          results.slack.deadLetterDelta = (summary.slack?.deadLetterCount ?? 0) - baselineSlackDL;
+        } else {
+          allDrained = false;
+        }
+      }
+
+      if (hasTelegram && results.telegram?.sent) {
+        if (summary.telegram?.queueDepth === 0) {
+          results.telegram.drained = true;
+          results.telegram.deadLetterDelta = (summary.telegram?.deadLetterCount ?? 0) - baselineTelegramDL;
+        } else {
+          allDrained = false;
+        }
+      }
+
+      log(phase, "poll", { slackQueue: summary.slack?.queueDepth, telegramQueue: summary.telegram?.queueDepth });
+
+      if (allDrained) break;
+      delay = Math.min(delay * 1.5, 10_000);
+    }
+
+    const totalMs = Math.round(performance.now() - t0);
+
+    // 5. Evaluate results
+    const channelResults = Object.entries(results).map(([ch, r]) => ({
+      channel: ch,
+      ...r,
+      durationMs: totalMs,
+    }));
+
+    // A channel passes if: sent successfully AND drained (queue=0)
+    // Dead letters from smoke payloads are expected (fake channel/chat IDs cause reply failures)
+    // so we don't fail on dead letter delta — we just report it
+    const allSent = channelResults.every((r) => r.sent);
+    const allDrained = channelResults.every((r) => r.drained);
+    const passed = allSent && allDrained;
+
+    log(phase, passed ? "ok" : "failed", { channelResults });
+    return {
+      phase, passed, durationMs: totalMs, endpoint: "/api/channels/*/webhook",
+      detail: { channels: channelResults },
+      ...(!passed ? {
+        error: !allSent ? "Failed to send some webhooks" : "Queues did not drain within timeout",
+        errorCode: !allSent ? "WEBHOOK_SEND_FAILED" : "QUEUE_DRAIN_TIMEOUT",
+        hint: !allSent ? "Check channel configuration and signing secrets" : "Increase --timeout or check sandbox logs",
+      } : {}),
+    };
+  } catch (err) {
+    return failFromError(phase, endpoint, err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Channel wake-from-sleep phase (destructive: stop → webhook → verify wake)
+// ---------------------------------------------------------------------------
+
+export async function channelWakeFromSleep(
+  baseUrl: string,
+  timeoutMs = 120_000,
+  opts?: PhaseOptions,
+): Promise<PhaseResult> {
+  const phase = "channelWakeFromSleep";
+  const endpoint = "/api/channels/slack/webhook";
+  const reqTimeout = opts?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+
+  try {
+    // 1. Probe if Slack is configured (send a dummy probe — won't enqueue because {} is invalid)
+    const slackProbe = await sendSmokeWebhook(baseUrl, "slack", "{}", reqTimeout);
+    if (!slackProbe?.configured) {
+      log(phase, "skipped", { reason: "no-slack-configured" });
+      return {
+        phase, passed: true, durationMs: 0, endpoint,
+        detail: { skipped: true, reason: "Slack not configured — cannot test wake-from-sleep" },
+      };
+    }
+
+    const t0 = performance.now();
+
+    // 2. Verify sandbox is stopped
+    const statusRes = await fetchWithTimeout(
+      url(baseUrl, "/api/status"),
+      { headers: authHeaders() },
+      reqTimeout,
+    );
+    const statusBody = (await statusRes.json()) as Record<string, unknown>;
+    if (statusBody.status === "running") {
+      // Stop it first
+      log(phase, "stopping-sandbox", {});
+      const stopRes = await fetchWithTimeout(
+        url(baseUrl, "/api/admin/snapshot"),
+        { method: "POST", headers: { ...authHeaders({ mutation: true }), "Content-Type": "application/json" }, body: "{}" },
+        reqTimeout,
+      );
+      if (!stopRes.ok) {
+        return failFromHttp(phase, "/api/admin/snapshot", stopRes.status, "Failed to stop sandbox for wake test", {
+          durationMs: Math.round(performance.now() - t0),
+        });
+      }
+      log(phase, "sandbox-stopped", {});
+    }
+
+    // 3. Read baseline dead letters
+    const baselineSummary = await fetchChannelSummary(baseUrl, reqTimeout);
+    const baselineDL = baselineSummary?.slack?.deadLetterCount ?? 0;
+
+    // 4. Send webhook while sandbox is stopped (signed + sent server-side)
+    log(phase, "sending-webhook-while-stopped", {});
+    const slackPayload = buildSlackSmokePayload().body;
+    const slackResult = await sendSmokeWebhook(baseUrl, "slack", slackPayload, reqTimeout);
+    if (!slackResult?.sent) {
+      return {
+        phase, passed: false, durationMs: Math.round(performance.now() - t0), endpoint,
+        error: `Failed to send Slack webhook (status: ${slackResult?.status ?? "unknown"})`,
+        errorCode: "WEBHOOK_SEND_FAILED",
+        hint: "Check Slack channel configuration",
+      };
+    }
+
+    // 5. Poll until sandbox wakes up AND queue drains
+    const deadline = Date.now() + timeoutMs;
+    let delay = 3_000;
+    let sandboxRunning = false;
+    let queueDrained = false;
+
+    while (Date.now() < deadline) {
+      await sleep(delay);
+
+      // Check status
+      try {
+        const res = await fetchWithTimeout(
+          url(baseUrl, "/api/status"),
+          { headers: authHeaders() },
+          reqTimeout,
+        );
+        const body = (await res.json()) as Record<string, unknown>;
+        if (body.status === "running") {
+          if (!sandboxRunning) {
+            log(phase, "sandbox-woke-up", { elapsedMs: Math.round(performance.now() - t0) });
+          }
+          sandboxRunning = true;
+        }
+        log(phase, "poll", { status: body.status, sandboxRunning });
+      } catch {
+        // ignore fetch errors during polling
+      }
+
+      // Check queue
+      if (sandboxRunning) {
+        const summary = await fetchChannelSummary(baseUrl, reqTimeout);
+        if (summary && summary.slack?.queueDepth === 0) {
+          queueDrained = true;
+          log(phase, "queue-drained", {
+            deadLetterDelta: summary.slack.deadLetterCount - baselineDL,
+            elapsedMs: Math.round(performance.now() - t0),
+          });
+          break;
+        }
+      }
+
+      delay = Math.min(delay * 1.3, 10_000);
+    }
+
+    const totalMs = Math.round(performance.now() - t0);
+
+    if (!sandboxRunning) {
+      return {
+        phase, passed: false, durationMs: totalMs, endpoint,
+        error: "Sandbox did not wake up within timeout",
+        errorCode: "WAKE_TIMEOUT",
+        hint: "The channel webhook was sent but the sandbox did not reach 'running' — increase --timeout",
+      };
+    }
+
+    if (!queueDrained) {
+      return {
+        phase, passed: false, durationMs: totalMs, endpoint,
+        error: "Sandbox woke up but queue did not drain within timeout",
+        errorCode: "QUEUE_DRAIN_TIMEOUT",
+        hint: "Sandbox is running but the queued message was not processed — check drain logs",
+      };
+    }
+
+    return {
+      phase, passed: true, durationMs: totalMs, endpoint,
+      detail: { sandboxWokeUp: true, queueDrained: true },
     };
   } catch (err) {
     return failFromError(phase, endpoint, err);

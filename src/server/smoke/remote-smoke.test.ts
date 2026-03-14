@@ -484,6 +484,8 @@ test("CLI: all-pass report has passed=true and exit 0", async () => {
       res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
     } else if (req.url === "/api/admin/ssh") {
       res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
+    } else if (req.url === "/gateway/v1/chat/completions") {
+      res.end(JSON.stringify({ choices: [{ message: { content: "smoke-ok" } }] }));
     } else {
       res.statusCode = 404;
       res.end(JSON.stringify({ error: "not found" }));
@@ -506,8 +508,8 @@ test("CLI: all-pass report has passed=true and exit 0", async () => {
     assert.equal(typeof report.totalMs, "number");
     assert.ok(report.totalMs >= 0);
 
-    // Safe-only: 6 phases
-    assert.equal(report.phases.length, 6);
+    // Safe-only: 8 phases
+    assert.equal(report.phases.length, 8);
     for (const phase of report.phases) {
       assertPhaseShape(phase, phase.phase);
       assert.equal(phase.passed, true);
@@ -522,6 +524,8 @@ test("CLI: all-pass report has passed=true and exit 0", async () => {
       "firewallRead",
       "channelsSummary",
       "sshEcho",
+      "chatCompletions",
+      "channelRoundTrip",
     ]);
   } finally {
     server.close();
@@ -669,8 +673,8 @@ test("DEFAULT_REQUEST_TIMEOUT_MS is exported and positive", () => {
 // CLI integration tests — exit codes and report structure
 // ---------------------------------------------------------------------------
 
-test("destructive flow: snapshotId flows from snapshotStop to restoreFromSnapshot without extra status fetch", async () => {
-  // Track all fetched URLs to prove restoreFromSnapshot does NOT call /api/status
+test("destructive flow: channelWakeFromSleep skips gracefully when no channels configured", async () => {
+  // Verify channelWakeFromSleep shows up in destructive mode and skips when no secrets available
   const fetchedUrls: string[] = [];
 
   const { createServer } = await import("node:http");
@@ -719,40 +723,28 @@ test("destructive flow: snapshotId flows from snapshotStop to restoreFromSnapsho
     const report = JSON.parse(result.stdout);
     assert.equal(report.passed, true);
 
-    // The restore phase should have the snapshotId from snapshotStop
-    const restorePhase = report.phases.find((p: PhaseResult) => p.phase === "restoreFromSnapshot");
-    assert.ok(restorePhase, "restoreFromSnapshot phase should exist");
-    assert.equal(restorePhase.passed, true);
-    assert.equal(restorePhase.detail?.snapshotId, "snap-from-phase", "snapshotId should flow from snapshotStop to restoreFromSnapshot");
+    // channelWakeFromSleep should exist and pass (skipping because no channels configured)
+    const wakePhase = report.phases.find((p: PhaseResult) => p.phase === "channelWakeFromSleep");
+    assert.ok(wakePhase, "channelWakeFromSleep phase should exist in destructive mode");
+    assert.equal(wakePhase.passed, true, "channelWakeFromSleep should pass (skipped)");
+    assert.equal(wakePhase.detail?.skipped, true, "should be marked as skipped");
 
-    // Count /api/status calls — should be exactly 1 (from the safe "status" phase).
-    // restoreFromSnapshot should NOT make an additional /api/status call because
-    // it received the snapshotId directly from snapshotStop.
-    const statusCalls = fetchedUrls.filter((u) => u === "/api/status");
-    assert.equal(
-      statusCalls.length,
-      1,
-      `Expected exactly 1 /api/status call (from safe status phase), got ${statusCalls.length}. restoreFromSnapshot should not fetch status when snapshotId is provided.`,
-    );
+    // channelRoundTrip should also exist (twice: safe + destructive)
+    const roundTrips = report.phases.filter((p: PhaseResult) => p.phase === "channelRoundTrip");
+    assert.ok(roundTrips.length >= 1, "channelRoundTrip should exist");
 
-    // Verify snapshotId-captured log line appears in stderr
-    assert.ok(
-      result.stderr.includes("snapshotId-captured"),
-      "stderr should contain structured snapshotId-captured log",
-    );
-    assert.ok(
-      result.stderr.includes("snap-from-phase"),
-      "stderr should contain the actual snapshotId value",
-    );
+    // chatCompletions should appear multiple times
+    const completions = report.phases.filter((p: PhaseResult) => p.phase === "chatCompletions");
+    assert.ok(completions.length >= 2, "chatCompletions should appear in both safe and destructive");
   } finally {
     server.close();
   }
 });
 
-test("CLI: safe-only mode runs 6 phases, --destructive runs 9", async () => {
+test("CLI: safe-only mode runs 8 phases, --destructive runs 13", async () => {
   // We just test the safe count (already tested above) and verify --destructive
-  // adds the 3 destructive phases by running with a mock server that handles
-  // the destructive endpoints.
+  // adds 5 destructive phases (ensure, chatCompletions, channelRoundTrip, channelWakeFromSleep, chatCompletions)
+  // by running with a mock server that handles the destructive endpoints.
   const { createServer } = await import("node:http");
   const server = createServer((req, res) => {
     res.setHeader("Content-Type", "application/json");
@@ -760,6 +752,8 @@ test("CLI: safe-only mode runs 6 phases, --destructive runs 9", async () => {
       res.end(JSON.stringify({ ok: true, authMode: "deployment-protection", storeBackend: "memory", status: "running", hasSnapshot: false }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "deployment-protection", storeBackend: "memory", snapshotId: "snap-test" }));
+    } else if (req.url === "/gateway/v1/chat/completions") {
+      res.end(JSON.stringify({ choices: [{ message: { content: "smoke-ok" } }] }));
     } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
@@ -791,13 +785,14 @@ test("CLI: safe-only mode runs 6 phases, --destructive runs 9", async () => {
 
     const report = JSON.parse(result.stdout);
     assert.equal(report.passed, true);
-    assert.equal(report.phases.length, 9);
+    assert.equal(report.phases.length, 13);
 
     // Verify destructive phase names are present
     const names = report.phases.map((p: PhaseResult) => p.phase);
     assert.ok(names.includes("ensureRunning"));
-    assert.ok(names.includes("snapshotStop"));
-    assert.ok(names.includes("restoreFromSnapshot"));
+    assert.ok(names.includes("channelWakeFromSleep"));
+    // chatCompletions appears multiple times (safe + destructive)
+    assert.ok(names.filter((n: string) => n === "chatCompletions").length >= 2);
 
     // Destructive phases come after safe phases
     const ensureIdx = names.indexOf("ensureRunning");
@@ -1536,6 +1531,8 @@ test("event stream: --json-only emits smoke-start, phase-end, and smoke-finish e
       res.end(JSON.stringify({ ok: true, authMode: "deployment-protection", storeBackend: "memory", status: "running", hasSnapshot: false }));
     } else if (req.url === "/api/status") {
       res.end(JSON.stringify({ status: "running", authMode: "deployment-protection", storeBackend: "memory" }));
+    } else if (req.url === "/gateway/v1/chat/completions") {
+      res.end(JSON.stringify({ choices: [{ message: { content: "smoke-ok" } }] }));
     } else if (req.url === "/gateway" || req.url?.startsWith("/gateway/")) {
       res.end("<html>openclaw-app</html>");
     } else if (req.url === "/api/firewall") {
@@ -1570,9 +1567,9 @@ test("event stream: --json-only emits smoke-start, phase-end, and smoke-finish e
     assert.equal(typeof starts[0].requestTimeoutMs, "number");
     assert.equal(typeof starts[0].authSource, "string");
 
-    // Must have phase-end for each of the 6 safe phases
+    // Must have phase-end for each of the 7 safe phases
     const phaseEnds = eventsOfType(events, "phase-end");
-    assert.equal(phaseEnds.length, 6, "6 phase-end events for safe phases");
+    assert.equal(phaseEnds.length, 8, "8 phase-end events for safe phases");
     for (const pe of phaseEnds) {
       assert.equal(typeof pe.phase, "string");
       assert.equal(typeof pe.passed, "boolean");
@@ -1590,8 +1587,8 @@ test("event stream: --json-only emits smoke-start, phase-end, and smoke-finish e
     const finishes = eventsOfType(events, "smoke-finish");
     assert.equal(finishes.length, 1, "exactly one smoke-finish event");
     assert.equal(finishes[0].passed, true);
-    assert.equal(finishes[0].phaseCount, 6);
-    assert.equal(finishes[0].passedCount, 6);
+    assert.equal(finishes[0].phaseCount, 8);
+    assert.equal(finishes[0].passedCount, 8);
     assert.equal(finishes[0].failedCount, 0);
     assert.equal(typeof finishes[0].totalMs, "number");
     assert.equal(typeof finishes[0].timestamp, "string");
@@ -1631,6 +1628,8 @@ test("event stream: non-json-only mode emits events AND human-readable text", as
       res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
     } else if (req.url === "/api/admin/ssh") {
       res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
+    } else if (req.url === "/gateway/v1/chat/completions") {
+      res.end(JSON.stringify({ choices: [{ message: { content: "smoke-ok" } }] }));
     } else {
       res.statusCode = 404;
       res.end(JSON.stringify({ error: "not found" }));
@@ -1649,7 +1648,7 @@ test("event stream: non-json-only mode emits events AND human-readable text", as
 
     // Structured events still present
     assert.equal(eventsOfType(events, "smoke-start").length, 1);
-    assert.equal(eventsOfType(events, "phase-end").length, 6);
+    assert.equal(eventsOfType(events, "phase-end").length, 8);
     assert.equal(eventsOfType(events, "smoke-finish").length, 1);
 
     // Human-readable text also present
@@ -1728,6 +1727,8 @@ test("event stream: phase-end events have correct phase order", async () => {
       res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
     } else if (req.url === "/api/admin/ssh") {
       res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
+    } else if (req.url === "/gateway/v1/chat/completions") {
+      res.end(JSON.stringify({ choices: [{ message: { content: "smoke-ok" } }] }));
     } else {
       res.statusCode = 404;
       res.end(JSON.stringify({ error: "not found" }));
@@ -1752,6 +1753,8 @@ test("event stream: phase-end events have correct phase order", async () => {
       "firewallRead",
       "channelsSummary",
       "sshEcho",
+      "chatCompletions",
+      "channelRoundTrip",
     ]);
   } finally {
     server.close();

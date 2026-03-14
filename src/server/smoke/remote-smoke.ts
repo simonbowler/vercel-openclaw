@@ -24,6 +24,8 @@ import {
   channelsSummary,
   sshEcho,
   chatCompletions,
+  channelRoundTrip,
+  channelWakeFromSleep,
   ensureRunning,
   snapshotStop,
   restoreFromSnapshot,
@@ -135,35 +137,26 @@ function buildPhaseList(destructive: boolean): PhaseFn[] {
     (b, _t, r) => firewallRead(b, { requestTimeoutMs: r }),
     (b, _t, r) => channelsSummary(b, { requestTimeoutMs: r }),
     (b, _t, r) => sshEcho(b, { requestTimeoutMs: r }),
-    // chatCompletions needs a running sandbox — only runs in safe mode if
-    // the sandbox happens to be running already. Gracefully fails with
-    // SANDBOX_NOT_READY (202) if not.
+    // chatCompletions needs a running sandbox — gracefully fails with
+    // SANDBOX_NOT_READY (202) if sandbox is not running.
     (b, _t, _r) => chatCompletions(b, { requestTimeoutMs: 60_000 }),
+    // channelRoundTrip gracefully skips if no channels are configured.
+    (b, t, _r) => channelRoundTrip(b, { requestTimeoutMs: 30_000, pollTimeoutMs: t }),
   ];
 
   if (!destructive) return safe;
 
-  // Shared context — snapshotId flows from snapshotStop into restoreFromSnapshot
-  let capturedSnapshotId: string | undefined;
-
   const destroy: PhaseFn[] = [
+    // Ensure sandbox is running for initial tests
     (b, t, r) => ensureRunning(b, t, { requestTimeoutMs: r }),
-    async (b, _t, r) => {
-      const result = await snapshotStop(b, { requestTimeoutMs: r });
-      if (result.passed && typeof result.detail?.snapshotId === "string") {
-        capturedSnapshotId = result.detail.snapshotId as string;
-        console.error(
-          JSON.stringify({
-            ts: new Date().toISOString(),
-            event: "snapshotId-captured",
-            snapshotId: capturedSnapshotId,
-          }),
-        );
-      }
-      return result;
-    },
-    (b, t, r) => restoreFromSnapshot(b, capturedSnapshotId, t, { requestTimeoutMs: r }),
-    // Verify the restored sandbox can actually answer a question
+    // Test completions + channels while running
+    (b, _t, _r) => chatCompletions(b, { requestTimeoutMs: 60_000 }),
+    (b, t, _r) => channelRoundTrip(b, { requestTimeoutMs: 30_000, pollTimeoutMs: t }),
+    // Stop sandbox, then test channel-triggered wake-up
+    // channelWakeFromSleep stops the sandbox internally if needed,
+    // sends a webhook, and verifies the sandbox wakes up and drains
+    (b, t, _r) => channelWakeFromSleep(b, t, { requestTimeoutMs: 30_000 }),
+    // Verify the woken sandbox can still answer questions
     (b, _t, _r) => chatCompletions(b, { requestTimeoutMs: 60_000 }),
   ];
 

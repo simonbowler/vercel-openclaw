@@ -64,8 +64,10 @@ Output:
 - Human-readable progress to stderr (suppressed by `--json-only`)
 - Exit code 0 (all pass) or 1 (any fail)
 
-Safe phases (always run): `health`, `status`, `gatewayProbe`, `firewallRead`, `channelsSummary`, `sshEcho`, `chatCompletions`.
-Destructive phases (opt-in): `ensureRunning`, `snapshotStop`, `restoreFromSnapshot`, `chatCompletions` (post-restore).
+Safe phases (always run): `health`, `status`, `gatewayProbe`, `firewallRead`, `channelsSummary`, `sshEcho`, `chatCompletions`, `channelRoundTrip`.
+Destructive phases (opt-in): `ensureRunning`, `chatCompletions`, `channelRoundTrip`, `channelWakeFromSleep`, `chatCompletions` (post-wake).
+
+Channel phases (`channelRoundTrip`, `channelWakeFromSleep`) read signing secrets from `/api/admin/channel-secrets`, construct properly-signed webhooks, and verify the full ingestion + drain + completions pipeline. They gracefully skip if no channels are configured.
 
 ## Architecture
 
