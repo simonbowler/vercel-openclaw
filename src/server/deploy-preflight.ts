@@ -1,15 +1,18 @@
 import {
-  getAiGatewayBearerTokenOptional,
+  getAiGatewayAuthMode,
   getAuthMode,
-  getCronSecret,
   getStoreEnv,
+  isVercelDeployment,
 } from "@/server/env";
 import { isPublicUrl } from "@/server/channels/discord/application";
 import { buildChannelConnectabilityReport } from "@/server/channels/connectability";
 import type { ChannelConnectability } from "@/shared/channel-connectability";
+import {
+  getWebhookBypassRequirement,
+  getWebhookBypassStatusMessage,
+} from "@/server/deploy-requirements";
 import { logInfo } from "@/server/log";
 import {
-  getProtectionBypassSecret,
   getPublicUrlDiagnostics,
   resolvePublicOrigin,
   type BuiltPublicUrlDiagnostics,
@@ -29,8 +32,7 @@ export type PreflightActionId =
   | "configure-public-origin"
   | "configure-webhook-bypass"
   | "configure-upstash"
-  | "configure-ai-gateway-auth"
-  | "configure-cron-secret";
+  | "configure-ai-gateway-auth";
 
 export type PreflightCheck = {
   id: PreflightCheckId;
@@ -42,7 +44,14 @@ export type PreflightAction = {
   id: PreflightActionId;
   status: "required" | "recommended";
   message: string;
+  remediation: string;
   env: string[];
+};
+
+export type PreflightNextStep = {
+  id: string;
+  label: string;
+  description: string;
 };
 
 export type PreflightWebhookDiagnostics = {
@@ -56,6 +65,7 @@ export type PreflightPayload = {
   authMode: ReturnType<typeof getAuthMode>;
   publicOrigin: string | null;
   webhookBypassEnabled: boolean;
+  webhookBypassRequired: boolean;
   storeBackend: "upstash" | "memory";
   aiGatewayAuth: "oidc" | "api-key" | "unavailable";
   cronSecretConfigured: boolean;
@@ -64,6 +74,7 @@ export type PreflightPayload = {
   channels: Record<"slack" | "telegram" | "discord", ChannelConnectability>;
   actions: PreflightAction[];
   checks: PreflightCheck[];
+  nextSteps: PreflightNextStep[];
 };
 
 function buildWebhookDiagnostics(
@@ -98,12 +109,11 @@ function buildWebhookDiagnostics(
 }
 
 function buildActions(input: {
-  authMode: ReturnType<typeof getAuthMode>;
   publicOriginResolution: PublicOriginResolution | null;
   webhookBypassEnabled: boolean;
+  webhookBypassRequired: boolean;
   storeBackend: "upstash" | "memory";
   aiGatewayAuth: PreflightPayload["aiGatewayAuth"];
-  cronSecretConfigured: boolean;
 }): PreflightAction[] {
   const actions: PreflightAction[] = [];
 
@@ -113,19 +123,20 @@ function buildActions(input: {
       status: "required",
       message:
         "Set NEXT_PUBLIC_APP_URL, NEXT_PUBLIC_BASE_DOMAIN, or BASE_DOMAIN so webhook URLs and OAuth callbacks resolve to one canonical public origin.",
+      remediation:
+        "Deploy to Vercel to get a public URL automatically, or add NEXT_PUBLIC_APP_URL as an environment variable in your Vercel project settings.",
       env: ["NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_BASE_DOMAIN", "BASE_DOMAIN"],
     });
   }
 
-  if (
-    input.authMode === "deployment-protection" &&
-    !input.webhookBypassEnabled
-  ) {
+  if (input.webhookBypassRequired && !input.webhookBypassEnabled) {
     actions.push({
       id: "configure-webhook-bypass",
       status: "required",
       message:
         "Enable Protection Bypass for Automation and set VERCEL_AUTOMATION_BYPASS_SECRET so Slack, Telegram, and Discord can reach the protected deployment.",
+      remediation:
+        "In your Vercel project, go to Settings > Deployment Protection > Protection Bypass for Automation. Enable it and copy the secret into the VERCEL_AUTOMATION_BYPASS_SECRET environment variable, then redeploy.",
       env: ["VERCEL_AUTOMATION_BYPASS_SECRET"],
     });
   }
@@ -133,9 +144,11 @@ function buildActions(input: {
   if (input.storeBackend === "memory") {
     actions.push({
       id: "configure-upstash",
-      status: "recommended",
+      status: "required",
       message:
-        "Configure Upstash so channel queues, sandbox metadata, and recovery state survive cold starts.",
+        "Configure Upstash before connecting channels. Durable queue and metadata storage is required for this project goal.",
+      remediation:
+        "Add Upstash Redis from the Vercel Marketplace so the project receives UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.",
       env: ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"],
     });
   }
@@ -146,21 +159,79 @@ function buildActions(input: {
       status: "required",
       message:
         "AI Gateway auth is unavailable. On Vercel this should come from OIDC; for local development provide AI_GATEWAY_API_KEY.",
+      remediation:
+        "On Vercel, OIDC tokens are provided automatically. If you see this on a Vercel deployment, redeploy the project. For local development, set AI_GATEWAY_API_KEY in your .env.local file.",
       env: ["AI_GATEWAY_API_KEY"],
     });
   }
 
-  if (!input.cronSecretConfigured) {
+  if (isVercelDeployment() && input.aiGatewayAuth === "api-key") {
     actions.push({
-      id: "configure-cron-secret",
-      status: "recommended",
+      id: "configure-ai-gateway-auth",
+      status: "required",
       message:
-        "Set CRON_SECRET so /api/cron/drain-channels can be called safely by Vercel Cron or another scheduler.",
-      env: ["CRON_SECRET"],
+        "This repo must authenticate to Vercel AI Gateway with OIDC on deployed Vercel environments.",
+      remediation:
+        "Remove AI_GATEWAY_API_KEY from the Vercel project settings and redeploy so the deployment uses its automatically-issued OIDC token.",
+      env: ["AI_GATEWAY_API_KEY"],
     });
   }
 
   return actions;
+}
+
+function buildNextSteps(input: {
+  ok: boolean;
+  channels: Record<"slack" | "telegram" | "discord", ChannelConnectability>;
+  actions: PreflightAction[];
+}): PreflightNextStep[] {
+  const steps: PreflightNextStep[] = [];
+
+  if (!input.ok) {
+    const requiredActions = input.actions.filter((a) => a.status === "required");
+    if (requiredActions.length > 0) {
+      steps.push({
+        id: "resolve-blockers",
+        label: "Resolve deployment blockers",
+        description: `Fix ${requiredActions.length} required action${requiredActions.length > 1 ? "s" : ""} before connecting channels: ${requiredActions.map((a) => a.id).join(", ")}.`,
+      });
+    }
+    return steps;
+  }
+
+  steps.push({
+    id: "ensure-sandbox",
+    label: "Start the sandbox",
+    description:
+      "Open the admin panel and click Ensure Running, or visit /gateway to auto-start the sandbox.",
+  });
+
+  const channelEntries = Object.entries(input.channels) as Array<
+    ["slack" | "telegram" | "discord", ChannelConnectability]
+  >;
+  const connectable = channelEntries.filter(([, ch]) => ch.canConnect);
+
+  if (connectable.length > 0) {
+    steps.push({
+      id: "connect-channels",
+      label: "Connect a channel",
+      description:
+        "Go to the Channels tab in the admin panel. Each channel has a step-by-step wizard: Slack (paste signing secret + bot token), Telegram (paste bot token from @BotFather), Discord (paste bot token — endpoint and /ask command are configured automatically).",
+    });
+  }
+
+  const recommendedActions = input.actions.filter(
+    (a) => a.status === "recommended",
+  );
+  if (recommendedActions.length > 0) {
+    steps.push({
+      id: "recommended-setup",
+      label: "Recommended improvements",
+      description: recommendedActions.map((a) => a.message).join(" "),
+    });
+  }
+
+  return steps;
 }
 
 export async function buildDeployPreflight(
@@ -176,25 +247,21 @@ export async function buildDeployPreflight(
   }
 
   const publicOrigin = publicOriginResolution?.origin ?? null;
-  const webhookBypassEnabled = Boolean(getProtectionBypassSecret());
+  const webhookBypassRequirement = getWebhookBypassRequirement();
+  const webhookBypassEnabled = webhookBypassRequirement.configured;
   const storeBackend = getStoreEnv() ? "upstash" : "memory";
 
-  const staticKey = process.env.AI_GATEWAY_API_KEY?.trim() || "";
-  const resolvedGatewayToken = await getAiGatewayBearerTokenOptional();
-  const aiGatewayAuth: PreflightPayload["aiGatewayAuth"] =
-    !resolvedGatewayToken
-      ? "unavailable"
-      : staticKey && resolvedGatewayToken === staticKey
-        ? "api-key"
-        : "oidc";
+  const aiGatewayAuth = await getAiGatewayAuthMode();
 
-  const cronSecretConfigured = Boolean(getCronSecret());
+  const cronSecretConfigured = Boolean(
+    process.env.CRON_SECRET?.trim(),
+  );
   const webhookDiagnostics = buildWebhookDiagnostics(
     request,
     publicOriginResolution,
   );
 
-  const channels = buildChannelConnectabilityReport(request);
+  const channels = await buildChannelConnectabilityReport(request);
 
   const checks: PreflightCheck[] = [
     {
@@ -207,61 +274,62 @@ export async function buildDeployPreflight(
     {
       id: "webhook-bypass",
       status:
-        authMode !== "deployment-protection"
+        !webhookBypassRequirement.required || webhookBypassRequirement.configured
           ? "pass"
-          : webhookBypassEnabled
-            ? "pass"
-            : "fail",
-      message:
-        authMode !== "deployment-protection"
-          ? "Webhook bypass is not required in sign-in-with-vercel mode."
-          : webhookBypassEnabled
-            ? "Webhook URLs will include x-vercel-protection-bypass."
-            : "Deployment Protection is enabled but VERCEL_AUTOMATION_BYPASS_SECRET is missing. Slack, Telegram, and Discord webhooks will be blocked.",
+          : "fail",
+      message: getWebhookBypassStatusMessage(webhookBypassRequirement),
     },
     {
       id: "store",
-      status: storeBackend === "upstash" ? "pass" : "warn",
+      status: storeBackend === "upstash" ? "pass" : "fail",
       message:
         storeBackend === "upstash"
           ? "Durable Upstash-backed state is configured."
-          : "Using in-memory state. Queue and lifecycle data will be lost on cold starts. Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.",
+          : "Channel-capable deployments require Upstash. In-memory state loses queue data, credentials, and sandbox metadata on cold starts.",
     },
     {
       id: "ai-gateway",
-      status: aiGatewayAuth === "unavailable" ? "fail" : "pass",
+      status:
+        aiGatewayAuth === "unavailable" ||
+        (isVercelDeployment() && aiGatewayAuth !== "oidc")
+          ? "fail"
+          : "pass",
       message:
         aiGatewayAuth === "oidc"
           ? "AI Gateway will use a Vercel OIDC token."
           : aiGatewayAuth === "api-key"
-            ? "AI Gateway will use AI_GATEWAY_API_KEY."
+            ? "AI Gateway is using AI_GATEWAY_API_KEY. This repo requires OIDC on Vercel deployments."
             : "No AI Gateway credential is available.",
     },
     {
       id: "drain-recovery",
-      status: cronSecretConfigured ? "pass" : "warn",
+      status: "pass",
       message: cronSecretConfigured
-        ? "CRON_SECRET is configured for /api/cron/drain-channels."
-        : "CRON_SECRET is missing. Queue replay depends on manual or platform-specific cron wiring.",
+        ? "Channel delivery uses Vercel Queues as the primary mechanism. /api/cron/drain-channels is available as a diagnostic backstop."
+        : "Channel delivery uses Vercel Queues as the primary mechanism. Set CRON_SECRET to enable /api/cron/drain-channels as an optional diagnostic backstop.",
     },
   ];
 
   const actions = buildActions({
-    authMode,
     publicOriginResolution,
     webhookBypassEnabled,
+    webhookBypassRequired: webhookBypassRequirement.required,
     storeBackend,
     aiGatewayAuth,
-    cronSecretConfigured,
   });
 
+  const ok =
+    checks.every((check) => check.status !== "fail") &&
+    Object.values(channels).every((ch) => ch.status !== "fail");
+
+  const nextSteps = buildNextSteps({ ok, channels, actions });
+
   const payload: PreflightPayload = {
-    ok:
-      checks.every((check) => check.status !== "fail") &&
-      Object.values(channels).every((ch) => ch.status !== "fail"),
+    ok,
     authMode,
     publicOrigin,
     webhookBypassEnabled,
+    webhookBypassRequired: webhookBypassRequirement.required,
     storeBackend,
     aiGatewayAuth,
     cronSecretConfigured,
@@ -270,6 +338,7 @@ export async function buildDeployPreflight(
     channels,
     actions,
     checks,
+    nextSteps,
   };
 
   logInfo("deploy_preflight.built", {
@@ -277,6 +346,7 @@ export async function buildDeployPreflight(
     authMode: payload.authMode,
     publicOrigin: payload.publicOrigin,
     webhookBypassEnabled: payload.webhookBypassEnabled,
+    webhookBypassRequired: payload.webhookBypassRequired,
     storeBackend: payload.storeBackend,
     aiGatewayAuth: payload.aiGatewayAuth,
     cronSecretConfigured: payload.cronSecretConfigured,

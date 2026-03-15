@@ -5,7 +5,7 @@
  * enqueue → drain → reply paths using the shared test harness, without
  * any real network calls or sandbox API calls.
  *
- * Run: pnpm test
+ * Run: npm test
  */
 
 import assert from "node:assert/strict";

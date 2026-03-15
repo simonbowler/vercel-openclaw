@@ -4,7 +4,12 @@ import type {
   ChannelConnectabilityIssue,
   ChannelConnectabilityStatus,
 } from "@/shared/channel-connectability";
-import { getAuthMode, getCronSecret, getStoreEnv } from "@/server/env";
+import {
+  getAiGatewayAuthMode,
+  getStoreEnv,
+  isVercelDeployment,
+} from "@/server/env";
+import { getWebhookBypassRequirement } from "@/server/deploy-requirements";
 import { buildPublicUrl } from "@/server/public-url";
 
 const WEBHOOK_PATHS: Record<ChannelName, string> = {
@@ -73,11 +78,11 @@ function addIssue(
   issues.push(issue);
 }
 
-export function buildChannelConnectability(
+export async function buildChannelConnectability(
   channel: ChannelName,
   request: Request,
   webhookUrlOverride?: string,
-): ChannelConnectability {
+): Promise<ChannelConnectability> {
   const label = CHANNEL_LABELS[channel];
   const issues: ChannelConnectabilityIssue[] = [];
   let webhookUrl: string | null = webhookUrlOverride ?? null;
@@ -90,6 +95,8 @@ export function buildChannelConnectability(
         id: "public-origin",
         status: "fail",
         message: `Could not resolve a canonical public origin for ${label}.`,
+        remediation:
+          "Deploy to Vercel so the app gets a public URL automatically, or set NEXT_PUBLIC_APP_URL to your custom domain.",
         env: [...PUBLIC_ORIGIN_ENVS],
       });
     }
@@ -100,20 +107,23 @@ export function buildChannelConnectability(
       id: "public-webhook-url",
       status: "fail",
       message: `${label} requires a public HTTPS webhook URL before it can be connected.`,
+      remediation:
+        "Deploy to Vercel to get a public HTTPS URL. Local development URLs (localhost) cannot receive webhooks from external platforms.",
       env: [...PUBLIC_ORIGIN_ENVS],
     });
   }
 
-  const requiresBypass =
-    getAuthMode() === "deployment-protection" && process.env.VERCEL === "1";
+  const bypassRequirement = getWebhookBypassRequirement();
 
-  if (requiresBypass && !process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim()) {
+  if (bypassRequirement.required && !bypassRequirement.configured) {
     addIssue(issues, {
       id: "webhook-bypass",
       status: "fail",
       message:
         `${label} cannot reach a protected Vercel deployment until ` +
         "VERCEL_AUTOMATION_BYPASS_SECRET is configured.",
+      remediation:
+        "In your Vercel project, go to Settings > Deployment Protection > Protection Bypass for Automation and enable it. Copy the generated secret and add it as the VERCEL_AUTOMATION_BYPASS_SECRET environment variable.",
       env: ["VERCEL_AUTOMATION_BYPASS_SECRET"],
     });
   }
@@ -121,18 +131,24 @@ export function buildChannelConnectability(
   if (!getStoreEnv()) {
     addIssue(issues, {
       id: "store",
-      status: "warn",
-      message: `${label} queue state will not survive cold starts until Upstash is configured.`,
+      status: "fail",
+      message: `${label} cannot be connected without durable state.`,
+      remediation:
+        "Add Upstash Redis from the Vercel Marketplace so queue state, channel credentials, session history, and sandbox metadata survive cold starts.",
       env: ["UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"],
     });
   }
 
-  if (!getCronSecret()) {
+  const aiGatewayAuth = await getAiGatewayAuthMode();
+  if (isVercelDeployment() && aiGatewayAuth !== "oidc") {
     addIssue(issues, {
-      id: "drain-recovery",
-      status: "warn",
-      message: `${label} retries currently depend on future traffic because CRON_SECRET is missing.`,
-      env: ["CRON_SECRET"],
+      id: "ai-gateway",
+      status: "fail",
+      message:
+        `${label} requires Vercel AI Gateway authentication through OIDC on deployed Vercel environments.`,
+      remediation:
+        "Remove AI_GATEWAY_API_KEY from the Vercel project and redeploy. This app should use the deployment's Vercel OIDC token for AI Gateway auth.",
+      env: ["AI_GATEWAY_API_KEY"],
     });
   }
 
@@ -147,14 +163,16 @@ export function buildChannelConnectability(
   };
 }
 
-export function buildChannelConnectabilityReport(
+export async function buildChannelConnectabilityReport(
   request: Request,
-): Record<ChannelName, ChannelConnectability> {
-  return {
-    slack: buildChannelConnectability("slack", request),
-    telegram: buildChannelConnectability("telegram", request),
-    discord: buildChannelConnectability("discord", request),
-  };
+): Promise<Record<ChannelName, ChannelConnectability>> {
+  const [slack, telegram, discord] = await Promise.all([
+    buildChannelConnectability("slack", request),
+    buildChannelConnectability("telegram", request),
+    buildChannelConnectability("discord", request),
+  ]);
+
+  return { slack, telegram, discord };
 }
 
 export function buildChannelConnectBlockedResponse(

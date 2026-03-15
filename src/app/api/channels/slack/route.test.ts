@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { afterEach, test } from "node:test";
 
 import {
   buildChannelConnectability,
   buildChannelConnectBlockedResponse,
 } from "@/server/channels/connectability";
+import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
 
-test("slack PUT returns 409 on localhost origin", () => {
+afterEach(() => {
+  _setAiGatewayTokenOverrideForTesting(null);
+});
+
+test("slack PUT returns 409 on localhost origin", async () => {
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
   const request = new Request("http://localhost:3000/api/channels/slack", {
     method: "PUT",
     headers: {
@@ -16,7 +22,7 @@ test("slack PUT returns 409 on localhost origin", () => {
     },
   });
 
-  const connectability = buildChannelConnectability("slack", request);
+  const connectability = await buildChannelConnectability("slack", request);
   assert.equal(connectability.canConnect, false);
   assert.equal(connectability.channel, "slack");
   assert.ok(connectability.issues.some((i) => i.status === "fail"));
@@ -30,6 +36,7 @@ test("slack PUT returns 409 on localhost origin", () => {
 });
 
 test("slack 409 response body matches expected shape", async () => {
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
   const request = new Request("http://localhost:3000/api/channels/slack", {
     method: "PUT",
     headers: {
@@ -39,7 +46,7 @@ test("slack 409 response body matches expected shape", async () => {
     },
   });
 
-  const connectability = buildChannelConnectability("slack", request);
+  const connectability = await buildChannelConnectability("slack", request);
   const response = buildChannelConnectBlockedResponse(
     { setCookieHeader: null },
     connectability,

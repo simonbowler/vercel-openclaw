@@ -1,0 +1,32 @@
+{
+  "installCommand": "npm install",
+  "functions": {
+    "src/app/api/queues/channels/slack/route.ts": {
+      "maxDuration": 300,
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "channel-slack"
+        }
+      ]
+    },
+    "src/app/api/queues/channels/telegram/route.ts": {
+      "maxDuration": 300,
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "channel-telegram"
+        }
+      ]
+    },
+    "src/app/api/queues/channels/discord/route.ts": {
+      "maxDuration": 300,
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "channel-discord"
+        }
+      ]
+    }
+  }
+}

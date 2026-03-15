@@ -6,8 +6,8 @@
  * pass/fail report. No external CLI dependencies — uses node:parseArgs.
  *
  * Usage:
- *   pnpm smoke:remote --base-url https://my-app.vercel.app
- *   pnpm smoke:remote --base-url https://my-app.vercel.app --destructive --timeout 180
+ *   npm run smoke:remote --base-url https://my-app.vercel.app
+ *   npm run smoke:remote --base-url https://my-app.vercel.app --destructive --timeout 180
  *
  * Environment:
  *   SMOKE_AUTH_COOKIE — encrypted session cookie for sign-in-with-vercel mode

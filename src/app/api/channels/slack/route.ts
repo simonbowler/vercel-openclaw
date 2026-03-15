@@ -104,7 +104,7 @@ export async function PUT(request: Request): Promise<Response> {
     return auth;
   }
 
-  const connectability = buildChannelConnectability("slack", request);
+  const connectability = await buildChannelConnectability("slack", request);
   if (!connectability.canConnect) {
     return buildChannelConnectBlockedResponse(auth, connectability);
   }

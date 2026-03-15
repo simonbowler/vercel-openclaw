@@ -1,10 +1,9 @@
-import { after } from "next/server";
-
 import { getPublicOrigin } from "@/server/public-url";
 import { enqueueChannelJob } from "@/server/channels/driver";
 import { channelDedupKey } from "@/server/channels/keys";
-import { drainTelegramQueue } from "@/server/channels/telegram/runtime";
+import { publishToChannelQueue } from "@/server/channels/queue";
 import { isTelegramWebhookSecretValid } from "@/server/channels/telegram/adapter";
+import { logInfo } from "@/server/log";
 import { getInitializedMeta, getStore } from "@/server/store/store";
 
 function extractUpdateId(payload: unknown): string | null {
@@ -47,15 +46,17 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
-  await enqueueChannelJob("telegram", {
+  const job = {
     payload,
     receivedAt: Date.now(),
     origin: getPublicOrigin(request),
-  });
+  };
 
-  after(async () => {
-    await drainTelegramQueue();
-  });
+  const { queued } = await publishToChannelQueue("telegram", job);
+  if (!queued) {
+    await enqueueChannelJob("telegram", job);
+    logInfo("channels.telegram_webhook_fallback_enqueue", { receivedAt: job.receivedAt });
+  }
 
   return Response.json({ ok: true });
 }

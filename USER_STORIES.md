@@ -419,7 +419,7 @@ Every user-facing behavior extracted from the codebase, organized by domain.
 
 ## 15. Smoke Testing
 
-- As an **operator**, I want to run `pnpm smoke:remote --base-url <url>` to execute a suite of health, status, gateway probe, firewall read, channel summary, and SSH echo checks against a deployment so that I can verify it's working.
+- As an **operator**, I want to run `npm run smoke:remote --base-url <url>` to execute a suite of health, status, gateway probe, firewall read, channel summary, and SSH echo checks against a deployment so that I can verify it's working.
 - As an **operator**, I want safe read-only phases to run by default and destructive phases (ensure, snapshot, restore) gated behind `--destructive` so that I don't accidentally modify a production deployment.
 - As an **operator**, I want structured JSON output (`--json-only`) and human-readable stderr progress so that I can integrate smoke tests into CI/CD or read output manually.
 - As an **operator**, I want configurable timeouts (`--timeout`, `--request-timeout`) so that I can adapt to slow environments.
@@ -449,8 +449,8 @@ Every user-facing behavior extracted from the codebase, organized by domain.
 
 ## 18. Developer Experience
 
-- As a **developer**, I want to run `pnpm dev` for local development with hot reload so that I can iterate quickly.
-- As a **developer**, I want to run `pnpm test` using `node:test` through `tsx --test` so that I can verify correctness.
-- As a **developer**, I want `pnpm lint`, `pnpm typecheck`, and `pnpm build` as verification steps so that I can ensure code quality before deploying.
+- As a **developer**, I want to run `npm run dev` for local development with hot reload so that I can iterate quickly.
+- As a **developer**, I want to run `npm test` using `node:test` so that I can verify correctness.
+- As a **developer**, I want `npm run lint`, `npm run typecheck`, and `npm build` as verification steps so that I can ensure code quality before deploying.
 - As a **developer**, I want the codebase to use `cacheComponents: true` in Next.js config so that builds take advantage of component caching.
 - As a **developer**, I want clear error messages when required environment variables are missing so that I can diagnose configuration issues quickly.

@@ -4,7 +4,7 @@
  * Covers: auth enforcement (403 without CSRF), missing botToken (400),
  * happy path with mocked Slack API, and Slack API error handling.
  *
- * Run: pnpm test src/app/api/channels/slack/test/route.test.ts
+ * Run: npm test src/app/api/channels/slack/test/route.test.ts
  */
 
 import assert from "node:assert/strict";

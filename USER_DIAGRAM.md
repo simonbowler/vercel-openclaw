@@ -479,7 +479,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    operator([Operator]) --> |"pnpm smoke:remote --base-url URL"| runner[Smoke Runner]
+    operator([Operator]) --> |"npm run smoke:remote --base-url URL"| runner[Smoke Runner]
 
     runner --> safePhases["Safe phases (always run)"]
     safePhases --> health[health: GET /api/health]

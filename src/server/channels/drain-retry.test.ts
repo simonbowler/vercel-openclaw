@@ -5,7 +5,7 @@
  * backoff, that 410 triggers retry (sandbox gone → restore on next drain),
  * and that exhausted retries land in the failed queue.
  *
- * Run: pnpm test
+ * Run: npm test
  */
 
 import assert from "node:assert/strict";

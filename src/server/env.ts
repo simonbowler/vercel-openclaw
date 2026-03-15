@@ -129,3 +129,23 @@ export async function getAiGatewayBearerTokenOptional(): Promise<string | undefi
   const staticKey = process.env.AI_GATEWAY_API_KEY?.trim();
   return staticKey || undefined;
 }
+
+export function isVercelDeployment(): boolean {
+  return Boolean(
+    process.env.VERCEL?.trim() ||
+      process.env.VERCEL_ENV?.trim() ||
+      process.env.VERCEL_URL?.trim() ||
+      process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim(),
+  );
+}
+
+export async function getAiGatewayAuthMode(): Promise<"oidc" | "api-key" | "unavailable"> {
+  const staticKey = process.env.AI_GATEWAY_API_KEY?.trim() || "";
+  const resolvedGatewayToken = await getAiGatewayBearerTokenOptional();
+
+  if (!resolvedGatewayToken) {
+    return "unavailable";
+  }
+
+  return staticKey && resolvedGatewayToken === staticKey ? "api-key" : "oidc";
+}

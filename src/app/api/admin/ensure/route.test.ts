@@ -4,7 +4,7 @@
  * Covers: auth enforcement (403 without CSRF), happy path ensure
  * from uninitialized (returns 202), and ensure when already running (200).
  *
- * Run: pnpm test src/app/api/admin/ensure/route.test.ts
+ * Run: npm test src/app/api/admin/ensure/route.test.ts
  */
 
 import assert from "node:assert/strict";

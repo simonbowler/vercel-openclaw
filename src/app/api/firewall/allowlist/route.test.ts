@@ -4,7 +4,7 @@
  * Covers: CSRF enforcement (403), happy path approve domains,
  * happy path remove domains, and invalid domain rejection.
  *
- * Run: pnpm test src/app/api/firewall/allowlist/route.test.ts
+ * Run: npm test src/app/api/firewall/allowlist/route.test.ts
  */
 
 import assert from "node:assert/strict";

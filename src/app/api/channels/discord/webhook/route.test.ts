@@ -4,7 +4,7 @@
  * Covers: missing signature headers (401), invalid signature (401),
  * no Discord config (404), PING response, happy path enqueue, and dedup.
  *
- * Run: pnpm test src/app/api/channels/discord/webhook/route.test.ts
+ * Run: npm test src/app/api/channels/discord/webhook/route.test.ts
  */
 
 import assert from "node:assert/strict";

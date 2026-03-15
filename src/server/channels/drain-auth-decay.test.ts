@@ -8,7 +8,7 @@
  * 4. Refresh failure clears session and forces re-login on next browser request
  * 5. Channel webhooks still function when no browser auth exists
  *
- * Run: pnpm test src/server/channels/drain-auth-decay.test.ts
+ * Run: npm test src/server/channels/drain-auth-decay.test.ts
  */
 
 import assert from "node:assert/strict";

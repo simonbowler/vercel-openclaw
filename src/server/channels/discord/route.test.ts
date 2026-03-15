@@ -4,7 +4,7 @@
  * Calls the actual POST handler from the Next.js route module with
  * fake infrastructure — no real network or sandbox calls.
  *
- * Run: npx tsx --test src/server/channels/discord/route.test.ts
+ * Run: npm test -- src/server/channels/discord/route.test.ts
  */
 
 import assert from "node:assert/strict";
@@ -162,12 +162,9 @@ test("Discord route: valid signed command enqueues work and returns deferred res
     // Discord deferred response is type 5
     assert.deepEqual(result.json, { type: 5 });
 
-    // Verify a job was enqueued
+    // Verify a job was enqueued (via publishToChannelQueue fallback to store)
     const queueLen = await h.getStore().getQueueLength(channelQueueKey("discord"));
     assert.ok(queueLen >= 1, `Expected at least 1 queued job, got ${queueLen}`);
-
-    // Verify after() callback was scheduled for draining
-    assert.ok(pendingAfterCount() >= 1, "Expected at least 1 after() callback");
   } finally {
     resetAfterCallbacks();
     h.teardown();

@@ -3,7 +3,7 @@
  *
  * Covers domain testing against different firewall modes.
  *
- * Run: pnpm test src/app/api/firewall/test/route.test.ts
+ * Run: npm test src/app/api/firewall/test/route.test.ts
  */
 
 import assert from "node:assert/strict";

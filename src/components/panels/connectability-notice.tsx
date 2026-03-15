@@ -14,13 +14,23 @@ export function ConnectabilityNotice({
   return (
     <div className="stack" style={{ marginBottom: 12 }}>
       {connectability.issues.map((issue) => (
-        <p
+        <div
           key={`${connectability.channel}:${issue.id}`}
-          className={issue.status === "fail" ? "error-banner" : "muted-copy"}
+          className={
+            issue.status === "fail"
+              ? "error-banner"
+              : "connectability-warning-banner"
+          }
         >
-          {issue.message}
-          {issue.env.length > 0 ? ` (${issue.env.join(", ")})` : ""}
-        </p>
+          <p style={{ margin: 0 }}>
+            {issue.message}
+          </p>
+          {issue.remediation ? (
+            <p className="muted-copy" style={{ margin: "4px 0 0" }}>
+              {issue.remediation}
+            </p>
+          ) : null}
+        </div>
       ))}
     </div>
   );

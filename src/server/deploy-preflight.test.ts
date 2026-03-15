@@ -36,6 +36,7 @@ function withEnv<T>(
 test("preflight fails when deployment protection would block channel webhooks", async () => {
   await withEnv(
     {
+      VERCEL: "1",
       VERCEL_AUTH_MODE: "deployment-protection",
       NEXT_PUBLIC_APP_URL: "https://openclaw.example.com",
       VERCEL_AUTOMATION_BYPASS_SECRET: undefined,
@@ -116,6 +117,7 @@ test("preflight passes bypass check in sign-in-with-vercel mode without secret",
 test("preflight fails when both webhook bypass and AI Gateway auth are missing", async () => {
   await withEnv(
     {
+      VERCEL: "1",
       VERCEL_AUTH_MODE: "deployment-protection",
       VERCEL_AUTOMATION_BYPASS_SECRET: undefined,
       UPSTASH_REDIS_REST_URL: undefined,
@@ -151,7 +153,7 @@ test("preflight fails when both webhook bypass and AI Gateway auth are missing",
       );
       assert.equal(
         payload.checks.find((check) => check.id === "store")?.status,
-        "warn",
+        "fail",
       );
     },
   );
@@ -272,6 +274,178 @@ test("preflight passes all checks with Upstash, bypass, OIDC, and cron secret", 
       assert.ok(payload.channels.telegram);
       assert.ok(payload.channels.discord);
       assert.equal(payload.channels.slack.canConnect, true);
+
+      // nextSteps should include channel setup guidance when ok
+      assert.ok(Array.isArray(payload.nextSteps));
+      assert.ok(payload.nextSteps.length > 0, "should have next steps when ok");
+      assert.ok(
+        payload.nextSteps.some((s) => s.id === "connect-channels"),
+        "should suggest connecting channels",
+      );
+    },
+  );
+});
+
+test("preflight nextSteps includes resolve-blockers when not ok", async () => {
+  await withEnv(
+    {
+      VERCEL: "1",
+      VERCEL_AUTH_MODE: "deployment-protection",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      VERCEL_AUTOMATION_BYPASS_SECRET: undefined,
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+      KV_REST_API_URL: undefined,
+      KV_REST_API_TOKEN: undefined,
+      AI_GATEWAY_API_KEY: undefined,
+      CRON_SECRET: undefined,
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting(undefined);
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.example.com/api/admin/preflight"),
+      );
+
+      assert.equal(payload.ok, false);
+      assert.ok(Array.isArray(payload.nextSteps));
+      assert.ok(
+        payload.nextSteps.some((s) => s.id === "resolve-blockers"),
+        "should suggest resolving blockers when not ok",
+      );
+    },
+  );
+});
+
+test("preflight fails when durable store is missing", async () => {
+  await withEnv(
+    {
+      NEXT_PUBLIC_APP_URL: "https://app.invalid",
+      VERCEL: "1",
+      VERCEL_ENV: "production",
+      VERCEL_AUTOMATION_BYPASS_SECRET: "bypass-secret",
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+      KV_REST_API_URL: undefined,
+      KV_REST_API_TOKEN: undefined,
+      AI_GATEWAY_API_KEY: undefined,
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.invalid/api/admin/preflight"),
+      );
+
+      assert.equal(payload.ok, false);
+      assert.equal(payload.storeBackend, "memory");
+      assert.equal(payload.aiGatewayAuth, "oidc");
+      assert.equal(
+        payload.checks.find((c) => c.id === "store")?.status,
+        "fail",
+      );
+      assert.ok(
+        payload.actions.some(
+          (a) => a.id === "configure-upstash" && a.status === "required",
+        ),
+      );
+    },
+  );
+});
+
+test("preflight fails when a Vercel deployment uses API key auth instead of OIDC", async () => {
+  await withEnv(
+    {
+      NEXT_PUBLIC_APP_URL: "https://app.invalid",
+      VERCEL: "1",
+      VERCEL_ENV: "production",
+      VERCEL_AUTOMATION_BYPASS_SECRET: "bypass-secret",
+      UPSTASH_REDIS_REST_URL: "redis-url",
+      UPSTASH_REDIS_REST_TOKEN: "redis-token",
+      AI_GATEWAY_API_KEY: "static-key",
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting("static-key");
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.invalid/api/admin/preflight"),
+      );
+
+      assert.equal(payload.ok, false);
+      assert.equal(payload.storeBackend, "upstash");
+      assert.equal(payload.aiGatewayAuth, "api-key");
+      assert.equal(
+        payload.checks.find((c) => c.id === "ai-gateway")?.status,
+        "fail",
+      );
+      assert.ok(
+        payload.actions.some(
+          (a) =>
+            a.id === "configure-ai-gateway-auth" && a.status === "required",
+        ),
+      );
+    },
+  );
+});
+
+test("preflight passes when Upstash is configured and AI Gateway auth resolves to OIDC on Vercel", async () => {
+  await withEnv(
+    {
+      NEXT_PUBLIC_APP_URL: "https://app.invalid",
+      VERCEL: "1",
+      VERCEL_ENV: "production",
+      VERCEL_AUTOMATION_BYPASS_SECRET: "bypass-secret",
+      UPSTASH_REDIS_REST_URL: "redis-url",
+      UPSTASH_REDIS_REST_TOKEN: "redis-token",
+      AI_GATEWAY_API_KEY: undefined,
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.invalid/api/admin/preflight"),
+      );
+
+      assert.equal(payload.ok, true);
+      assert.equal(payload.storeBackend, "upstash");
+      assert.equal(payload.aiGatewayAuth, "oidc");
+      assert.equal(
+        payload.checks.find((c) => c.id === "store")?.status,
+        "pass",
+      );
+      assert.equal(
+        payload.checks.find((c) => c.id === "ai-gateway")?.status,
+        "pass",
+      );
+    },
+  );
+});
+
+test("preflight actions include remediation text", async () => {
+  await withEnv(
+    {
+      VERCEL: "1",
+      VERCEL_AUTH_MODE: "deployment-protection",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      VERCEL_AUTOMATION_BYPASS_SECRET: undefined,
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+      KV_REST_API_URL: undefined,
+      KV_REST_API_TOKEN: undefined,
+      AI_GATEWAY_API_KEY: undefined,
+      CRON_SECRET: undefined,
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting(undefined);
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.example.com/api/admin/preflight"),
+      );
+
+      for (const action of payload.actions) {
+        assert.equal(typeof action.remediation, "string", `action ${action.id} should have remediation`);
+        assert.ok(action.remediation.length > 0, `action ${action.id} remediation should not be empty`);
+      }
     },
   );
 });

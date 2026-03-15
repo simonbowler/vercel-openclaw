@@ -1,0 +1,20 @@
+{
+  "name": "sandbox-v2-demos",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo:types": "npx tsx demo-01-types.ts",
+    "demo:create": "npx tsx demo-02-create-basic.ts",
+    "demo:no-ports": "npx tsx demo-03-no-ports.ts",
+    "demo:snapshot": "npx tsx demo-04-snapshot-roundtrip.ts",
+    "demo:get-by-name": "npx tsx demo-05-get-by-name.ts",
+    "demo:persistent": "npx tsx demo-06-persistent.ts",
+    "demo:network-policy": "npx tsx demo-07-network-policy.ts",
+    "demo:list": "npx tsx demo-08-list-sandboxes.ts",
+    "demo:all-safe": "npx tsx demo-01-types.ts && npx tsx demo-08-list-sandboxes.ts"
+  },
+  "dependencies": {
+    "@vercel/sandbox": "2.0.0-beta.4",
+    "tsx": "^4.0.0"
+  }
+}

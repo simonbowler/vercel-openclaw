@@ -5,7 +5,7 @@
  * redirect rewriting, POST forwarding, query param forwarding, and
  * hop-by-hop header stripping.
  *
- * Run: npx tsx --test src/app/gateway/route.test.ts
+ * Run: npm test -- src/app/gateway/route.test.ts
  */
 
 import assert from "node:assert/strict";

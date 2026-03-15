@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+subcommand="${1:-}"
+
+if [ -z "${subcommand}" ]; then
+  exec npm
+fi
+
+case "${subcommand}" in
+  run)
+    shift
+    exec npm run "$@"
+    ;;
+  test)
+    shift
+    exec npm test -- "$@"
+    ;;
+  install)
+    shift
+    exec npm install "$@"
+    ;;
+  exec)
+    shift
+    exec node scripts/exec-local-bin.mjs "$@"
+    ;;
+  *)
+    shift || true
+    echo "vercel-openclaw uses npm, not pnpm. Forwarding to npm ${subcommand}." >&2
+    exec npm "${subcommand}" "$@"
+    ;;
+esac

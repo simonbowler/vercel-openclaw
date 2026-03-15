@@ -14,7 +14,8 @@
     "verify": "node scripts/verify.mjs",
     "verify:package-manager": "node scripts/verify-package-manager.mjs",
     "check:verify-contract": "node scripts/check-verifier-contract.mjs",
-    "audit:verifier-surface": "node scripts/audit-verifier-surface.mjs"
+    "audit:verifier-surface": "node scripts/audit-verifier-surface.mjs",
+    "check:deploy-readiness": "node scripts/check-deploy-readiness.mjs"
   },
   "dependencies": {
     "@upstash/redis": "^1.35.6",

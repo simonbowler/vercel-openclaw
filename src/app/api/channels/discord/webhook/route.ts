@@ -1,10 +1,9 @@
-import { after } from "next/server";
-
 import { getPublicOrigin } from "@/server/public-url";
 import { enqueueChannelJob } from "@/server/channels/driver";
 import { verifyDiscordRequestSignature } from "@/server/channels/discord/adapter";
 import { channelDedupKey } from "@/server/channels/keys";
-import { drainDiscordQueue } from "@/server/channels/discord/runtime";
+import { publishToChannelQueue } from "@/server/channels/queue";
+import { logInfo } from "@/server/log";
 import { getInitializedMeta, getStore } from "@/server/store/store";
 
 function extractInteractionId(payload: unknown): string | null {
@@ -62,15 +61,17 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
-  await enqueueChannelJob("discord", {
+  const job = {
     payload,
     receivedAt: Date.now(),
     origin: getPublicOrigin(request),
-  });
+  };
 
-  after(async () => {
-    await drainDiscordQueue();
-  });
+  const { queued } = await publishToChannelQueue("discord", job);
+  if (!queued) {
+    await enqueueChannelJob("discord", job);
+    logInfo("channels.discord_webhook_fallback_enqueue", { receivedAt: job.receivedAt });
+  }
 
   return Response.json({ type: 5 });
 }

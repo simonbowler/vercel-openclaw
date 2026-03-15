@@ -132,7 +132,7 @@ export async function PUT(request: Request): Promise<Response> {
     return auth;
   }
 
-  const connectability = buildChannelConnectability("discord", request);
+  const connectability = await buildChannelConnectability("discord", request);
   if (!connectability.canConnect) {
     return buildChannelConnectBlockedResponse(auth, connectability);
   }

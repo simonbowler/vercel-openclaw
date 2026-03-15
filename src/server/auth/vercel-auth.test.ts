@@ -11,7 +11,7 @@
  * - buildAuthorizeResponse: PKCE parameters and state/context cookies
  * - buildSignoutResponse: clears all auth cookies
  *
- * Run: npx tsx --test src/server/auth/vercel-auth.test.ts
+ * Run: npm test -- src/server/auth/vercel-auth.test.ts
  */
 
 import assert from "node:assert/strict";

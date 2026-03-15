@@ -4,7 +4,7 @@
  * Covers: CSRF enforcement (403), empty allowlist guard (409),
  * happy path promotes learned domains to enforcing mode.
  *
- * Run: pnpm test src/app/api/firewall/promote/route.test.ts
+ * Run: npm test src/app/api/firewall/promote/route.test.ts
  */
 
 import assert from "node:assert/strict";

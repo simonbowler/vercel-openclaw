@@ -8,9 +8,9 @@ metadata:
     - "**/vercel-openclaw/src/server/**"
     - "**/vercel-openclaw/src/test-utils/**"
   bashPattern:
-    - "pnpm test"
-    - "pnpm test:watch"
-    - "tsx --test"
+    - "npm test"
+    - "npm run test:watch"
+    - "node scripts/verify.mjs"
 ---
 
 # vercel-openclaw Testing
@@ -20,46 +20,72 @@ Full testing playbook for `vercel-openclaw` — a single Next.js 16 App Router p
 ## Quick Reference
 
 ```bash
-pnpm test                                        # all tests (1017 tests)
-pnpm test:watch                                  # watch mode (re-runs on file change)
-npx tsx --test src/server/firewall/state.test.ts  # single file
-npx tsx --test src/server/smoke/full-smoke.test.ts # full smoke test
-pnpm build                                        # build gate
-pnpm typecheck                                    # type gate
-pnpm lint                                         # lint gate
+# Canonical local verification (use this for CI and agent verification)
+node scripts/verify.mjs                                     # all gates
+node scripts/verify.mjs --steps=test                        # test only
+node scripts/verify.mjs --steps=lint                        # lint only
+node scripts/verify.mjs --steps=typecheck                   # typecheck only
+node scripts/verify.mjs --steps=build                       # build only
+node scripts/verify.mjs --steps=test,typecheck              # multiple steps
+
+# Direct npm shortcuts (convenience only — prefer verify.mjs for automation)
+npm test                                                    # all tests
+npm run test:watch                                          # watch mode
 ```
+
+## Remote Deployment Readiness Gate
+
+Before connecting Slack, Telegram, or Discord, verify the deployment meets the launch contract. The readiness verifier checks `/api/admin/preflight` and fails unless `ok=true`, `storeBackend=upstash`, and `aiGatewayAuth=oidc`.
+
+```bash
+# Readiness check (reads secrets from env — never hardcode them)
+OPENCLAW_BASE_URL="$OPENCLAW_BASE_URL" \
+VERCEL_AUTOMATION_BYPASS_SECRET="$VERCEL_AUTOMATION_BYPASS_SECRET" \
+node scripts/check-deploy-readiness.mjs --json-only
+
+# With explicit flags
+node scripts/check-deploy-readiness.mjs \
+  --base-url "$OPENCLAW_BASE_URL" \
+  --protection-bypass "$VERCEL_AUTOMATION_BYPASS_SECRET" \
+  --json-only
+```
+
+**Exit codes:** 0=pass, 1=contract-fail, 2=bad-args, 3=fetch-fail, 4=bad-response.
+
+**Rule: Do not connect channels until the readiness verifier exits 0.**
 
 ## Remote Smoke Testing (Live Deployment)
 
-The production deployment is at `https://vercel-openclaw.labs.vercel.dev`. It uses **deployment protection** mode, so you need the bypass secret.
+Run smoke tests only after the readiness gate passes. All secrets must come from environment variables.
 
 ```bash
-# Safe read-only smoke test (health, status, gateway probe, firewall read, channels summary, SSH echo)
-pnpm smoke:remote --base-url https://vercel-openclaw.labs.vercel.dev --protection-bypass G1nz97mVRqugLZl4Q0pfpTlZBLScslf9
+# Safe read-only smoke test
+npm run smoke:remote -- \
+  --base-url "$OPENCLAW_BASE_URL" \
+  --protection-bypass "$VERCEL_AUTOMATION_BYPASS_SECRET"
 
 # Destructive smoke test (includes ensure, snapshot, restore — use with caution)
-pnpm smoke:remote --base-url https://vercel-openclaw.labs.vercel.dev --protection-bypass G1nz97mVRqugLZl4Q0pfpTlZBLScslf9 --destructive --timeout 180
+npm run smoke:remote -- \
+  --base-url "$OPENCLAW_BASE_URL" \
+  --protection-bypass "$VERCEL_AUTOMATION_BYPASS_SECRET" \
+  --destructive --timeout 180
 
 # JSON-only output (for CI)
-pnpm smoke:remote --base-url https://vercel-openclaw.labs.vercel.dev --protection-bypass G1nz97mVRqugLZl4Q0pfpTlZBLScslf9 --json-only
+npm run smoke:remote -- \
+  --base-url "$OPENCLAW_BASE_URL" \
+  --protection-bypass "$VERCEL_AUTOMATION_BYPASS_SECRET" \
+  --json-only
 ```
 
-**Deployment URLs:**
-- Production: `https://vercel-openclaw.labs.vercel.dev`
-- Alias: `https://vercel-openclaw-prod.labs.vercel.dev`
-- Main branch: `https://vercel-openclaw-git-main.labs.vercel.dev`
-- Preview: `https://vercel-openclaw-<hash>.labs.vercel.dev`
-
 **Auth flags:**
-- `--protection-bypass <secret>` — Vercel deployment protection bypass (recommended for CLI testing)
-- `--auth-cookie <value>` — encrypted session cookie for `sign-in-with-vercel` mode
-- Env: `VERCEL_AUTOMATION_BYPASS_SECRET` — alternative to `--protection-bypass`
-- Env: `SMOKE_AUTH_COOKIE` — alternative to `--auth-cookie`
+- `--protection-bypass` — reads from flag or `VERCEL_AUTOMATION_BYPASS_SECRET` env var
+- `--auth-cookie` — reads from flag or `SMOKE_AUTH_COOKIE` env var
+- **Never commit or hardcode secrets in docs, code samples, or tests**
 
 **Ad-hoc endpoint checks with `vercel curl`:**
 ```bash
-vercel curl /api/health --deployment https://vercel-openclaw.labs.vercel.dev
-vercel curl /api/status --deployment https://vercel-openclaw.labs.vercel.dev
+vercel curl /api/health --deployment "$OPENCLAW_BASE_URL"
+vercel curl /api/status --deployment "$OPENCLAW_BASE_URL"
 ```
 
 ## Test Framework
@@ -68,7 +94,7 @@ vercel curl /api/status --deployment https://vercel-openclaw.labs.vercel.dev
 - **Assertions:** `node:assert/strict`
 - **Transpiler:** `tsx` (TypeScript execution)
 - **NO Jest, NO Vitest** — native Node testing only
-- **Test command:** `tsx --test src/**/*.test.ts`
+- **Test command:** `npm test` or `node scripts/verify.mjs --steps=test`
 - **Imports:** `@/` path alias (mapped to `src/` in tsconfig)
 
 Tests are **colocated** with source files. Route tests live next to route files. Server tests live next to server modules. The full smoke test lives at `src/server/smoke/full-smoke.test.ts`.
@@ -986,19 +1012,16 @@ Tests can be run under different auth modes and store backends to verify behavio
 
 ```bash
 # All tests (memory store, deployment-protection auth)
-pnpm test
+npm test
 
-# Single test file
-npx tsx --test src/server/firewall/state.test.ts
+# All gates via verifier
+node scripts/verify.mjs
 
-# Full smoke test only
-npx tsx --test src/server/smoke/full-smoke.test.ts
-
-# Tests matching a pattern
-npx tsx --test src/server/channels/**/*.test.ts
-
-# Tests with diagnostic output on failure
-npx tsx --test --test-reporter=spec src/server/sandbox/lifecycle.test.ts
+# Single step via verifier
+node scripts/verify.mjs --steps=test
+node scripts/verify.mjs --steps=lint
+node scripts/verify.mjs --steps=typecheck
+node scripts/verify.mjs --steps=build
 ```
 
 ### Per-Auth-Mode Test Strategy
@@ -1277,10 +1300,10 @@ A test suite achieves "complete verification" when all four categories are satis
 All four gates must pass before work is considered complete:
 
 ```bash
-pnpm lint        # Gate 1: formatting + imports
-pnpm test        # Gate 2: all tests pass
-pnpm typecheck   # Gate 3: no type errors
-pnpm build       # Gate 4: production build succeeds
+npm run lint        # Gate 1: formatting + imports
+npm test        # Gate 2: all tests pass
+npm run typecheck   # Gate 3: no type errors
+npm build       # Gate 4: production build succeeds
 ```
 
 ---
@@ -1308,16 +1331,16 @@ Before marking any work complete, pass ALL gates in order:
 
 ```bash
 # Gate 1: Lint — catches formatting and import issues
-pnpm lint
+npm run lint
 
 # Gate 2: Tests — all tests pass (including smoke)
-pnpm test
+npm test
 
 # Gate 3: Type check — no type errors
-pnpm typecheck
+npm run typecheck
 
 # Gate 4: Build — production build succeeds
-pnpm build
+npm build
 ```
 
 ### Verification Checklist
@@ -1368,7 +1391,7 @@ pnpm build
 - **`globalThis.fetch` swap** — when tests need fetch interception, save/restore in try/finally
 - **Command responders** — return `undefined` to fall through to default behavior; first non-undefined wins
 - **Smoke test is sequential** — phases depend on each other; don't reorder without understanding the state flow
-- **`pnpm test` is the canonical runner** — never use `bun test` (different resolver, different globals, will produce false failures)
+- **`npm test` is the canonical runner** — never use `bun test` (different resolver, different globals, will produce false failures)
 
 ---
 
@@ -1560,13 +1583,13 @@ Every source file mapped to its test file(s). Files marked with ✅ have direct 
 
 ## Verification Protocol (Updated)
 
-Always use `pnpm test` — never `bun test`. The canonical verification sequence:
+Always use `npm test` — never `bun test`. The canonical verification sequence:
 
 ```bash
-pnpm test          # 854 tests across all tiers
-pnpm typecheck     # tsc --noEmit
-pnpm lint          # eslint (1 pre-existing React warning-as-error)
-pnpm build         # Next.js production build
+npm test          # 854 tests across all tiers
+npm run typecheck     # tsc --noEmit
+npm run lint          # eslint (1 pre-existing React warning-as-error)
+npm build         # Next.js production build
 ```
 
 All four must pass before work is considered done. The lint error about `setState` in `admin-shell.tsx` is pre-existing and unrelated to test coverage.

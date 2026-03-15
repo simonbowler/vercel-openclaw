@@ -11,7 +11,7 @@
  *   7. Already-running Discord → no second restore + chunking
  *   8. Final invariants → clean queues + correct lifecycle sequence + no error logs
  *
- * Run: pnpm test
+ * Run: npm test
  */
 
 import assert from "node:assert/strict";

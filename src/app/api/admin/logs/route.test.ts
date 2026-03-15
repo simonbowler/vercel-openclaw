@@ -3,7 +3,7 @@
  *
  * Covers CSRF rejection and basic log retrieval.
  *
- * Run: pnpm test src/app/api/admin/logs/route.test.ts
+ * Run: npm test src/app/api/admin/logs/route.test.ts
  */
 
 import assert from "node:assert/strict";

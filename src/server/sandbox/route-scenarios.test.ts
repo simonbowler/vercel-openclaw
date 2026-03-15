@@ -5,7 +5,7 @@
  * injected fake infrastructure (sandbox controller, store, fetch) so no real
  * network or sandbox API calls are made.
  *
- * Run: npx tsx --test src/server/sandbox/route-scenarios.test.ts
+ * Run: npm test -- src/server/sandbox/route-scenarios.test.ts
  */
 
 import assert from "node:assert/strict";

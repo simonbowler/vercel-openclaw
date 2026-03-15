@@ -11,7 +11,7 @@
  * - getCookieValue edge cases (missing header, multiple cookies, encoded values)
  * - serializeCookie attribute generation
  *
- * Run: npx tsx --test src/server/auth/session.test.ts
+ * Run: npm test -- src/server/auth/session.test.ts
  */
 
 import assert from "node:assert/strict";

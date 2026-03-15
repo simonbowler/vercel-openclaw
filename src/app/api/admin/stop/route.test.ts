@@ -4,7 +4,7 @@
  * Covers: auth enforcement (403 without CSRF), happy path stop with
  * lifecycle state transition.
  *
- * Run: pnpm test src/app/api/admin/stop/route.test.ts
+ * Run: npm test src/app/api/admin/stop/route.test.ts
  */
 
 import assert from "node:assert/strict";

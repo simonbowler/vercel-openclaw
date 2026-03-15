@@ -4,7 +4,7 @@
  * Covers: auth enforcement (403 without CSRF), missing snapshotId (400),
  * unknown snapshot (404), happy path restore from stopped state.
  *
- * Run: pnpm test src/app/api/admin/snapshots/restore/route.test.ts
+ * Run: npm test src/app/api/admin/snapshots/restore/route.test.ts
  */
 
 import assert from "node:assert/strict";

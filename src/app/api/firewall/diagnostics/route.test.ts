@@ -1,7 +1,7 @@
 /**
  * Tests for GET /api/firewall/diagnostics.
  *
- * Run: pnpm test src/app/api/firewall/diagnostics/route.test.ts
+ * Run: npm test src/app/api/firewall/diagnostics/route.test.ts
  */
 
 import assert from "node:assert/strict";

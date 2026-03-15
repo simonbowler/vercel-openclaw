@@ -98,21 +98,12 @@ export async function getPublicChannelState(
   const discordWebhookUrl = buildDiscordPublicWebhookUrl(request);
   const discordPublic = isPublicUrl(discordWebhookUrl);
 
-  const slackConnectability = buildChannelConnectability(
-    "slack",
-    request,
-    slackWebhookUrl,
-  );
-  const telegramConnectability = buildChannelConnectability(
-    "telegram",
-    request,
-    telegramWebhookUrl,
-  );
-  const discordConnectability = buildChannelConnectability(
-    "discord",
-    request,
-    discordWebhookUrl,
-  );
+  const [slackConnectability, telegramConnectability, discordConnectability] =
+    await Promise.all([
+      buildChannelConnectability("slack", request, slackWebhookUrl),
+      buildChannelConnectability("telegram", request, telegramWebhookUrl),
+      buildChannelConnectability("discord", request, discordWebhookUrl),
+    ]);
 
   return {
     slack: toPublicSlackState(

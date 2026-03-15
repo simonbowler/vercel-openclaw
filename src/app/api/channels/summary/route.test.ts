@@ -3,7 +3,7 @@
  *
  * Covers auth-gated channel summary with queue depth and failed counts.
  *
- * Run: pnpm test src/app/api/channels/summary/route.test.ts
+ * Run: npm test src/app/api/channels/summary/route.test.ts
  */
 
 import assert from "node:assert/strict";

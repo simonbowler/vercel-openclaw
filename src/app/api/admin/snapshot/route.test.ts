@@ -3,7 +3,7 @@
  *
  * Covers CSRF rejection and snapshot-and-stop flow.
  *
- * Run: pnpm test src/app/api/admin/snapshot/route.test.ts
+ * Run: npm test src/app/api/admin/snapshot/route.test.ts
  */
 
 import assert from "node:assert/strict";

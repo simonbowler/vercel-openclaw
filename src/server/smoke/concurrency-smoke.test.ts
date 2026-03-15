@@ -9,7 +9,7 @@
  *   5. Restore from error state after clearing the error
  *   6. Failed queue receives max-retry failures
  *
- * Run: pnpm test
+ * Run: npm test
  */
 
 import assert from "node:assert/strict";

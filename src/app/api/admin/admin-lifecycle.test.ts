@@ -11,7 +11,7 @@
  * - POST /api/status        (heartbeat / touchRunningSandbox)
  *
  * Uses the scenario harness (memory store, fake sandbox controller).
- * Run: pnpm test src/app/api/admin/admin-lifecycle.test.ts
+ * Run: npm test src/app/api/admin/admin-lifecycle.test.ts
  */
 
 import assert from "node:assert/strict";

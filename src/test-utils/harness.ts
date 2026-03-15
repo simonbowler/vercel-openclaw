@@ -5,7 +5,7 @@
  * module-level singletons, installs a FakeSandboxController, and
  * returns a handle with accessors and a teardown function.
  *
- * Compatible with `node:test` via `tsx --test`.
+ * Compatible with `node:test` via `npm test`.
  */
 
 import assert from "node:assert/strict";

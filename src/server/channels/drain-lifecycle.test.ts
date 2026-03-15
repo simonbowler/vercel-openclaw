@@ -7,7 +7,7 @@
  * - already running → no restore/create, gateway called immediately
  * - concurrent drains on different channels → only one restore triggered
  *
- * Run: pnpm test
+ * Run: npm test
  */
 
 import assert from "node:assert/strict";

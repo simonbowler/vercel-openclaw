@@ -11,6 +11,10 @@ import { ChannelsPanel } from "@/components/panels/channels-panel";
 import { SshPanel } from "@/components/panels/ssh-panel";
 import { LogsPanel } from "@/components/panels/logs-panel";
 import { SnapshotsPanel } from "@/components/panels/snapshots-panel";
+import {
+  buildJsonRouteErrorMessage,
+  type JsonRouteErrorPayload,
+} from "@/components/api-route-errors";
 import type {
   StatusPayload,
   UnauthorizedPayload,
@@ -138,9 +142,12 @@ export function AdminShell({
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as
-          | { message?: string }
+          | JsonRouteErrorPayload
           | null;
-        throw new Error(payload?.message ?? `${input.label} failed`);
+
+        throw new Error(
+          buildJsonRouteErrorMessage(payload, `${input.label} failed`),
+        );
       }
 
       const payload = (await response.json().catch(() => null)) as T | null;

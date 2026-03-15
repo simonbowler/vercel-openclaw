@@ -3,7 +3,7 @@
  *
  * Covers CRON_SECRET authorization and drain execution.
  *
- * Run: pnpm test src/app/api/cron/drain-channels/route.test.ts
+ * Run: npm test src/app/api/cron/drain-channels/route.test.ts
  */
 
 import assert from "node:assert/strict";

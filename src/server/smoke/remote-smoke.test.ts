@@ -8,7 +8,7 @@
  *   - Safe-only mode skips destructive phases
  *   - --destructive flag includes destructive phases
  *
- * Run: pnpm test
+ * Run: npm test
  */
 
 import assert from "node:assert/strict";

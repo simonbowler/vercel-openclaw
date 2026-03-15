@@ -5,7 +5,7 @@
  * - GET returns status for both running and uninitialized sandbox states
  * - POST heartbeat with CSRF verification
  *
- * Run: pnpm test src/app/api/status/route.test.ts
+ * Run: npm test src/app/api/status/route.test.ts
  */
 
 import assert from "node:assert/strict";

@@ -5,7 +5,7 @@
  * no Slack config (404), URL verification challenge, happy path enqueue,
  * and dedup rejection.
  *
- * Run: pnpm test src/app/api/channels/slack/webhook/route.test.ts
+ * Run: npm test src/app/api/channels/slack/webhook/route.test.ts
  */
 
 import assert from "node:assert/strict";

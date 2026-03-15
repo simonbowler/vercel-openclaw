@@ -3,7 +3,7 @@
  *
  * Covers CSRF rejection, snapshot history listing, and snapshot creation.
  *
- * Run: pnpm test src/app/api/admin/snapshots/route.test.ts
+ * Run: npm test src/app/api/admin/snapshots/route.test.ts
  */
 
 import assert from "node:assert/strict";

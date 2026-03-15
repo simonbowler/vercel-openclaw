@@ -3,7 +3,7 @@
  *
  * Covers CSRF rejection, missing command validation, and sandbox-not-running.
  *
- * Run: pnpm test src/app/api/admin/ssh/route.test.ts
+ * Run: npm test src/app/api/admin/ssh/route.test.ts
  */
 
 import assert from "node:assert/strict";

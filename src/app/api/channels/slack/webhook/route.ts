@@ -1,15 +1,12 @@
-import { after } from "next/server";
-
 import { getPublicOrigin } from "@/server/public-url";
 import { enqueueChannelJob } from "@/server/channels/driver";
 import { channelDedupKey } from "@/server/channels/keys";
-import {
-  drainSlackQueue,
-} from "@/server/channels/slack/runtime";
+import { publishToChannelQueue } from "@/server/channels/queue";
 import {
   getSlackUrlVerificationChallenge,
   isValidSlackSignature,
 } from "@/server/channels/slack/adapter";
+import { logInfo } from "@/server/log";
 import { getInitializedMeta, getStore } from "@/server/store/store";
 
 function unauthorizedResponse() {
@@ -89,15 +86,17 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
-  await enqueueChannelJob("slack", {
+  const job = {
     payload,
     receivedAt: Date.now(),
     origin: getPublicOrigin(request),
-  });
+  };
 
-  after(async () => {
-    await drainSlackQueue();
-  });
+  const { queued } = await publishToChannelQueue("slack", job);
+  if (!queued) {
+    await enqueueChannelJob("slack", job);
+    logInfo("channels.slack_webhook_fallback_enqueue", { receivedAt: job.receivedAt });
+  }
 
   return Response.json({ ok: true });
 }

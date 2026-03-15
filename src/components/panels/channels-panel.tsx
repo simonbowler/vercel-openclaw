@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { ChannelPill } from "@/components/ui/badge";
 import type {
   StatusPayload,
@@ -22,6 +22,26 @@ type ChannelSummary = {
   discord: ChannelSummaryEntry;
 };
 
+type PreflightAction = {
+  id: string;
+  status: "required" | "recommended";
+  message: string;
+  remediation: string;
+  env: string[];
+};
+
+type PreflightNextStep = {
+  id: string;
+  label: string;
+  description: string;
+};
+
+type PreflightData = {
+  ok: boolean;
+  actions: PreflightAction[];
+  nextSteps: PreflightNextStep[];
+};
+
 type ChannelsPanelProps = {
   status: StatusPayload;
   busy: boolean;
@@ -29,6 +49,22 @@ type ChannelsPanelProps = {
   requestJson: RequestJson;
   refresh: () => Promise<void>;
 };
+
+async function loadChannelSummary(): Promise<ChannelSummary | null> {
+  const res = await fetch("/api/channels/summary", {
+    cache: "no-store",
+    headers: { accept: "application/json" },
+  });
+  return res.ok ? ((await res.json()) as ChannelSummary) : null;
+}
+
+async function loadPreflightData(): Promise<PreflightData | null> {
+  const res = await fetch("/api/admin/preflight", {
+    cache: "no-store",
+    headers: { accept: "application/json" },
+  });
+  return res.ok ? ((await res.json()) as PreflightData) : null;
+}
 
 export function ChannelsPanel({
   status,
@@ -38,36 +74,28 @@ export function ChannelsPanel({
   refresh,
 }: ChannelsPanelProps) {
   const [summary, setSummary] = useState<ChannelSummary | null>(null);
+  const [preflight, setPreflight] = useState<PreflightData | null>(null);
 
   useEffect(() => {
-    let active = true;
-    fetch("/api/channels/summary", {
-      cache: "no-store",
-      headers: { accept: "application/json" },
-    })
-      .then((res) => (res.ok ? (res.json() as Promise<ChannelSummary>) : null))
-      .then((data) => {
-        if (active && data) setSummary(data);
-      })
+    let cancelled = false;
+    void loadChannelSummary()
+      .then((data) => { if (!cancelled) setSummary(data); })
       .catch(() => {});
-    return () => {
-      active = false;
-    };
+    void loadPreflightData()
+      .then((data) => { if (!cancelled) setPreflight(data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, []);
 
-  const fetchSummary = useCallback(async () => {
-    try {
-      const res = await fetch("/api/channels/summary", {
-        cache: "no-store",
-        headers: { accept: "application/json" },
-      });
-      if (res.ok) {
-        setSummary((await res.json()) as ChannelSummary);
-      }
-    } catch {
-      // Best-effort
-    }
-  }, []);
+  function refreshPanelData(): void {
+    void Promise.all([
+      loadChannelSummary().catch(() => null),
+      loadPreflightData().catch(() => null),
+    ]).then(([nextSummary, nextPreflight]) => {
+      if (nextSummary) setSummary(nextSummary);
+      if (nextPreflight) setPreflight(nextPreflight);
+    });
+  }
 
   const totalQueue =
     (summary?.slack.queueDepth ?? 0) +
@@ -98,13 +126,38 @@ export function ChannelsPanel({
             disabled={busy}
             onClick={() => {
               void refresh();
-              void fetchSummary();
+              refreshPanelData();
             }}
           >
             Refresh
           </button>
         </div>
       </div>
+
+      {preflight && !preflight.ok ? (
+        <div className="error-banner" style={{ marginBottom: 16 }}>
+          <p style={{ margin: 0, fontWeight: 500 }}>
+            Deployment blockers must be resolved before connecting channels.
+          </p>
+          {preflight.actions
+            .filter((a) => a.status === "required")
+            .map((action) => (
+              <p key={action.id} className="muted-copy" style={{ margin: "4px 0 0" }}>
+                {action.remediation}
+              </p>
+            ))}
+        </div>
+      ) : null}
+
+      {preflight?.nextSteps && preflight.nextSteps.length > 0 && preflight.ok ? (
+        <div className="connectability-warning-banner" style={{ marginBottom: 16 }}>
+          {preflight.nextSteps.map((step) => (
+            <p key={step.id} className="muted-copy" style={{ margin: "2px 0" }}>
+              <strong>{step.label}:</strong> {step.description}
+            </p>
+          ))}
+        </div>
+      ) : null}
 
       <div className="channel-grid">
         <SlackPanel

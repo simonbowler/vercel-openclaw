@@ -31,6 +31,9 @@ const MAX_RETRY_COUNT = 8;
 const RETRY_BACKOFF_BASE_MS = 1_000;
 const RETRY_BACKOFF_MAX_MS = 5 * 60 * 1000;
 const CHANNEL_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+export const DEFAULT_CHANNEL_SANDBOX_READY_TIMEOUT_MS = 25_000;
+export const DEFAULT_CHANNEL_REQUEST_TIMEOUT_MS = 90_000;
+const DEFAULT_CHANNEL_WAKE_RETRY_AFTER_SECONDS = 15;
 
 export type QueuedChannelJob<TPayload = unknown> = {
   payload: TPayload;
@@ -56,7 +59,7 @@ type LeasedChannelQueueEntry = {
   visibilityTimeoutAt: number;
 };
 
-type DrainChannelQueueOptions<
+export type ChannelJobOptions<
   TConfig,
   TPayload,
   TMessage extends ExtractedChannelMessage,
@@ -64,9 +67,17 @@ type DrainChannelQueueOptions<
   channel: ChannelName;
   getConfig(meta: SingleMeta): TConfig | null;
   createAdapter(config: TConfig): PlatformAdapter<TPayload, TMessage>;
-  /** Override sandbox readiness timeout (ms). Defaults to lifecycle's READY_WAIT_TIMEOUT_MS. */
+  /** Override sandbox readiness timeout (ms). Defaults to DEFAULT_CHANNEL_SANDBOX_READY_TIMEOUT_MS. */
   sandboxReadyTimeoutMs?: number;
+  /** Override gateway request timeout (ms). Defaults to DEFAULT_CHANNEL_REQUEST_TIMEOUT_MS. */
+  requestTimeoutMs?: number;
 };
+
+type DrainChannelQueueOptions<
+  TConfig,
+  TPayload,
+  TMessage extends ExtractedChannelMessage,
+> = ChannelJobOptions<TConfig, TPayload, TMessage>;
 
 export async function enqueueChannelJob<TPayload>(
   channel: ChannelName,
@@ -280,12 +291,12 @@ export async function drainChannelQueue<
   }
 }
 
-async function processChannelJob<
+export async function processChannelJob<
   TConfig,
   TPayload,
   TMessage extends ExtractedChannelMessage,
 >(
-  options: DrainChannelQueueOptions<TConfig, TPayload, TMessage>,
+  options: ChannelJobOptions<TConfig, TPayload, TMessage>,
   job: QueuedChannelJob<TPayload>,
 ): Promise<void> {
   const meta = await getInitializedMeta();
@@ -314,6 +325,11 @@ async function processChannelJob<
     message.history = await readSessionHistory(options.channel, sessionKey);
   }
 
+  const sandboxReadyTimeoutMs =
+    options.sandboxReadyTimeoutMs ?? DEFAULT_CHANNEL_SANDBOX_READY_TIMEOUT_MS;
+  const requestTimeoutMs =
+    options.requestTimeoutMs ?? DEFAULT_CHANNEL_REQUEST_TIMEOUT_MS;
+
   let typingStarted = false;
   try {
     if (adapter.sendTypingIndicator) {
@@ -328,24 +344,32 @@ async function processChannelJob<
       }
     }
 
+    logInfo("channels.wake_requested", {
+      channel: options.channel,
+      sandboxReadyTimeoutMs,
+    });
+
     let readyMeta: Awaited<ReturnType<typeof ensureSandboxReady>>;
     let gatewayUrl: string;
     try {
       readyMeta = await ensureSandboxReady({
         origin: resolveAppOrigin(job.origin),
         reason: `channel:${options.channel}`,
-        ...(options.sandboxReadyTimeoutMs != null
-          ? { timeoutMs: options.sandboxReadyTimeoutMs }
-          : {}),
+        timeoutMs: sandboxReadyTimeoutMs,
       });
       gatewayUrl = await getSandboxDomain();
+      logInfo("channels.wake_ready", {
+        channel: options.channel,
+      });
     } catch (sandboxError) {
-      logWarn("channels.sandbox_not_ready", {
+      logWarn("channels.wake_retry_scheduled", {
         channel: options.channel,
         error: formatError(sandboxError),
+        retryAfterSeconds: DEFAULT_CHANNEL_WAKE_RETRY_AFTER_SECONDS,
       });
       throw new RetryableChannelError(
         `sandbox_not_ready: ${formatError(sandboxError)}`,
+        DEFAULT_CHANNEL_WAKE_RETRY_AFTER_SECONDS,
       );
     }
     await touchRunningSandbox();
@@ -354,14 +378,21 @@ async function processChannelJob<
       ? await adapter.buildGatewayMessages(message)
       : defaultGatewayMessages(message);
 
+    logInfo("channels.gateway_request_started", {
+      channel: options.channel,
+      requestTimeoutMs,
+    });
+
     const replyText = await forwardToGateway({
       gatewayUrl,
       gatewayToken: readyMeta.gatewayToken,
       messages,
       sessionKey,
+      requestTimeoutMs,
     });
 
     await adapter.sendReply(message, replyText);
+    logInfo("channels.platform_reply_sent", { channel: options.channel });
     logInfo("channels.delivery_success", { channel: options.channel });
     if (sessionKey) {
       await appendSessionHistory(options.channel, sessionKey, message.text, replyText);
@@ -387,7 +418,9 @@ async function forwardToGateway(options: {
   gatewayToken: string;
   messages: GatewayMessage[];
   sessionKey?: string;
+  requestTimeoutMs?: number;
 }): Promise<string> {
+  const timeoutMs = options.requestTimeoutMs ?? DEFAULT_CHANNEL_REQUEST_TIMEOUT_MS;
   const url = new URL("/v1/chat/completions", options.gatewayUrl).toString();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -407,9 +440,14 @@ async function forwardToGateway(options: {
         messages: options.messages,
         stream: false,
       }),
-      signal: AbortSignal.timeout(CHANNEL_REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
+    if (isTimeoutError(error)) {
+      logWarn("channels.gateway_request_timeout", {
+        timeoutMs,
+      });
+    }
     throw toRetryableErrorIfNeeded(error);
   }
 
@@ -526,7 +564,7 @@ function serializeLeasedChannelQueueEntry(
   return JSON.stringify(envelope);
 }
 
-function isRetryable(error: unknown): boolean {
+export function isRetryable(error: unknown): boolean {
   if (!error) {
     return false;
   }
@@ -554,6 +592,16 @@ function isRetryable(error: unknown): boolean {
     message.includes("econn") ||
     message.includes("enotfound") ||
     message.includes("socket")
+  );
+}
+
+function isTimeoutError(error: unknown): boolean {
+  if (!error || !(error instanceof Error)) return false;
+  return (
+    error.name === "AbortError" ||
+    error.name === "TimeoutError" ||
+    error.message.toLowerCase().includes("timeout") ||
+    error.message.toLowerCase().includes("timed out")
   );
 }
 

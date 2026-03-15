@@ -4,7 +4,7 @@
  * Calls the actual POST handler from the Next.js route module with
  * fake infrastructure — no real network or sandbox calls.
  *
- * Run: npx tsx --test src/server/channels/telegram/route.test.ts
+ * Run: npm test -- src/server/channels/telegram/route.test.ts
  */
 
 import assert from "node:assert/strict";
@@ -120,12 +120,9 @@ test("Telegram route: valid webhook enqueues work and returns 200", async () => 
     assert.equal(result.status, 200);
     assert.deepEqual(result.json, { ok: true });
 
-    // Verify a job was enqueued
+    // Verify a job was enqueued (via publishToChannelQueue fallback to store)
     const queueLen = await h.getStore().getQueueLength(channelQueueKey("telegram"));
     assert.ok(queueLen >= 1, `Expected at least 1 queued job, got ${queueLen}`);
-
-    // Verify after() callback was scheduled for draining
-    assert.ok(pendingAfterCount() >= 1, "Expected at least 1 after() callback");
   } finally {
     resetAfterCallbacks();
     h.teardown();

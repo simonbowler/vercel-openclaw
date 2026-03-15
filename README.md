@@ -43,12 +43,47 @@ If you keep `VERCEL_AUTH_MODE=deployment-protection`, enable **Protection Bypass
 
 When `VERCEL_AUTOMATION_BYPASS_SECRET` is available, vercel-openclaw will automatically append `x-vercel-protection-bypass` to the generated Slack, Telegram, and Discord webhook URLs so those platforms can reach your protected deployment.
 
+## Production launch contract
+
+A deployment is not channel-ready until these three conditions are met:
+
+- `"ok": true` — no failing preflight checks
+- `"storeBackend": "upstash"` — durable state is required for channel reliability
+- `"aiGatewayAuth": "oidc"` — deployed Vercel environments must use OIDC, not a static API key
+
+**Do not connect Slack, Telegram, or Discord until the readiness gate passes.**
+
+### Verifying deployed readiness
+
+Run the readiness verifier against your deployed instance:
+
+```bash
+OPENCLAW_BASE_URL="https://your-project.vercel.app" \
+  node scripts/check-deploy-readiness.mjs --json-only
+```
+
+For `deployment-protection` mode, also supply the bypass secret:
+
+```bash
+OPENCLAW_BASE_URL="https://your-project.vercel.app" \
+  VERCEL_AUTOMATION_BYPASS_SECRET="$VERCEL_AUTOMATION_BYPASS_SECRET" \
+  node scripts/check-deploy-readiness.mjs --json-only
+```
+
+The script fetches `GET /api/admin/preflight`, checks the launch contract, and exits 0 only when all conditions pass. Secrets are redacted in all output.
+
+### Requirements for channel-capable deployments
+
+- **Upstash Redis** — in-memory state loses queue data, credentials, and sandbox metadata on cold starts. Channels require durable state.
+- **AI Gateway OIDC** — `AI_GATEWAY_API_KEY` is for local development only. Do not set it in Vercel project environment variables. Deployed environments authenticate to AI Gateway through OIDC automatically.
+- **Protection Bypass for Automation** — if `VERCEL_AUTH_MODE=deployment-protection`, enable Protection Bypass in your Vercel project settings before connecting channels. Without it, Slack, Telegram, and Discord webhooks will be blocked.
+
 ## Quickstart
 
 ## Prerequisites
 
 - Node.js 20 or newer
-- pnpm
+- npm
 - access to Vercel Sandboxes
 - an auth strategy
 
@@ -60,7 +95,7 @@ Use one of these auth strategies:
 ## Install dependencies
 
 ```bash
-pnpm install
+npm install
 ```
 
 ## Configure environment variables
@@ -88,7 +123,7 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 ## Start the app
 
 ```bash
-pnpm dev
+npm run dev
 ```
 
 Open `http://localhost:3000`.
@@ -167,19 +202,27 @@ The app can expose the same single OpenClaw sandbox through:
 Channel flow:
 
 1. the public webhook route validates the platform signature or secret
-2. the request is acknowledged quickly
-3. the payload is queued in the control-plane store
-4. a channel-specific drainer restores the sandbox if needed
-5. the drainer sends the message to `POST /v1/chat/completions` on the OpenClaw gateway
-6. the app delivers the reply back to the originating channel
+2. the handler publishes a message to a Vercel Queue topic (`channel-slack`, `channel-telegram`, or `channel-discord`)
+3. a private queue consumer route under `/api/queues/channels/*` restores the sandbox if needed
+4. the consumer sends the message to `POST /v1/chat/completions` on the OpenClaw gateway
+5. the app delivers the reply back to the originating channel
+
+Private queue consumers are configured in `vercel.json` and are not publicly reachable on Vercel. `/api/cron/drain-channels` is an optional diagnostic backstop when `CRON_SECRET` is configured — it is not the primary delivery path.
 
 Current behavior:
 
 - Slack uses threaded replies and supports Slack app manifest generation plus bot-token validation
 - Telegram validates bot tokens with `getMe`, rotates webhook secrets, and replies through the Bot API
 - Discord can configure the interactions endpoint, register the `/ask` command, and patch deferred interaction responses
-- queue durability depends on the selected store backend; use Upstash for production
-- `GET` or `POST /api/cron/drain-channels` can be called with `CRON_SECRET` auth to replay deferred work on a schedule
+
+### Local queue development
+
+```bash
+vercel link
+vercel env pull
+```
+
+This writes the OIDC credentials that `@vercel/queue` needs for local `send` and `handleCallback` calls. On deployed Vercel environments, queue auth is automatic.
 
 ## Auth modes
 
@@ -209,11 +252,11 @@ Session details:
 | Variable                           | Required | Purpose |
 | ---------------------------------- | -------- | ------- |
 | `VERCEL_AUTH_MODE`                 | No       | `deployment-protection` or `sign-in-with-vercel`. Defaults to `deployment-protection`. |
-| `UPSTASH_REDIS_REST_URL`           | Recommended | Primary persistent store endpoint. |
-| `UPSTASH_REDIS_REST_TOKEN`         | Recommended | Primary persistent store token. |
+| `UPSTASH_REDIS_REST_URL`           | Required    | Primary persistent store endpoint. Required for channel-capable deployments. |
+| `UPSTASH_REDIS_REST_TOKEN`         | Required    | Primary persistent store token. Required for channel-capable deployments. |
 | `KV_REST_API_URL`                  | Optional | Alias for REST store URL. |
 | `KV_REST_API_TOKEN`                | Optional | Alias for REST store token. |
-| `AI_GATEWAY_API_KEY`               | Optional | Static Vercel AI Gateway credential. On Vercel, OIDC is used automatically; only needed for local dev or explicit override. |
+| `AI_GATEWAY_API_KEY`               | Local dev only | Static AI Gateway credential for local development. Do not set on deployed Vercel environments — OIDC is used automatically. |
 | `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID` | Sign-in mode | OAuth client ID. |
 | `VERCEL_APP_CLIENT_SECRET`         | Sign-in mode | OAuth client secret. |
 | `SESSION_SECRET`                   | Sign-in mode | Cookie encryption secret. |
@@ -225,14 +268,14 @@ If no REST store variables are present, the app falls back to in-memory state. T
 ## Commands
 
 ```bash
-pnpm dev
-pnpm lint
-pnpm test
-pnpm typecheck
-pnpm build
+npm run dev
+npm run lint
+npm test
+npm run typecheck
+npm run build
 ```
 
-Tests use Node's built-in `node:test` runner through `tsx --test`.
+Tests use Node's built-in `node:test` runner. Run `npm test` or use `node scripts/verify.mjs --steps=test`.
 
 ## Project structure
 
@@ -276,7 +319,10 @@ src/
 | `/api/channels/discord` | Discord config CRUD |
 | `/api/channels/discord/register-command` | Register Discord `/ask` |
 | `/api/channels/discord/webhook` | Public Discord interactions endpoint |
-| `/api/cron/drain-channels` | Replay queued channel work |
+| `/api/queues/channels/slack` | Private Vercel Queues consumer for Slack delivery |
+| `/api/queues/channels/telegram` | Private Vercel Queues consumer for Telegram delivery |
+| `/api/queues/channels/discord` | Private Vercel Queues consumer for Discord delivery |
+| `/api/cron/drain-channels` | Optional diagnostic backstop — not the primary delivery path |
 | `/api/admin/ensure` | Trigger create or restore |
 | `/api/admin/stop` | Snapshot and stop |
 | `/api/admin/snapshot` | Snapshot and stop |
@@ -288,14 +334,32 @@ src/
 
 ## Verification
 
-Run the full verification gate before you deploy changes:
+### Local verification
+
+Use this command for all local automation and CI:
 
 ```bash
-pnpm lint
-pnpm test
-pnpm typecheck
-pnpm build
+node scripts/verify.mjs
 ```
+
+This runs `lint`, `test`, `typecheck`, and `build`, emits JSON lines, and exits non-zero on the first failing step. Do not invoke bare `npm` or `tsx` directly from automation.
+
+Run a subset of steps:
+
+```bash
+node scripts/verify.mjs --steps=test,typecheck
+```
+
+### Deployed readiness verification
+
+After deploying, verify the instance is channel-ready before connecting Slack, Telegram, or Discord:
+
+```bash
+OPENCLAW_BASE_URL="https://your-project.vercel.app" \
+  node scripts/check-deploy-readiness.mjs --json-only
+```
+
+This fetches `/api/admin/preflight` and enforces the production launch contract (`ok=true`, `storeBackend=upstash`, `aiGatewayAuth=oidc`). See [Production launch contract](#production-launch-contract) for details.
 
 ## Limitations and sharp edges
 

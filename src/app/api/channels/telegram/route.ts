@@ -43,7 +43,7 @@ export async function PUT(request: Request): Promise<Response> {
     return auth;
   }
 
-  const connectability = buildChannelConnectability("telegram", request);
+  const connectability = await buildChannelConnectability("telegram", request);
   if (!connectability.canConnect) {
     return buildChannelConnectBlockedResponse(auth, connectability);
   }

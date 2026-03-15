@@ -3,7 +3,7 @@
  *
  * The health endpoint is unauthenticated and returns basic system info.
  *
- * Run: pnpm test src/app/api/health/route.test.ts
+ * Run: npm test src/app/api/health/route.test.ts
  */
 
 import assert from "node:assert/strict";

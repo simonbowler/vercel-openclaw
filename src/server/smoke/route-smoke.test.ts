@@ -13,7 +13,7 @@
  *   - Auth enforcement: unauthenticated → 401/403
  *   - CSRF checks: missing origin/x-requested-with → 403
  *
- * Run: pnpm test src/server/smoke/route-smoke.test.ts
+ * Run: npm test src/server/smoke/route-smoke.test.ts
  */
 
 import assert from "node:assert/strict";

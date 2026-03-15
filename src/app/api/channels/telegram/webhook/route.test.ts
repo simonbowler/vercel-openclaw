@@ -4,7 +4,7 @@
  * Covers: missing secret header (401), wrong secret (401),
  * no Telegram config (404), happy path enqueue, and dedup.
  *
- * Run: pnpm test src/app/api/channels/telegram/webhook/route.test.ts
+ * Run: npm test src/app/api/channels/telegram/webhook/route.test.ts
  */
 
 import assert from "node:assert/strict";

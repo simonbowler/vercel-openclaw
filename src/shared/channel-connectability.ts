@@ -7,12 +7,13 @@ export type ChannelConnectabilityIssueId =
   | "public-webhook-url"
   | "webhook-bypass"
   | "store"
-  | "drain-recovery";
+  | "ai-gateway";
 
 export type ChannelConnectabilityIssue = {
   id: ChannelConnectabilityIssueId;
   status: ChannelConnectabilityStatus;
   message: string;
+  remediation: string;
   env: string[];
 };
 

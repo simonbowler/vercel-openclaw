@@ -7,6 +7,7 @@ import {
   drainChannelQueue,
   getChannelQueueDepth,
   type QueuedChannelJob,
+  DEFAULT_CHANNEL_SANDBOX_READY_TIMEOUT_MS,
 } from "@/server/channels/driver";
 import {
   channelFailedKey,
@@ -27,6 +28,7 @@ import {
   type ScenarioHarness,
 } from "@/test-utils/harness";
 import { chatCompletionsResponse } from "@/test-utils/fake-fetch";
+import { getServerLogs, _resetLogBuffer } from "@/server/log";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -852,5 +854,278 @@ test("[drain] sandbox restore triggered when sandbox not running", async () => {
     const store = h.getStore();
     assert.equal(await store.getQueueLength(channelQueueKey(channel)), 0);
     assert.equal(await store.getQueueLength(channelProcessingKey(channel)), 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// processChannelJob: sandbox warmup timeout -> RetryableChannelError
+// ---------------------------------------------------------------------------
+
+test("[drain] sandbox warmup timeout -> requeued with retryAfterSeconds=15", async () => {
+  await withHarness(async (h) => {
+    const channel: ChannelName = "slack";
+
+    await h.mutateMeta((meta) => {
+      meta.channels.slack = {
+        signingSecret: "test-signing-secret",
+        botToken: "xoxb-test-bot-token",
+        configuredAt: Date.now(),
+      };
+    });
+
+    // Install full handlers so background restore completes cleanly
+    h.installDefaultGatewayHandlers();
+    await h.driveToRunning();
+    await h.stopToSnapshot();
+
+    await enqueueChannelJob(channel, createJob());
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = h.fakeFetch.fetch;
+    const beforeDrain = Date.now();
+
+    try {
+      await drainChannelQueue({
+        channel,
+        getConfig: (m) => m.channels.slack,
+        createAdapter: () => ({
+          extractMessage: (payload: { text: string }) => ({
+            kind: "message" as const,
+            message: { text: payload.text },
+          }),
+          sendReply: async () => {},
+        }),
+        // Very short timeout: sandbox is "restoring" so probeGatewayReady
+        // returns { ready: false } immediately (status not in running/setup/booting).
+        // The 1-second poll interval in ensureSandboxReady means one iteration,
+        // then the deadline passes and it throws ApiError(504).
+        sandboxReadyTimeoutMs: 100,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    const store = h.getStore();
+
+    // Job should be in processing queue (retried), NOT permanently failed
+    assert.ok(
+      (await store.getQueueLength(channelProcessingKey(channel))) >= 1,
+      "Job should be in processing queue (retried after sandbox timeout)",
+    );
+    assert.equal(
+      await store.dequeue(channelFailedKey(channel)),
+      null,
+      "Should NOT be permanently failed on sandbox timeout",
+    );
+
+    // Parse the retried job and check retryAfterSeconds was honored
+    const rawLease = await store.dequeue(channelProcessingKey(channel));
+    assert.ok(rawLease);
+    const lease = JSON.parse(rawLease);
+    const innerJob = JSON.parse(lease.job);
+    assert.equal(innerJob.retryCount, 1);
+
+    // computeRetryDelayMs: max(exponential=1000ms, retryAfter=15000ms) = 15000ms
+    const delay = innerJob.nextAttemptAt - beforeDrain;
+    assert.ok(
+      delay >= 13_000 && delay <= 18_000,
+      `Expected ~15000ms retry delay (retryAfterSeconds=15), got ${delay}ms`,
+    );
+    assert.match(
+      innerJob.lastError,
+      /sandbox_not_ready/,
+      "lastError should reference sandbox_not_ready",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wake-from-sleep: full retry cycle (unit-level simulation)
+// ---------------------------------------------------------------------------
+
+test("[drain] wake-from-sleep: first attempt times out, retry succeeds after sandbox wakes", async () => {
+  await withHarness(async (h) => {
+    const channel: ChannelName = "slack";
+
+    await h.mutateMeta((meta) => {
+      meta.channels.slack = {
+        signingSecret: "test-signing-secret",
+        botToken: "xoxb-test-bot-token",
+        configuredAt: Date.now(),
+      };
+    });
+
+    // Install full handlers so background restore and second drain succeed
+    h.installDefaultGatewayHandlers("wake-cycle-reply");
+    await h.driveToRunning();
+    await h.stopToSnapshot();
+
+    await enqueueChannelJob(channel, createJob({ payload: { text: "wake-cycle" } }));
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = h.fakeFetch.fetch;
+
+    try {
+      // --- First drain: sandbox stopped, short timeout -> retried ---
+      await drainChannelQueue({
+        channel,
+        getConfig: (m) => m.channels.slack,
+        createAdapter: () => ({
+          extractMessage: (payload: { text: string }) => ({
+            kind: "message" as const,
+            message: { text: payload.text },
+          }),
+          sendReply: async () => {},
+        }),
+        sandboxReadyTimeoutMs: 100,
+      });
+
+      const store = h.getStore();
+
+      // Verify job was retried
+      assert.ok(
+        (await store.getQueueLength(channelProcessingKey(channel))) >= 1,
+        "Job should be retried after first drain timeout",
+      );
+
+      // Wait for background restore to complete (FakeSandboxController is instant,
+      // so the only delay is the gateway probe in restoreSandboxFromSnapshot).
+      for (let i = 0; i < 50; i++) {
+        const meta = await h.getMeta();
+        if (meta.status === "running") break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      const meta = await h.getMeta();
+      assert.equal(meta.status, "running", "Sandbox should be running after background restore");
+
+      // Move retried job back to main queue with past nextAttemptAt
+      const rawLease = await store.dequeue(channelProcessingKey(channel));
+      assert.ok(rawLease, "Should have retried job in processing queue");
+      const lease = JSON.parse(rawLease);
+      const innerJob = JSON.parse(lease.job);
+      innerJob.nextAttemptAt = Date.now() - 1000;
+      await store.enqueue(channelQueueKey(channel), JSON.stringify(innerJob));
+
+      // --- Second drain: sandbox running -> message delivered ---
+      let replySent = false;
+      await drainChannelQueue({
+        channel,
+        getConfig: (m) => m.channels.slack,
+        createAdapter: () => ({
+          extractMessage: (payload: { text: string }) => ({
+            kind: "message" as const,
+            message: { text: payload.text },
+          }),
+          sendReply: async () => {
+            replySent = true;
+          },
+        }),
+      });
+
+      // Verify delivery succeeded
+      assert.equal(replySent, true, "Reply should have been sent on second drain");
+
+      // Verify queues are empty
+      assert.equal(await store.getQueueLength(channelQueueKey(channel)), 0);
+      assert.equal(await store.getQueueLength(channelProcessingKey(channel)), 0);
+      assert.equal(
+        await store.dequeue(channelFailedKey(channel)),
+        null,
+        "No failed entries after successful delivery",
+      );
+
+      // Verify gateway was called
+      const gatewayRequests = h.fakeFetch
+        .requests()
+        .filter((r) => r.url.includes("/v1/chat/completions"));
+      assert.ok(
+        gatewayRequests.length >= 1,
+        "Gateway should have been called during second drain",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Structured log events at wake, gateway, and send phases
+// ---------------------------------------------------------------------------
+
+test("[processChannelJob] structured log events at wake, gateway, and send phases", async () => {
+  await withHarness(async (h) => {
+    const channel: ChannelName = "slack";
+
+    await h.mutateMeta((meta) => {
+      meta.channels.slack = {
+        signingSecret: "test-signing-secret",
+        botToken: "xoxb-test-bot-token",
+        configuredAt: Date.now(),
+      };
+    });
+
+    h.installDefaultGatewayHandlers("log-test-reply");
+    await h.driveToRunning();
+
+    await enqueueChannelJob(channel, createJob({ payload: { text: "log-test" } }));
+
+    // Clear log buffer to only capture logs from the drain
+    _resetLogBuffer();
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = h.fakeFetch.fetch;
+
+    try {
+      await drainChannelQueue({
+        channel,
+        getConfig: (m) => m.channels.slack,
+        createAdapter: () => ({
+          extractMessage: (payload: { text: string }) => ({
+            kind: "message" as const,
+            message: { text: payload.text },
+          }),
+          sendReply: async () => {},
+        }),
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    const logs = getServerLogs();
+    const logMessages = logs.map((l) => l.message);
+
+    // Verify structured log events at each delivery phase
+    assert.ok(
+      logMessages.includes("channels.wake_requested"),
+      "Should emit channels.wake_requested log event",
+    );
+    assert.ok(
+      logMessages.includes("channels.wake_ready"),
+      "Should emit channels.wake_ready log event",
+    );
+    assert.ok(
+      logMessages.includes("channels.gateway_request_started"),
+      "Should emit channels.gateway_request_started log event",
+    );
+    assert.ok(
+      logMessages.includes("channels.platform_reply_sent"),
+      "Should emit channels.platform_reply_sent log event",
+    );
+    assert.ok(
+      logMessages.includes("channels.delivery_success"),
+      "Should emit channels.delivery_success log event",
+    );
+
+    // Verify wake_requested includes channel and timeout data
+    const wakeLog = logs.find((l) => l.message === "channels.wake_requested");
+    assert.ok(wakeLog?.data);
+    const wakeData = wakeLog.data as Record<string, unknown>;
+    assert.equal(wakeData.channel, "slack");
+    assert.equal(wakeData.sandboxReadyTimeoutMs, DEFAULT_CHANNEL_SANDBOX_READY_TIMEOUT_MS);
+
+    // Verify gateway_request_started includes channel
+    const gwLog = logs.find((l) => l.message === "channels.gateway_request_started");
+    assert.ok(gwLog?.data);
+    assert.equal((gwLog.data as Record<string, unknown>).channel, "slack");
   });
 });

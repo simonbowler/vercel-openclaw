@@ -4,7 +4,7 @@
  * Covers: auth enforcement (403 without CSRF), missing botToken (400),
  * happy path with mocked Telegram API, and Telegram API error handling.
  *
- * Run: pnpm test src/app/api/channels/telegram/preview/route.test.ts
+ * Run: npm test src/app/api/channels/telegram/preview/route.test.ts
  */
 
 import assert from "node:assert/strict";

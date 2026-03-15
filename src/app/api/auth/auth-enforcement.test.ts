@@ -10,7 +10,7 @@
  * - Gateway proxy blocks unauthenticated requests (no token leak)
  * - deployment-protection mode: GET with bearer token works without CSRF
  *
- * Run: pnpm test src/app/api/auth/auth-enforcement.test.ts
+ * Run: npm test src/app/api/auth/auth-enforcement.test.ts
  */
 
 import assert from "node:assert/strict";

@@ -4,7 +4,7 @@
  * Covers: auth enforcement in sign-in-with-vercel mode (401 without session),
  * happy path with host header, and happy path with NEXT_PUBLIC_BASE_DOMAIN env.
  *
- * Run: pnpm test src/app/api/channels/slack/manifest/route.test.ts
+ * Run: npm test src/app/api/channels/slack/manifest/route.test.ts
  */
 
 import assert from "node:assert/strict";

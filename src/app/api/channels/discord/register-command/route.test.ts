@@ -4,7 +4,7 @@
  * Covers: auth enforcement (403 without CSRF), Discord not configured (409),
  * happy path with mocked Discord API, and Discord API error handling.
  *
- * Run: pnpm test src/app/api/channels/discord/register-command/route.test.ts
+ * Run: npm test src/app/api/channels/discord/register-command/route.test.ts
  */
 
 import assert from "node:assert/strict";

@@ -5,7 +5,7 @@
  * gateway receives chat completion request with correct auth headers →
  * platform API reply called → session history persisted → queues empty.
  *
- * Run: pnpm test
+ * Run: npm test
  */
 
 import assert from "node:assert/strict";

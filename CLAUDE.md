@@ -26,23 +26,23 @@ The app does not handle:
 Run these from the repository root:
 
 ```bash
-pnpm install
-pnpm dev
-pnpm lint
-pnpm test
-pnpm typecheck
-pnpm build
+npm install
+npm run dev
+npm run lint
+npm test
+npm run typecheck
+npm run build
 ```
 
-Tests use `node:test` through `tsx --test`.
+Tests use `node:test`. Run `npm test` or use `node scripts/verify.mjs --steps=test`.
 
 ### Remote smoke testing
 
 ```bash
-pnpm smoke:remote --base-url https://my-app.vercel.app
-pnpm smoke:remote --base-url https://my-app.vercel.app --destructive --timeout 180
-pnpm smoke:remote --base-url https://my-app.vercel.app --json-only --auth-cookie "session=..."
-pnpm smoke:remote --base-url https://my-app.vercel.app --request-timeout 10
+npm run smoke:remote -- --base-url https://my-app.vercel.app
+npm run smoke:remote -- --base-url https://my-app.vercel.app --destructive --timeout 180
+npm run smoke:remote -- --base-url https://my-app.vercel.app --json-only --auth-cookie "session=..."
+npm run smoke:remote -- --base-url https://my-app.vercel.app --request-timeout 10
 ```
 
 Flags:
@@ -73,12 +73,15 @@ Channel phases (`channelRoundTrip`, `channelWakeFromSleep`) read signing secrets
 
 | Route | Purpose |
 | ----- | ------- |
-| `/api/admin/preflight` | Deploy-readiness report: public origin, webhook bypass, durable state, AI Gateway auth, queue replay wiring |
+| `/api/admin/preflight` | Deploy-readiness report: public origin, webhook bypass, durable state, AI Gateway auth, Vercel Queues delivery |
 | `/api/admin/ensure` | Trigger sandbox create or restore |
 | `/api/admin/stop` | Snapshot and stop the sandbox |
 | `/api/admin/snapshot` | Snapshot and stop (same as stop for now) |
 | `/api/admin/channel-secrets` | Expose signing secrets for smoke-test webhook construction |
-| `/api/cron/drain-channels` | Replay queued channel work when `CRON_SECRET` is configured |
+| `/api/queues/channels/slack` | Private Vercel Queues consumer for Slack delivery (not publicly reachable on Vercel) |
+| `/api/queues/channels/telegram` | Private Vercel Queues consumer for Telegram delivery (not publicly reachable on Vercel) |
+| `/api/queues/channels/discord` | Private Vercel Queues consumer for Discord delivery (not publicly reachable on Vercel) |
+| `/api/cron/drain-channels` | Optional diagnostic backstop — replays queued channel work when `CRON_SECRET` is configured. Vercel Queues is the primary delivery mechanism |
 
 ## Architecture
 
@@ -100,7 +103,7 @@ All channel webhook URL builders (`buildSlackWebhookUrl`, `buildTelegramWebhookU
 
 Machine-checkable readiness report consumed by `/api/admin/preflight`.
 
-Checks: `public-origin`, `webhook-bypass`, `store`, `ai-gateway`, `drain-recovery`.
+Checks: `public-origin`, `webhook-bypass`, `store`, `ai-gateway`, `drain-recovery` (always passes — Vercel Queues is the primary delivery mechanism).
 
 `GET /api/admin/preflight` returns a `PreflightPayload`:
 
@@ -236,17 +239,35 @@ Main files:
 - `src/server/channels/discord/adapter.ts`
 - `src/server/channels/discord/application.ts`
 
+Channel delivery flow:
+
+1. the public webhook route validates the platform signature or secret
+2. the handler publishes a message to a Vercel Queue topic (`channel-slack`, `channel-telegram`, or `channel-discord`)
+3. a private queue consumer route under `/api/queues/channels/*` restores the sandbox if needed
+4. the consumer sends the message to `POST /v1/chat/completions` on the OpenClaw gateway
+5. the app delivers the reply back to the originating channel
+
+Private queue consumers are configured in `vercel.json` and are not publicly reachable on Vercel.
+
 Behavior:
 
-- public webhook routes validate requests and enqueue work
-- drainers restore the sandbox on demand and forward messages to `/v1/chat/completions`
-- replies are sent back through the platform APIs, not through the OpenClaw UI proxy
 - Slack uses threaded replies
 - Telegram uses webhook-secret validation and Bot API replies
 - Discord uses deferred interaction responses and can register `/ask`
-- `/api/cron/drain-channels` can replay deferred queue work when `CRON_SECRET` is configured
+- `/api/cron/drain-channels` is an optional diagnostic backstop when `CRON_SECRET` is configured — not the primary delivery path
 
-If you change queue semantics, keep the webhook acknowledgment path fast and preserve retry behavior.
+Channel delivery uses Vercel Queues as the primary durable transport. If you change queue semantics, keep the webhook acknowledgment path fast and preserve retry behavior.
+
+### Local queue development
+
+Running `@vercel/queue` locally requires OIDC credentials:
+
+```bash
+vercel link
+vercel env pull
+```
+
+This writes the OIDC credentials that `@vercel/queue` needs for local `send` and `handleCallback` calls. On deployed Vercel environments, queue auth is automatic.
 
 ### Channel connectability and 409 guards
 
@@ -256,16 +277,19 @@ Hard blockers (cause `canConnect: false`):
 
 - canonical public HTTPS webhook URL cannot be resolved
 - `VERCEL_AUTOMATION_BYPASS_SECRET` is missing when running on Vercel with `VERCEL_AUTH_MODE=deployment-protection`
+- AI Gateway auth is not OIDC on a Vercel deployment (falls back to `api-key` or `unavailable`)
+- missing Upstash store on a Vercel deployment (durable state required for channel reliability)
 
 Warnings only (do not block connect):
 
-- missing Upstash store (queue state won't survive cold starts)
-- missing `CRON_SECRET` (retries depend on future traffic)
+- missing Upstash store in local/non-Vercel environments
+
+`buildChannelConnectability()` and `buildChannelConnectabilityReport()` are **async** — all call sites must use `await` or `await Promise.all([...])`.
 
 Guard pattern used in each channel route:
 
 ```ts
-const connectability = buildChannelConnectability("<channel>", request);
+const connectability = await buildChannelConnectability("<channel>", request);
 if (!connectability.canConnect) {
   return buildChannelConnectBlockedResponse(auth, connectability);
 }
@@ -339,14 +363,30 @@ The admin page is intentionally small. It is a control surface, not a dashboard 
 
 ## Verification
 
-Before considering work done, run:
+Use this command for all automation and CI in this repository:
 
 ```bash
-pnpm lint
-pnpm test
-pnpm typecheck
-pnpm build
+node scripts/verify.mjs
 ```
+
+This command prepends `node_modules/.bin`, runs the repository's own
+`lint`, `test`, `typecheck`, and `build` scripts, emits JSON lines, and exits
+non-zero on the first failing step. Do not invoke bare `npm` or `tsx`
+directly from automation.
+
+Run a subset of steps:
+
+```bash
+node scripts/verify.mjs --steps=test,typecheck
+```
+
+## AI Gateway auth helpers (`src/server/env.ts`)
+
+- `isVercelDeployment(): boolean` — returns `true` when any of `VERCEL`, `VERCEL_ENV`, `VERCEL_URL`, or `VERCEL_PROJECT_PRODUCTION_URL` is set. Use this when behavior must differ between deployed Vercel runtimes and local/non-Vercel execution.
+
+- `getAiGatewayBearerTokenOptional(): Promise<string | undefined>` — OIDC-first bearer-token resolver. Resolution order: (1) Vercel OIDC token via `@vercel/oidc`, (2) `AI_GATEWAY_API_KEY` fallback for local dev. Use `_setAiGatewayTokenOverrideForTesting()` in tests instead of mocking `@vercel/oidc`.
+
+- `getAiGatewayAuthMode(): Promise<"oidc" | "api-key" | "unavailable">` — returns `"oidc"` when the resolved token differs from the static `AI_GATEWAY_API_KEY`, `"api-key"` when they match, `"unavailable"` when no token resolves. Used by preflight and channel connectability to hard-fail non-OIDC auth on Vercel deployments.
 
 ## Current sharp edges
 

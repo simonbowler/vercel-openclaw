@@ -3,7 +3,7 @@
  *
  * Covers CSRF rejection, firewall state retrieval, and mode transitions.
  *
- * Run: pnpm test src/app/api/firewall/route.test.ts
+ * Run: npm test src/app/api/firewall/route.test.ts
  */
 
 import assert from "node:assert/strict";
