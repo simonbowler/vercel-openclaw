@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 
+import { pollUntil } from "@/server/async/poll";
 import { extractReply, toPlainText } from "@/server/channels/core/reply";
 import { logInfo } from "@/server/log";
-import { getStore, wait } from "@/server/store/store";
+import { getStore } from "@/server/store/store";
 
 const RESULT_TTL_SECONDS = 15 * 60;
 const RESULT_POLL_MS = 1_000;
@@ -91,30 +92,34 @@ export async function waitForLaunchVerifyQueueResult(
   probeId: string,
   timeoutMs = 60_000,
 ): Promise<LaunchVerifyQueueResult> {
-  const deadline = Date.now() + timeoutMs;
-
   logInfo("launch_verify.queue_result_wait_start", {
     probeId,
     timeoutMs,
   });
 
-  while (Date.now() < deadline) {
-    const result =
-      await getStore().getValue<LaunchVerifyQueueResult>(resultKey(probeId));
+  return pollUntil<LaunchVerifyQueueResult>({
+    label: "launch-verify.queue-result",
+    timeoutMs,
+    initialDelayMs: RESULT_POLL_MS,
+    timeoutError: () =>
+      new Error(`Timed out waiting for launch-verify queue probe ${probeId}.`),
+    step: async () => {
+      const result =
+        await getStore().getValue<LaunchVerifyQueueResult>(resultKey(probeId));
 
-    if (result) {
+      if (!result) {
+        return { done: false, delayMs: RESULT_POLL_MS };
+      }
+
       await getStore().deleteValue(resultKey(probeId)).catch(() => {});
       logInfo("launch_verify.queue_result_received", {
         probeId,
         ok: result.ok,
       });
-      return result;
-    }
 
-    await wait(RESULT_POLL_MS);
-  }
-
-  throw new Error(`Timed out waiting for launch-verify queue probe ${probeId}.`);
+      return { done: true, result };
+    },
+  });
 }
 
 function normalizeReply(value: string): string {

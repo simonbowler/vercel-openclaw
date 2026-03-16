@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { pollUntil } from "@/server/async/poll";
 import { ApiError } from "@/shared/http";
 import type { SingleMeta } from "@/shared/types";
 import { getAiGatewayBearerTokenOptional } from "@/server/env";
@@ -108,7 +109,6 @@ export async function waitForSandboxReady(
   options: WaitForSandboxReadyOptions,
 ): Promise<WaitForSandboxReadyResult> {
   const timeoutMs = options.timeoutMs ?? READY_WAIT_TIMEOUT_MS;
-  const deadline = Date.now() + timeoutMs;
   const pollIntervalMs = options.pollIntervalMs ?? READY_WAIT_POLL_MS;
 
   const initialMeta = await getInitializedMeta();
@@ -116,8 +116,14 @@ export async function waitForSandboxReady(
     initialMeta.status === "running" && Boolean(initialMeta.sandboxId);
 
   let recoveredStaleRunning = false;
-  let lastMeta = initialMeta;
 
+  function resolveAction(): SandboxReadyAction {
+    if (recoveredStaleRunning) return "recovered-stale-running";
+    if (wasRunningInitially) return "already-running";
+    return "created-or-restored";
+  }
+
+  // Optional reconciliation pre-step
   if (options.reconcile) {
     const health = await reconcileSandboxHealth({
       origin: options.origin,
@@ -125,7 +131,6 @@ export async function waitForSandboxReady(
     });
 
     recoveredStaleRunning = health.repaired;
-    lastMeta = health.meta;
 
     if (health.meta.status === "error") {
       throw new ApiError(
@@ -138,50 +143,53 @@ export async function waitForSandboxReady(
     if (health.status === "ready") {
       return {
         meta: await getInitializedMeta(),
-        readyAction: recoveredStaleRunning
-          ? "recovered-stale-running"
-          : wasRunningInitially
-            ? "already-running"
-            : "created-or-restored",
+        readyAction: resolveAction(),
       };
     }
   }
 
-  while (Date.now() < deadline) {
-    const result = await ensureSandboxRunning({
-      origin: options.origin,
-      reason: options.reason,
-    });
-    lastMeta = result.meta;
+  return pollUntil<WaitForSandboxReadyResult, SingleMeta>({
+    label: "sandbox.ready",
+    timeoutMs,
+    initialDelayMs: pollIntervalMs,
+    state: initialMeta,
+    step: async () => {
+      const result = await ensureSandboxRunning({
+        origin: options.origin,
+        reason: options.reason,
+      });
 
-    if (lastMeta.status === "error") {
-      throw new ApiError(
-        502,
-        "SANDBOX_READY_FAILED",
-        `Sandbox entered error state while waiting for readiness: ${lastMeta.lastError ?? "unknown"}.`,
-      );
-    }
+      if (result.meta.status === "error") {
+        throw new ApiError(
+          502,
+          "SANDBOX_READY_FAILED",
+          `Sandbox entered error state while waiting for readiness: ${result.meta.lastError ?? "unknown"}.`,
+        );
+      }
 
-    if ((await probeGatewayReady()).ready) {
+      if ((await probeGatewayReady()).ready) {
+        return {
+          done: true,
+          result: {
+            meta: await getInitializedMeta(),
+            readyAction: resolveAction(),
+          },
+        };
+      }
+
       return {
-        meta: await getInitializedMeta(),
-        readyAction: recoveredStaleRunning
-          ? "recovered-stale-running"
-          : wasRunningInitially
-            ? "already-running"
-            : "created-or-restored",
+        done: false,
+        state: await getInitializedMeta(),
+        delayMs: pollIntervalMs,
       };
-    }
-
-    await wait(pollIntervalMs);
-    lastMeta = await getInitializedMeta();
-  }
-
-  throw new ApiError(
-    504,
-    "SANDBOX_READY_TIMEOUT",
-    `Sandbox did not become ready within ${Math.ceil(timeoutMs / 1000)} seconds (last status: ${lastMeta.status}).`,
-  );
+    },
+    timeoutError: ({ state }) =>
+      new ApiError(
+        504,
+        "SANDBOX_READY_TIMEOUT",
+        `Sandbox did not become ready within ${Math.ceil(timeoutMs / 1000)} seconds (last status: ${state?.status ?? "unknown"}).`,
+      ),
+  });
 }
 
 export async function ensureSandboxReady(options: {
