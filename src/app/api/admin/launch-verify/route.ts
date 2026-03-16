@@ -7,10 +7,10 @@ import { buildDeployPreflight } from "@/server/deploy-preflight";
 import { logInfo, logError } from "@/server/log";
 import { getPublicOrigin } from "@/server/public-url";
 import {
-  ensureSandboxRunning,
   getSandboxDomain,
-  probeGatewayReady,
   stopSandbox,
+  waitForSandboxReady,
+  type SandboxReadyAction,
 } from "@/server/sandbox/lifecycle";
 import { getOpenclawPackageSpec } from "@/server/env";
 import { detectDrift } from "@/server/openclaw/bootstrap";
@@ -165,35 +165,30 @@ export async function POST(request: Request): Promise<Response> {
   phases.push(queuePingPhase);
 
   // Phase 3: ensureRunning
+  let ensureReadyAction: SandboxReadyAction | null = null;
+
   const ensurePhase = await runPhase("ensureRunning", async () => {
-    const result = await ensureSandboxRunning({
+    const result = await waitForSandboxReady({
       origin,
       reason: "launch-verify",
+      timeoutMs: ENSURE_TIMEOUT_MS,
+      pollIntervalMs: ENSURE_POLL_MS,
+      reconcile: true,
     });
+    ensureReadyAction = result.readyAction;
 
-    if (result.state === "running") {
-      return "Sandbox already running.";
-    }
-
-    // Poll until ready or timeout
-    const deadline = Date.now() + ENSURE_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, ENSURE_POLL_MS));
-      const meta = await getInitializedMeta();
-      if (meta.status === "running" && meta.sandboxId) {
-        const probe = await probeGatewayReady();
-        if (probe.ready) {
-          return "Sandbox started and gateway ready.";
-        }
-      }
-      if (meta.status === "error") {
-        throw new Error(`Sandbox entered error state: ${meta.lastError ?? "unknown"}`);
+    switch (result.readyAction) {
+      case "already-running":
+        return "Sandbox already running.";
+      case "recovered-stale-running":
+        return "Sandbox recovered from stale running state and gateway ready.";
+      case "created-or-restored":
+        return "Sandbox started and gateway ready.";
+      default: {
+        const _exhaustive: never = result.readyAction;
+        return `Unexpected readyAction: ${_exhaustive}`;
       }
     }
-    const finalMeta = await getInitializedMeta();
-    throw new Error(
-      `Sandbox did not become ready within ${ENSURE_TIMEOUT_MS / 1000}s (status: ${finalMeta.status}).`,
-    );
   });
   phases.push(ensurePhase);
 
@@ -259,11 +254,9 @@ export async function POST(request: Request): Promise<Response> {
         drift: detectDrift(packageSpec, runtimeMeta.openclawVersion),
       };
     }
-    // sandboxHealth.repaired is true when ensure had to start/restore the sandbox
-    // rather than finding it already running.
     sandboxHealth = {
-      repaired: ensurePhase.status === "pass" &&
-        ensurePhase.message !== "Sandbox already running.",
+      repaired: ensureReadyAction !== null &&
+        ensureReadyAction !== "already-running",
     };
   } catch {
     // Non-fatal — runtime and health info is best-effort

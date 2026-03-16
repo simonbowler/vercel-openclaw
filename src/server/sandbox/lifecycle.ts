@@ -86,15 +86,66 @@ export async function ensureSandboxRunning(options: {
   return { state: "waiting", meta: await getInitializedMeta() };
 }
 
-export async function ensureSandboxReady(options: {
+export type SandboxReadyAction =
+  | "already-running"
+  | "created-or-restored"
+  | "recovered-stale-running";
+
+export type WaitForSandboxReadyOptions = {
   origin: string;
   reason: string;
   timeoutMs?: number;
   pollIntervalMs?: number;
-}): Promise<SingleMeta> {
-  const deadline = Date.now() + (options.timeoutMs ?? READY_WAIT_TIMEOUT_MS);
+  reconcile?: boolean;
+};
+
+export type WaitForSandboxReadyResult = {
+  meta: SingleMeta;
+  readyAction: SandboxReadyAction;
+};
+
+export async function waitForSandboxReady(
+  options: WaitForSandboxReadyOptions,
+): Promise<WaitForSandboxReadyResult> {
+  const timeoutMs = options.timeoutMs ?? READY_WAIT_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
   const pollIntervalMs = options.pollIntervalMs ?? READY_WAIT_POLL_MS;
-  let lastMeta = await getInitializedMeta();
+
+  const initialMeta = await getInitializedMeta();
+  const wasRunningInitially =
+    initialMeta.status === "running" && Boolean(initialMeta.sandboxId);
+
+  let recoveredStaleRunning = false;
+  let lastMeta = initialMeta;
+
+  if (options.reconcile) {
+    const health = await reconcileSandboxHealth({
+      origin: options.origin,
+      reason: options.reason,
+    });
+
+    recoveredStaleRunning = health.repaired;
+    lastMeta = health.meta;
+
+    if (health.meta.status === "error") {
+      throw new ApiError(
+        502,
+        "SANDBOX_READY_FAILED",
+        `Sandbox entered error state while reconciling: ${health.meta.lastError ?? "unknown"}.`,
+      );
+    }
+
+    if (health.status === "ready") {
+      return {
+        meta: await getInitializedMeta(),
+        readyAction: recoveredStaleRunning
+          ? "recovered-stale-running"
+          : wasRunningInitially
+            ? "already-running"
+            : "created-or-restored",
+      };
+    }
+  }
 
   while (Date.now() < deadline) {
     const result = await ensureSandboxRunning({
@@ -103,8 +154,23 @@ export async function ensureSandboxReady(options: {
     });
     lastMeta = result.meta;
 
+    if (lastMeta.status === "error") {
+      throw new ApiError(
+        502,
+        "SANDBOX_READY_FAILED",
+        `Sandbox entered error state while waiting for readiness: ${lastMeta.lastError ?? "unknown"}.`,
+      );
+    }
+
     if ((await probeGatewayReady()).ready) {
-      return getInitializedMeta();
+      return {
+        meta: await getInitializedMeta(),
+        readyAction: recoveredStaleRunning
+          ? "recovered-stale-running"
+          : wasRunningInitially
+            ? "already-running"
+            : "created-or-restored",
+      };
     }
 
     await wait(pollIntervalMs);
@@ -114,8 +180,18 @@ export async function ensureSandboxReady(options: {
   throw new ApiError(
     504,
     "SANDBOX_READY_TIMEOUT",
-    `Sandbox did not become ready within ${Math.ceil((options.timeoutMs ?? READY_WAIT_TIMEOUT_MS) / 1000)} seconds (last status: ${lastMeta.status}).`,
+    `Sandbox did not become ready within ${Math.ceil(timeoutMs / 1000)} seconds (last status: ${lastMeta.status}).`,
   );
+}
+
+export async function ensureSandboxReady(options: {
+  origin: string;
+  reason: string;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}): Promise<SingleMeta> {
+  const result = await waitForSandboxReady(options);
+  return result.meta;
 }
 
 export async function stopSandbox(): Promise<SingleMeta> {
