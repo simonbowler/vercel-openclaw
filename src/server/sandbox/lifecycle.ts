@@ -198,7 +198,7 @@ export async function ensureSandboxReady(options: {
   timeoutMs?: number;
   pollIntervalMs?: number;
 }): Promise<SingleMeta> {
-  const result = await waitForSandboxReady(options);
+  const result = await waitForSandboxReady({ ...options, reconcile: true });
   return result.meta;
 }
 
