@@ -110,7 +110,7 @@ test("Slack queue retry: logs error details", () => {
 
   assert.equal(logged.length, 1);
   assert.equal(logged[0].event, "channels.queue_consumer_error");
-  assert.equal(logged[0].data.channel, "slack");
+  assert.equal(logged[0].data.queueName, "slack");
   assert.equal(logged[0].data.messageId, "msg-1");
 });
 

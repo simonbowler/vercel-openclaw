@@ -12,34 +12,26 @@ import {
   saveLaunchVerifyQueueResult,
   type LaunchVerifyQueueProbe,
 } from "@/server/launch-verify/queue-probe";
+import { buildQueueRetryDecision } from "@/server/queues/retry";
 
 const MAX_DELIVERY_COUNT = 8;
-const BACKOFF_BASE_SECONDS = 5;
-const BACKOFF_MAX_SECONDS = 300;
 
 function retry(
   error: unknown,
   metadata: { messageId: string; deliveryCount: number },
 ) {
-  const retryable = isRetryable(error);
-
-  logError("launch_verify.queue_consumer_error", {
-    messageId: metadata.messageId,
-    deliveryCount: metadata.deliveryCount,
-    retryable,
-    error: error instanceof Error ? error.message : String(error),
+  return buildQueueRetryDecision({
+    queueName: "launch-verify",
+    error,
+    metadata,
+    isRetryable,
+    logError,
+    events: {
+      error: "launch_verify.queue_consumer_error",
+      exhausted: "launch_verify.queue_consumer_exhausted",
+    },
+    maxDeliveryCount: MAX_DELIVERY_COUNT,
   });
-
-  if (!retryable || metadata.deliveryCount > MAX_DELIVERY_COUNT) {
-    return { acknowledge: true as const };
-  }
-
-  return {
-    afterSeconds: Math.min(
-      BACKOFF_MAX_SECONDS,
-      2 ** metadata.deliveryCount * BACKOFF_BASE_SECONDS,
-    ),
-  };
 }
 
 export const POST = handleCallback<LaunchVerifyQueueProbe>(

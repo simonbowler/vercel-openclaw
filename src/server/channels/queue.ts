@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { ChannelName } from "@/shared/channels";
 import type { QueuedChannelJob } from "@/server/channels/driver";
 import { logInfo, logWarn } from "@/server/log";
+import { buildQueueRetryDecision } from "@/server/queues/retry";
 
 /**
  * Topic names for Vercel Queue triggers. Must match vercel.json experimentalTriggers.
@@ -104,18 +105,7 @@ const QUEUE_MAX_BACKOFF_SECONDS = 300;
 const QUEUE_BACKOFF_BASE_SECONDS = 5;
 
 /**
- * Extract a positive `retryAfterSeconds` hint from an error object, if present.
- * Returns `undefined` when no valid hint exists.
- */
-function getRequestedRetryAfterSeconds(error: unknown): number | undefined {
-  const value = (error as { retryAfterSeconds?: unknown })?.retryAfterSeconds;
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? Math.ceil(value)
-    : undefined;
-}
-
-/**
- * Shared retry logic for Vercel Queue consumer routes.
+ * Channel-specific retry wrapper around the shared queue retry decision builder.
  *
  * Returns `{ acknowledge: true }` for non-retryable errors or when
  * deliveryCount exceeds the max threshold. Otherwise returns
@@ -129,39 +119,18 @@ export function buildQueueConsumerRetry(
   checkRetryable: (error: unknown) => boolean,
   logErrorFn: (event: string, data: Record<string, unknown>) => void,
 ): QueueConsumerRetryResult {
-  const requested = getRequestedRetryAfterSeconds(error);
-
-  logErrorFn("channels.queue_consumer_error", {
-    channel,
-    messageId: metadata.messageId,
-    deliveryCount: metadata.deliveryCount,
-    error: error instanceof Error ? error.message : String(error),
-    retryable: checkRetryable(error),
-    ...(requested !== undefined && { retryAfterSeconds: requested }),
+  return buildQueueRetryDecision({
+    queueName: channel,
+    error,
+    metadata,
+    isRetryable: checkRetryable,
+    logError: logErrorFn,
+    events: {
+      error: "channels.queue_consumer_error",
+      exhausted: "channels.queue_consumer_exhausted",
+    },
+    maxDeliveryCount: QUEUE_MAX_DELIVERY_COUNT,
+    backoffBaseSeconds: QUEUE_BACKOFF_BASE_SECONDS,
+    backoffMaxSeconds: QUEUE_MAX_BACKOFF_SECONDS,
   });
-
-  if (!checkRetryable(error)) {
-    return { acknowledge: true };
-  }
-
-  if (metadata.deliveryCount > QUEUE_MAX_DELIVERY_COUNT) {
-    logErrorFn("channels.queue_consumer_exhausted", {
-      channel,
-      messageId: metadata.messageId,
-      deliveryCount: metadata.deliveryCount,
-    });
-    return { acknowledge: true };
-  }
-
-  const exponential = Math.min(
-    QUEUE_MAX_BACKOFF_SECONDS,
-    2 ** metadata.deliveryCount * QUEUE_BACKOFF_BASE_SECONDS,
-  );
-
-  return {
-    afterSeconds: Math.min(
-      QUEUE_MAX_BACKOFF_SECONDS,
-      Math.max(exponential, requested ?? 0),
-    ),
-  };
 }
