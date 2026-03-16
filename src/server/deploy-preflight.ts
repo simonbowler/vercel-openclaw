@@ -309,7 +309,7 @@ export async function buildDeployPreflight(
     publicOriginResolution,
   );
 
-  const channels = await buildChannelPrerequisiteReport(request);
+  const channels = await buildChannelPrerequisiteReport(request, { contract });
 
   // Translate contract requirements into preflight checks
   const packageSpecReq = contract.requirements.find(

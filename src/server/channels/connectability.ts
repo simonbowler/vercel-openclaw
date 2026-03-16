@@ -6,8 +6,10 @@ import type {
 } from "@/shared/channel-connectability";
 import {
   buildDeploymentContract,
+  type DeploymentContract,
   type DeploymentRequirement,
 } from "@/server/deployment-contract";
+import type { ChannelReadiness } from "@/shared/launch-verification";
 import {
   readChannelReadiness,
   getCurrentDeploymentId,
@@ -122,6 +124,16 @@ function collectContractIssues(
 }
 
 /**
+ * Shared inputs that can be pre-resolved once and threaded through
+ * multiple connectability/prerequisite calls to avoid redundant reads.
+ */
+export type SharedConnectabilityInputs = {
+  contract?: DeploymentContract;
+  readiness?: ChannelReadiness;
+  currentDeploymentId?: string;
+};
+
+/**
  * Config-only prerequisite check for a channel.
  * Delegates deployment-level checks (public-origin, webhook-bypass, store,
  * ai-gateway, package-spec, auth) to the deployment contract — single source
@@ -134,9 +146,10 @@ export async function buildChannelPrerequisite(
   channel: ChannelName,
   request: Request,
   webhookUrlOverride?: string,
+  shared: SharedConnectabilityInputs = {},
 ): Promise<ChannelConnectability> {
   const label = CHANNEL_LABELS[channel];
-  const contract = await buildDeploymentContract({ request });
+  const contract = shared.contract ?? await buildDeploymentContract({ request });
   const issues: ChannelConnectabilityIssue[] = collectContractIssues(
     channel,
     contract,
@@ -191,11 +204,15 @@ export async function buildChannelPrerequisite(
  */
 export async function buildChannelPrerequisiteReport(
   request: Request,
+  shared: SharedConnectabilityInputs = {},
 ): Promise<Record<ChannelName, ChannelConnectability>> {
+  const contract = shared.contract ?? await buildDeploymentContract({ request });
+  const nextShared = { ...shared, contract };
+
   const [slack, telegram, discord] = await Promise.all([
-    buildChannelPrerequisite("slack", request),
-    buildChannelPrerequisite("telegram", request),
-    buildChannelPrerequisite("discord", request),
+    buildChannelPrerequisite("slack", request, undefined, nextShared),
+    buildChannelPrerequisite("telegram", request, undefined, nextShared),
+    buildChannelPrerequisite("discord", request, undefined, nextShared),
   ]);
 
   return { slack, telegram, discord };
@@ -209,11 +226,13 @@ export async function buildChannelConnectability(
   channel: ChannelName,
   request: Request,
   webhookUrlOverride?: string,
+  shared: SharedConnectabilityInputs = {},
 ): Promise<ChannelConnectability> {
   const prerequisite = await buildChannelPrerequisite(
     channel,
     request,
     webhookUrlOverride,
+    shared,
   );
 
   // Start with all config-level issues
@@ -221,8 +240,8 @@ export async function buildChannelConnectability(
   const label = CHANNEL_LABELS[channel];
 
   // Add runtime launch-verification check
-  const readiness = await readChannelReadiness();
-  const currentDeploymentId = getCurrentDeploymentId();
+  const readiness = shared.readiness ?? await readChannelReadiness();
+  const currentDeploymentId = shared.currentDeploymentId ?? getCurrentDeploymentId();
   if (!readiness.ready || readiness.deploymentId !== currentDeploymentId) {
     const reason = readiness.deploymentId !== currentDeploymentId
       ? "Launch verification has not been run for the current deployment."
@@ -251,11 +270,17 @@ export async function buildChannelConnectability(
 
 export async function buildChannelConnectabilityReport(
   request: Request,
+  shared: SharedConnectabilityInputs = {},
 ): Promise<Record<ChannelName, ChannelConnectability>> {
+  const contract = shared.contract ?? await buildDeploymentContract({ request });
+  const readiness = shared.readiness ?? await readChannelReadiness();
+  const currentDeploymentId = shared.currentDeploymentId ?? getCurrentDeploymentId();
+  const nextShared = { ...shared, contract, readiness, currentDeploymentId };
+
   const [slack, telegram, discord] = await Promise.all([
-    buildChannelConnectability("slack", request),
-    buildChannelConnectability("telegram", request),
-    buildChannelConnectability("discord", request),
+    buildChannelConnectability("slack", request, undefined, nextShared),
+    buildChannelConnectability("telegram", request, undefined, nextShared),
+    buildChannelConnectability("discord", request, undefined, nextShared),
   ]);
 
   return { slack, telegram, discord };
