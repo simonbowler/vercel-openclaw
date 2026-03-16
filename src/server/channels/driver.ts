@@ -17,6 +17,7 @@ import {
   channelQueueKey,
 } from "@/server/channels/keys";
 import { logError, logInfo, logWarn } from "@/server/log";
+import { getPublicOriginFromHint } from "@/server/public-url";
 import {
   ensureSandboxReady,
   getSandboxDomain,
@@ -689,16 +690,7 @@ function parseRetryAfterSeconds(headerValue: string | null): number | undefined 
 }
 
 function resolveAppOrigin(origin: string | null | undefined): string {
-  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  if (configured) {
-    return configured.replace(/\/$/, "");
-  }
-
-  if (origin) {
-    return origin.replace(/\/$/, "");
-  }
-
-  throw new Error("NEXT_PUBLIC_APP_URL is required for background channel jobs.");
+  return getPublicOriginFromHint(origin);
 }
 
 async function writeFailed(

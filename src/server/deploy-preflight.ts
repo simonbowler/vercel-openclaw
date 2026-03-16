@@ -3,9 +3,10 @@ import {
   getAuthMode,
   getStoreEnv,
   isVercelDeployment,
+  requiresDurableStore,
 } from "@/server/env";
 import { isPublicUrl } from "@/server/channels/discord/application";
-import { buildChannelConnectabilityReport } from "@/server/channels/connectability";
+import { buildChannelPrerequisiteReport } from "@/server/channels/connectability";
 import type { ChannelConnectability } from "@/shared/channel-connectability";
 import {
   getWebhookBypassRequirement,
@@ -263,7 +264,7 @@ export async function buildDeployPreflight(
     publicOriginResolution,
   );
 
-  const channels = await buildChannelConnectabilityReport(request);
+  const channels = await buildChannelPrerequisiteReport(request);
 
   const checks: PreflightCheck[] = [
     {
@@ -286,13 +287,13 @@ export async function buildDeployPreflight(
       status:
         storeBackend === "upstash"
           ? "pass"
-          : isVercelDeployment()
+          : requiresDurableStore()
             ? "fail"
             : "warn",
       message:
         storeBackend === "upstash"
           ? "Durable Upstash-backed state is configured."
-          : isVercelDeployment()
+          : requiresDurableStore()
             ? "Vercel deployments require Upstash. In-memory state loses queue data, credentials, and sandbox metadata on cold starts."
             : "Using in-memory state. Channel reliability requires Upstash in production.",
     },

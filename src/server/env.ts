@@ -77,19 +77,6 @@ export function getStoreEnv():
   return { url, token };
 }
 
-export function getBaseOrigin(request: Request): string {
-  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
-  if (configured) {
-    return new URL(configured).origin;
-  }
-
-  if (isProduction()) {
-    throw new Error("NEXT_PUBLIC_APP_URL is required in production.");
-  }
-
-  return new URL(request.url).origin;
-}
-
 export function getCronSecret(): string | null {
   const secret = process.env.CRON_SECRET?.trim();
   return secret || null;
@@ -137,6 +124,14 @@ export function isVercelDeployment(): boolean {
       process.env.VERCEL_URL?.trim() ||
       process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim(),
   );
+}
+
+/**
+ * Single shared rule: durable store (Upstash) is required on Vercel deployments.
+ * Consumed by both runtime (getStore) and preflight (store check).
+ */
+export function requiresDurableStore(): boolean {
+  return isVercelDeployment();
 }
 
 export async function getAiGatewayAuthMode(): Promise<"oidc" | "api-key" | "unavailable"> {

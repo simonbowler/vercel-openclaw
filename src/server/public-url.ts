@@ -265,3 +265,25 @@ export function getPublicUrlDiagnostics(
 export function buildPublicUrl(path: string, request?: Request): string {
   return buildPublicUrlResult(path, request).url;
 }
+
+/**
+ * Resolve the canonical public origin from a raw origin hint string.
+ *
+ * This is intended for background jobs and queue consumers that receive an
+ * origin string (not a full `Request`). If the hint is empty/null, falls back
+ * to env-based resolution via `getPublicOrigin()`.
+ */
+export function getPublicOriginFromHint(
+  originHint?: string | null,
+): string {
+  const normalized = originHint?.trim();
+  if (!normalized) {
+    return getPublicOrigin();
+  }
+
+  const requestUrl = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(normalized)
+    ? normalized
+    : `https://${normalized}`;
+
+  return getPublicOrigin(new Request(requestUrl));
+}

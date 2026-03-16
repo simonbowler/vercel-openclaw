@@ -14,6 +14,7 @@ import {
   readChannelReadiness,
   getCurrentDeploymentId,
 } from "@/server/launch-verify/state";
+import { logInfo } from "@/server/log";
 import { buildPublicUrl } from "@/server/public-url";
 
 const WEBHOOK_PATHS: Record<ChannelName, string> = {
@@ -82,7 +83,27 @@ function addIssue(
   issues.push(issue);
 }
 
-export async function buildChannelConnectability(
+function buildResult(
+  channel: ChannelName,
+  webhookUrl: string | null,
+  issues: ChannelConnectabilityIssue[],
+): ChannelConnectability {
+  return {
+    channel,
+    canConnect: !issues.some((issue) => issue.status === "fail"),
+    status: summarizeStatus(issues),
+    webhookUrl,
+    issues,
+  };
+}
+
+/**
+ * Config-only prerequisite check for a channel.
+ * Checks: public origin, HTTPS, bypass secret, store, AI gateway auth.
+ * Does NOT check launch-verification readiness state.
+ * Used by buildDeployPreflight() so preflight is purely config-based.
+ */
+export async function buildChannelPrerequisite(
   channel: ChannelName,
   request: Request,
   webhookUrlOverride?: string,
@@ -159,6 +180,52 @@ export async function buildChannelConnectability(
     });
   }
 
+  logInfo("channel_prerequisite.built", {
+    channel,
+    status: summarizeStatus(issues),
+    issueCount: issues.length,
+    issueIds: issues.map((i) => i.id),
+  });
+
+  return buildResult(channel, webhookUrl, issues);
+}
+
+/**
+ * Config-only prerequisite report for all channels.
+ * Used by buildDeployPreflight() — does NOT include launch-verification checks.
+ */
+export async function buildChannelPrerequisiteReport(
+  request: Request,
+): Promise<Record<ChannelName, ChannelConnectability>> {
+  const [slack, telegram, discord] = await Promise.all([
+    buildChannelPrerequisite("slack", request),
+    buildChannelPrerequisite("telegram", request),
+    buildChannelPrerequisite("discord", request),
+  ]);
+
+  return { slack, telegram, discord };
+}
+
+/**
+ * Full connectability check for a channel: config prerequisites + launch-verification.
+ * Used by channel PUT routes to gate credential saves.
+ */
+export async function buildChannelConnectability(
+  channel: ChannelName,
+  request: Request,
+  webhookUrlOverride?: string,
+): Promise<ChannelConnectability> {
+  const prerequisite = await buildChannelPrerequisite(
+    channel,
+    request,
+    webhookUrlOverride,
+  );
+
+  // Start with all config-level issues
+  const issues: ChannelConnectabilityIssue[] = [...prerequisite.issues];
+  const label = CHANNEL_LABELS[channel];
+
+  // Add runtime launch-verification check
   const readiness = await readChannelReadiness();
   const currentDeploymentId = getCurrentDeploymentId();
   if (!readiness.ready || readiness.deploymentId !== currentDeploymentId) {
@@ -177,15 +244,14 @@ export async function buildChannelConnectability(
     });
   }
 
-  const status = summarizeStatus(issues);
-
-  return {
+  logInfo("channel_connectability.built", {
     channel,
-    canConnect: !issues.some((issue) => issue.status === "fail"),
-    status,
-    webhookUrl,
-    issues,
-  };
+    status: summarizeStatus(issues),
+    issueCount: issues.length,
+    issueIds: issues.map((i) => i.id),
+  });
+
+  return buildResult(channel, prerequisite.webhookUrl, issues);
 }
 
 export async function buildChannelConnectabilityReport(

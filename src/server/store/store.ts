@@ -5,6 +5,7 @@ import {
   ensureMetaShape,
   type SingleMeta,
 } from "@/shared/types";
+import { requiresDurableStore } from "@/server/env";
 import { logInfo, logWarn } from "@/server/log";
 import { MemoryStore } from "@/server/store/memory-store";
 import { UpstashStore } from "@/server/store/upstash-store";
@@ -62,10 +63,6 @@ export type Store = {
   releaseLock(key: string, token: string): Promise<void>;
 };
 
-function isProductionRuntime(): boolean {
-  return process.env.NODE_ENV === "production" || process.env.VERCEL === "1";
-}
-
 let singletonStore: Store | null = null;
 
 export function getStore(): Store {
@@ -80,9 +77,9 @@ export function getStore(): Store {
     return singletonStore;
   }
 
-  if (isProductionRuntime()) {
+  if (requiresDurableStore()) {
     throw new Error(
-      "Upstash Redis is required in production. " +
+      "Upstash Redis is required on Vercel deployments. " +
         "Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN, " +
         "or install the Upstash integration from the Vercel Marketplace.",
     );

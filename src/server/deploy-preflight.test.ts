@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { buildDeployPreflight } from "@/server/deploy-preflight";
 import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
+import { _resetStoreForTesting } from "@/server/store/store";
 
 function withEnv<T>(
   patch: Record<string, string | undefined>,
@@ -19,6 +20,8 @@ function withEnv<T>(
     }
   }
 
+  _resetStoreForTesting();
+
   const restore = () => {
     for (const [key, value] of previous.entries()) {
       if (value === undefined) {
@@ -28,6 +31,7 @@ function withEnv<T>(
       }
     }
     _setAiGatewayTokenOverrideForTesting(null);
+    _resetStoreForTesting();
   };
 
   return fn().finally(restore);
@@ -445,6 +449,129 @@ test("preflight actions include remediation text", async () => {
       for (const action of payload.actions) {
         assert.equal(typeof action.remediation, "string", `action ${action.id} should have remediation`);
         assert.ok(action.remediation.length > 0, `action ${action.id} remediation should not be empty`);
+      }
+    },
+  );
+});
+
+test("preflight actions do not contain launch-verification remediation items", async () => {
+  await withEnv(
+    {
+      VERCEL: "1",
+      VERCEL_AUTH_MODE: "deployment-protection",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      VERCEL_AUTOMATION_BYPASS_SECRET: undefined,
+      UPSTASH_REDIS_REST_URL: undefined,
+      UPSTASH_REDIS_REST_TOKEN: undefined,
+      KV_REST_API_URL: undefined,
+      KV_REST_API_TOKEN: undefined,
+      AI_GATEWAY_API_KEY: undefined,
+      CRON_SECRET: undefined,
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting(undefined);
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.example.com/api/admin/preflight"),
+      );
+
+      // preflight.ok is false due to missing config, but the actions array
+      // must only contain config-level remediations — never launch-verification.
+      assert.equal(payload.ok, false);
+      const actionIds = payload.actions.map((a) => a.id);
+      assert.equal(
+        actionIds.includes("launch-verification" as never),
+        false,
+        `preflight actions must not include launch-verification; got: ${actionIds.join(", ")}`,
+      );
+
+      // Also verify no action mentions "launch-verify" in its remediation text
+      for (const action of payload.actions) {
+        assert.equal(
+          action.remediation.toLowerCase().includes("launch-verify"),
+          false,
+          `action ${action.id} remediation must not reference launch-verify`,
+        );
+      }
+    },
+  );
+});
+
+test("preflight checks do not include launch-verification (config-only guarantee for launch-verify POST)", async () => {
+  await withEnv(
+    {
+      VERCEL_AUTH_MODE: "deployment-protection",
+      VERCEL_AUTOMATION_BYPASS_SECRET: "bypass-secret",
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token",
+      CRON_SECRET: "cron-secret",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      AI_GATEWAY_API_KEY: undefined,
+    },
+    async () => {
+      _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.example.com/api/admin/preflight"),
+      );
+
+      // The launch-verify POST route aborts only when preflight.checks has failures.
+      // Since preflight checks are config-only (no launch-verification check ID),
+      // launch-verify POST can always proceed when config is valid —
+      // regardless of prior channel readiness state.
+      const checkIds = payload.checks.map((c) => c.id);
+      assert.equal(
+        checkIds.includes("launch-verification" as never),
+        false,
+        `preflight checks must not include launch-verification; got: ${checkIds.join(", ")}`,
+      );
+
+      // Verify the canonical set of config-only check IDs
+      assert.deepEqual(
+        checkIds.sort(),
+        ["ai-gateway", "drain-recovery", "public-origin", "store", "webhook-bypass"],
+        "preflight checks should be exactly the 5 config-only checks",
+      );
+    },
+  );
+});
+
+test("preflight is config-only: passes on a fresh deployment before launch-verify has ever run", async () => {
+  await withEnv(
+    {
+      VERCEL_AUTH_MODE: "deployment-protection",
+      VERCEL_AUTOMATION_BYPASS_SECRET: "bypass-secret",
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token",
+      CRON_SECRET: "cron-secret",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      AI_GATEWAY_API_KEY: undefined,
+    },
+    async () => {
+      // OIDC token available but NO channel readiness override —
+      // simulates a fresh deployment where launch-verify has never run.
+      _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.example.com/api/admin/preflight"),
+      );
+
+      // Preflight should pass purely on config checks
+      assert.equal(payload.ok, true, "preflight.ok should be true without launch-verify");
+
+      // Channel prerequisites should pass (config is correct)
+      assert.equal(payload.channels.slack.canConnect, true);
+      assert.equal(payload.channels.telegram.canConnect, true);
+      assert.equal(payload.channels.discord.canConnect, true);
+
+      // No launch-verification issue should appear in channel prerequisites
+      for (const ch of Object.values(payload.channels)) {
+        const launchIssue = ch.issues.find((i) => i.id === "launch-verification");
+        assert.equal(
+          launchIssue,
+          undefined,
+          `preflight channel ${ch.channel} should not have launch-verification issue`,
+        );
       }
     },
   );

@@ -1,7 +1,7 @@
 import { after } from "next/server";
 
 import { requireAdminAuth } from "@/server/auth/admin-auth";
-import { getBaseOrigin } from "@/server/env";
+import { getPublicOrigin } from "@/server/public-url";
 import { extractRequestId, logError, logInfo, logWarn } from "@/server/log";
 import { injectWrapperScript } from "@/server/proxy/htmlInjection";
 import {
@@ -74,7 +74,7 @@ async function handleProxy(request: Request, path: string): Promise<Response> {
   }
 
   const ensure = await ensureSandboxRunning({
-    origin: getBaseOrigin(request),
+    origin: getPublicOrigin(request),
     reason: "gateway.request",
     schedule: after,
   });
@@ -124,7 +124,7 @@ async function handleProxy(request: Request, path: string): Promise<Response> {
     logWarn("gateway.upstream_410", reqCtx);
     await markSandboxUnavailable("Sandbox VM was reclaimed.");
     await ensureSandboxRunning({
-      origin: getBaseOrigin(request),
+      origin: getPublicOrigin(request),
       reason: "gateway.410",
       schedule: after,
     });

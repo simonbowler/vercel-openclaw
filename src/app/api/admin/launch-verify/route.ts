@@ -84,21 +84,33 @@ export async function POST(request: Request): Promise<Response> {
 
   const phases: LaunchVerificationPhase[] = [];
 
-  // Phase 1: preflight
+  // Phase 1: preflight — only abort on config-check failures
+  // (public-origin, webhook-bypass, store, ai-gateway).
+  // Channel connectability is recorded but does NOT gate launch verification,
+  // since channels depend on launch-verify having passed first.
   const preflightPhase = await runPhase("preflight", async () => {
     const preflight = await buildDeployPreflight(request);
-    if (!preflight.ok) {
-      const failingChecks = preflight.checks
-        .filter((c) => c.status === "fail")
-        .map((c) => c.id);
+    const configCheckFailures = preflight.checks.filter(
+      (c) => c.status === "fail",
+    );
+    if (configCheckFailures.length > 0) {
+      const failingIds = configCheckFailures.map((c) => c.id);
       const failingActions = preflight.actions
         .filter((a) => a.status === "required")
         .map((a) => a.remediation);
       throw new Error(
-        `Preflight failed: ${failingChecks.join(", ")}. ${failingActions.join(" ")}`,
+        `Preflight config checks failed: ${failingIds.join(", ")}. ${failingActions.join(" ")}`,
       );
     }
-    return `All ${preflight.checks.length} preflight checks passed.`;
+    const channelWarnings = Object.values(preflight.channels ?? {}).filter(
+      (ch) => ch.status === "fail",
+    );
+    if (channelWarnings.length > 0) {
+      logInfo("launch_verify.preflight_channel_warnings", {
+        channels: channelWarnings.map((ch) => ch.channel),
+      });
+    }
+    return `All ${preflight.checks.length} config checks passed.`;
   });
   phases.push(preflightPhase);
 

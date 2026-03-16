@@ -5,6 +5,7 @@ const required = [
   "src/app/api/queues/channels/slack/route.ts",
   "src/app/api/queues/channels/telegram/route.ts",
   "src/app/api/queues/channels/discord/route.ts",
+  "src/app/api/queues/launch-verify/route.ts",
 ];
 
 const missing = required.filter((file) => !existsSync(file));

@@ -4,8 +4,8 @@ import { afterEach, test } from "node:test";
 import {
   _setAiGatewayTokenOverrideForTesting,
   getAiGatewayAuthMode,
-  getBaseOrigin,
   isVercelDeployment,
+  requiresDurableStore,
 } from "@/server/env";
 
 function withEnv<T>(
@@ -34,48 +34,6 @@ function withEnv<T>(
     }
   }
 }
-
-test("getBaseOrigin returns the configured origin", () => {
-  withEnv(
-    {
-      NODE_ENV: "development",
-      NEXT_PUBLIC_APP_URL: "https://example.com/app/path",
-    },
-    () => {
-      const request = new Request("http://localhost:3000/api/test");
-      assert.equal(getBaseOrigin(request), "https://example.com");
-    },
-  );
-});
-
-test("getBaseOrigin throws in production when NEXT_PUBLIC_APP_URL is missing", () => {
-  withEnv(
-    {
-      NODE_ENV: "production",
-      NEXT_PUBLIC_APP_URL: undefined,
-    },
-    () => {
-      const request = new Request("https://runtime.example/api/test");
-      assert.throws(
-        () => getBaseOrigin(request),
-        /NEXT_PUBLIC_APP_URL is required in production/,
-      );
-    },
-  );
-});
-
-test("getBaseOrigin falls back to the request origin outside production", () => {
-  withEnv(
-    {
-      NODE_ENV: "development",
-      NEXT_PUBLIC_APP_URL: undefined,
-    },
-    () => {
-      const request = new Request("http://localhost:3000/api/test");
-      assert.equal(getBaseOrigin(request), "http://localhost:3000");
-    },
-  );
-});
 
 // --- getAiGatewayAuthMode ---
 
@@ -156,6 +114,37 @@ test("isVercelDeployment returns true when VERCEL is set", () => {
     },
     () => {
       assert.equal(isVercelDeployment(), true);
+    },
+  );
+});
+
+// --- requiresDurableStore ---
+
+test("requiresDurableStore returns false without Vercel markers", () => {
+  withEnv(
+    {
+      VERCEL: undefined,
+      VERCEL_ENV: undefined,
+      VERCEL_URL: undefined,
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
+      NODE_ENV: "production",
+    },
+    () => {
+      assert.equal(requiresDurableStore(), false);
+    },
+  );
+});
+
+test("requiresDurableStore returns true on Vercel deployments", () => {
+  withEnv(
+    {
+      VERCEL: "1",
+      VERCEL_ENV: undefined,
+      VERCEL_URL: undefined,
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
+    },
+    () => {
+      assert.equal(requiresDurableStore(), true);
     },
   );
 });

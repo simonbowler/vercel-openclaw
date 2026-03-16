@@ -55,18 +55,21 @@ function withEnv<T>(
   return result;
 }
 
-test("getStore: throws when Upstash missing and NODE_ENV=production", () => {
+test("getStore: allows memory store when NODE_ENV=production without Vercel markers", () => {
   withEnv(
     {
       NODE_ENV: "production",
       VERCEL: undefined,
+      VERCEL_ENV: undefined,
+      VERCEL_URL: undefined,
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
       UPSTASH_REDIS_REST_URL: undefined,
       UPSTASH_REDIS_REST_TOKEN: undefined,
       KV_REST_API_URL: undefined,
       KV_REST_API_TOKEN: undefined,
     },
     () => {
-      assert.throws(() => getStore(), /Upstash Redis is required in production/);
+      assert.equal(getStore().name, "memory");
     },
   );
 });
@@ -76,13 +79,16 @@ test("getStore: throws when Upstash missing and VERCEL=1", () => {
     {
       NODE_ENV: "development",
       VERCEL: "1",
+      VERCEL_ENV: undefined,
+      VERCEL_URL: undefined,
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
       UPSTASH_REDIS_REST_URL: undefined,
       UPSTASH_REDIS_REST_TOKEN: undefined,
       KV_REST_API_URL: undefined,
       KV_REST_API_TOKEN: undefined,
     },
     () => {
-      assert.throws(() => getStore(), /Upstash Redis is required in production/);
+      assert.throws(() => getStore(), /Upstash Redis is required on Vercel deployments/);
     },
   );
 });

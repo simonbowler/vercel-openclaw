@@ -1,7 +1,7 @@
 import { after } from "next/server";
 
 import { requireMutationAuth } from "@/server/auth/route-auth";
-import { getBaseOrigin } from "@/server/env";
+import { getPublicOrigin } from "@/server/public-url";
 import { extractRequestId, logError } from "@/server/log";
 import { ensureSandboxRunning } from "@/server/sandbox/lifecycle";
 import { jsonError } from "@/shared/http";
@@ -16,7 +16,7 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const result = await ensureSandboxRunning({
-      origin: getBaseOrigin(request),
+      origin: getPublicOrigin(request),
       reason: "admin.ensure",
       schedule: after,
     });

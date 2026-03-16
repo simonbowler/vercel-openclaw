@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-import { buildChannelConnectability } from "@/server/channels/connectability";
+import {
+  buildChannelConnectability,
+  buildChannelPrerequisite,
+} from "@/server/channels/connectability";
 import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
 import {
   _setChannelReadinessOverrideForTesting,
@@ -332,4 +335,71 @@ test("launch-verification blocker clears when readiness is valid for current dep
   assert.equal(result.canConnect, true);
   const issue = result.issues.find((i) => i.id === "launch-verification");
   assert.equal(issue, undefined, "should have no launch-verification issue");
+});
+
+test("[regression] prerequisite excludes launch-verification; full connectability includes it", async () => {
+  // Config is valid but launch-verification has not run.
+  // This is the core regression: prerequisite (used by preflight) must pass,
+  // while full connectability (used by channel PUT routes) must block.
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+  process.env.UPSTASH_REDIS_REST_URL = "https://upstash.example";
+  process.env.UPSTASH_REDIS_REST_TOKEN = "token";
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+  // No readiness override → defaults to ready: false for current deployment
+  _setChannelReadinessOverrideForTesting({
+    deploymentId: getCurrentDeploymentId(),
+    ready: false,
+    verifiedAt: null,
+    mode: null,
+    wakeFromSleepPassed: false,
+    failingPhaseId: null,
+    phases: [],
+  });
+
+  const req = makeRequest(PUBLIC_ORIGIN);
+
+  // Prerequisite (config-only): should pass
+  const prereq = await buildChannelPrerequisite("slack", req);
+  assert.equal(prereq.canConnect, true, "prerequisite should pass with valid config");
+  assert.equal(
+    prereq.issues.find((i) => i.id === "launch-verification"),
+    undefined,
+    "prerequisite must never include launch-verification issue",
+  );
+
+  // Full connectability: should block on launch-verification
+  const full = await buildChannelConnectability("slack", req);
+  assert.equal(full.canConnect, false, "full connectability should block without launch-verify");
+  const launchIssue = full.issues.find((i) => i.id === "launch-verification");
+  assert.ok(launchIssue, "full connectability must include launch-verification issue");
+  assert.equal(launchIssue.status, "fail");
+});
+
+test("[regression] channel connectability blocks until launch-verify readiness is written for current deployment", async () => {
+  // Simulates the full lifecycle: blocked → readiness written → unblocked
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+  process.env.UPSTASH_REDIS_REST_URL = "https://upstash.example";
+  process.env.UPSTASH_REDIS_REST_TOKEN = "token";
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+  const req = makeRequest(PUBLIC_ORIGIN);
+
+  // Step 1: No readiness → blocked
+  _setChannelReadinessOverrideForTesting({
+    deploymentId: getCurrentDeploymentId(),
+    ready: false,
+    verifiedAt: null,
+    mode: null,
+    wakeFromSleepPassed: false,
+    failingPhaseId: null,
+    phases: [],
+  });
+  const blocked = await buildChannelConnectability("slack", req);
+  assert.equal(blocked.canConnect, false, "should be blocked before launch-verify");
+
+  // Step 2: Readiness written for current deployment → unblocked
+  _setChannelReadinessOverrideForTesting(makeReadyReadiness());
+  const unblocked = await buildChannelConnectability("slack", req);
+  assert.equal(unblocked.canConnect, true, "should be unblocked after launch-verify passes");
+  assert.equal(unblocked.issues.length, 0, "should have no issues after launch-verify passes");
 });

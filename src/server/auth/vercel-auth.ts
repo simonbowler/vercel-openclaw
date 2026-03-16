@@ -5,10 +5,10 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
 import { ApiError } from "@/shared/http";
 import {
   getAuthMode,
-  getBaseOrigin,
   getOauthClientId,
   getOauthClientSecret,
 } from "@/server/env";
+import { getPublicOrigin } from "@/server/public-url";
 import { logInfo, logWarn } from "@/server/log";
 
 import {
@@ -121,7 +121,7 @@ export async function buildAuthorizeResponse(request: Request): Promise<Response
   const nonce = randomBytes(24).toString("base64url");
   const codeVerifier = randomBytes(32).toString("base64url");
   const codeChallenge = sha256Base64Url(codeVerifier);
-  const redirectUri = `${getBaseOrigin(request)}/api/auth/callback`;
+  const redirectUri = `${getPublicOrigin(request)}/api/auth/callback`;
 
   const url = new URL(AUTHORIZATION_ENDPOINT);
   url.searchParams.set("client_id", getOauthClientId());
@@ -191,7 +191,7 @@ export async function buildCallbackResponse(request: Request): Promise<Response>
     grantType: "authorization_code",
     code,
     codeVerifier: oauthContext.codeVerifier,
-    redirectUri: `${getBaseOrigin(request)}/api/auth/callback`,
+    redirectUri: `${getPublicOrigin(request)}/api/auth/callback`,
   });
   const session = await buildSessionFromTokenResponse(
     tokenResponse,

@@ -1,4 +1,4 @@
-import { getBaseOrigin } from "@/server/env";
+import { getPublicOrigin } from "@/server/public-url";
 
 /**
  * Verify that a state-changing request originated from this application.
@@ -21,7 +21,7 @@ export function verifyCsrf(request: Request): Response | null {
 
   const origin = request.headers.get("origin");
   if (origin) {
-    const expected = getBaseOrigin(request);
+    const expected = getPublicOrigin(request);
     // Compare origins (scheme + host + port).  Both values are already
     // normalised to full URLs, so a simple prefix check works.
     if (normalizeOrigin(origin) === normalizeOrigin(expected)) {
