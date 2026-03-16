@@ -86,18 +86,18 @@ export function StatusPanel({ status, busy, runAction }: StatusPanelProps) {
 
       <div className="hero-actions" style={{ justifyContent: "flex-end" }}>
         <button
-          className="button danger"
-          disabled={busy}
-          onClick={() => void handleStop()}
-        >
-          Stop
-        </button>
-        <button
           className="button ghost"
           disabled={busy}
           onClick={() => void handleSnapshot()}
         >
           Save snapshot
+        </button>
+        <button
+          className="button danger"
+          disabled={busy}
+          onClick={() => void handleStop()}
+        >
+          Stop
         </button>
         <a
           className="button success"
