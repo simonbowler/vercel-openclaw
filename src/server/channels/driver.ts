@@ -22,6 +22,7 @@ import { logError, logInfo, logWarn } from "@/server/log";
 import { getPublicOriginFromHint } from "@/server/public-url";
 import { getSandboxController } from "@/server/sandbox/controller";
 import {
+  ensureFreshGatewayToken,
   ensureSandboxReady,
   getSandboxDomain,
   touchRunningSandbox,
@@ -405,6 +406,7 @@ export async function processChannelJob<
         );
       }
       await touchRunningSandbox();
+      await ensureFreshGatewayToken();
 
       const messages = adapter.buildGatewayMessages
         ? await adapter.buildGatewayMessages(message)
@@ -421,13 +423,40 @@ export async function processChannelJob<
         hasImageParts,
       });
 
-      const reply = await forwardToGateway({
-        gatewayUrl,
-        gatewayToken: readyMeta.gatewayToken,
-        messages,
-        sessionKey,
-        requestTimeoutMs,
-      });
+      let reply: ChannelReply;
+      try {
+        reply = await forwardToGateway({
+          gatewayUrl,
+          gatewayToken: readyMeta.gatewayToken,
+          messages,
+          sessionKey,
+          requestTimeoutMs,
+        });
+      } catch (firstError) {
+        if (!isGateway500(firstError)) {
+          throw firstError;
+        }
+
+        logWarn("channels.gateway_500_retry", {
+          channel: options.channel,
+          error: formatError(firstError),
+        });
+
+        await ensureFreshGatewayToken({ force: true });
+        const freshMeta = await getInitializedMeta();
+
+        try {
+          reply = await forwardToGateway({
+            gatewayUrl,
+            gatewayToken: freshMeta.gatewayToken,
+            messages,
+            sessionKey,
+            requestTimeoutMs,
+          });
+        } catch {
+          throw firstError;
+        }
+      }
 
       // Resolve sandbox-relative image paths (e.g. "smiley-1.png" from MEDIA: lines)
       // by downloading them from the sandbox and converting to inline base64.
@@ -657,6 +686,13 @@ export function isRetryable(error: unknown): boolean {
     message.includes("econn") ||
     message.includes("enotfound") ||
     message.includes("socket")
+  );
+}
+
+function isGateway500(error: unknown): boolean {
+  return (
+    error instanceof RetryableChannelError &&
+    error.message.startsWith("gateway_retryable_5")
   );
 }
 

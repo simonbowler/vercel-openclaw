@@ -293,20 +293,42 @@ export async function touchRunningSandbox(): Promise<SingleMeta> {
     }
   }
 
-  // Refresh the AI Gateway token if it's been a while.
-  const lastRefresh = meta.lastTokenRefreshAt ?? 0;
-  if (now - lastRefresh > TOKEN_REFRESH_INTERVAL_MS) {
-    void refreshAiGatewayToken(sandbox, meta.sandboxId).catch((err) => {
-      logWarn("sandbox.token_refresh_failed", {
-        sandboxId: meta.sandboxId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    });
-  }
-
   return mutateMeta((next) => {
     next.lastAccessedAt = now;
   });
+}
+
+const ENSURE_FRESH_TOKEN_THROTTLE_MS = 5 * 60 * 1000;
+
+/**
+ * Synchronously ensure the AI Gateway token on the sandbox is fresh.
+ *
+ * Throttled to at most once per 5 minutes unless `force` is set.
+ * Returns silently when OIDC is unavailable or the sandbox is not running.
+ */
+export async function ensureFreshGatewayToken(options?: {
+  force?: boolean;
+}): Promise<void> {
+  const meta = await getInitializedMeta();
+  if (!meta.sandboxId || meta.status !== "running") {
+    return;
+  }
+
+  const now = Date.now();
+  const lastRefresh = meta.lastTokenRefreshAt ?? 0;
+  if (!options?.force && now - lastRefresh < ENSURE_FRESH_TOKEN_THROTTLE_MS) {
+    return;
+  }
+
+  const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
+  try {
+    await refreshAiGatewayToken(sandbox, meta.sandboxId);
+  } catch (err) {
+    logWarn("sandbox.token_refresh_failed", {
+      sandboxId: meta.sandboxId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 const WRITE_AI_GATEWAY_TOKEN_SCRIPT = [

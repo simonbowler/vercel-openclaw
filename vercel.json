@@ -1,8 +1,7 @@
 {
   "installCommand": "npm install",
   "crons": [
-    { "path": "/api/cron/watchdog", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/telegram-webhook", "schedule": "0 * * * *" }
+    { "path": "/api/cron/watchdog", "schedule": "*/5 * * * *" }
   ],
   "functions": {
     "src/app/api/admin/ssh/route.ts": {

@@ -5,6 +5,7 @@ import type { NetworkPolicy } from "@vercel/sandbox";
 import type { SingleMeta } from "@/shared/types";
 
 import {
+  ensureFreshGatewayToken,
   ensureSandboxRunning,
   ensureSandboxReady,
   probeGatewayReady,
@@ -1636,7 +1637,7 @@ test("[lifecycle] touchRunningSandbox sandbox_timeout_invalid error -> silently 
 // Edge-branch: touchRunningSandbox token refresh paths
 // ---------------------------------------------------------------------------
 
-test("[lifecycle] touchRunningSandbox token refresh interval not elapsed -> skips refresh", async () => {
+test("[lifecycle] ensureFreshGatewayToken: skips refresh when interval not elapsed", async () => {
   const fake = new FakeSandboxController();
   await withTestEnv(fake, async () => {
     await mutateMeta((meta) => {
@@ -1646,8 +1647,7 @@ test("[lifecycle] touchRunningSandbox token refresh interval not elapsed -> skip
       meta.lastTokenRefreshAt = Date.now(); // Just refreshed
     });
 
-    const result = await touchRunningSandbox();
-    assert.equal(result.status, "running");
+    await ensureFreshGatewayToken();
 
     // The handle should have been retrieved but no sh -c command for token write
     const handle = fake.handlesByIds.get("sbx-token-skip");
@@ -1660,7 +1660,7 @@ test("[lifecycle] touchRunningSandbox token refresh interval not elapsed -> skip
   });
 });
 
-test("[lifecycle] touchRunningSandbox token refresh interval elapsed -> triggers refresh", async () => {
+test("[lifecycle] ensureFreshGatewayToken: triggers refresh when interval elapsed", async () => {
   const fake = new FakeSandboxController();
   await withTestEnv(fake, async () => {
     _setAiGatewayTokenOverrideForTesting("fresh-token-val");
@@ -1673,10 +1673,7 @@ test("[lifecycle] touchRunningSandbox token refresh interval elapsed -> triggers
         meta.lastTokenRefreshAt = Date.now() - 15 * 60 * 1000; // 15 min ago
       });
 
-      await touchRunningSandbox();
-
-      // Give the fire-and-forget refresh a moment to execute
-      await sleep(50);
+      await ensureFreshGatewayToken();
 
       const handle = fake.handlesByIds.get("sbx-token-refresh") as FakeSandboxHandle | undefined;
       if (handle) {
@@ -1691,7 +1688,7 @@ test("[lifecycle] touchRunningSandbox token refresh interval elapsed -> triggers
   });
 });
 
-test("[lifecycle] token refresh: writes token then runs startup script", async () => {
+test("[lifecycle] ensureFreshGatewayToken: writes token then runs startup script", async () => {
   const fake = new FakeSandboxController();
   await withTestEnv(fake, async () => {
     _setAiGatewayTokenOverrideForTesting("fresh-oidc-token");
@@ -1704,8 +1701,7 @@ test("[lifecycle] token refresh: writes token then runs startup script", async (
         meta.lastTokenRefreshAt = Date.now() - 15 * 60 * 1000;
       });
 
-      await touchRunningSandbox();
-      await sleep(100);
+      await ensureFreshGatewayToken();
 
       const handle = fake.handlesByIds.get("sbx-refresh-script") as FakeSandboxHandle | undefined;
       assert.ok(handle, "Handle should exist");
@@ -1738,7 +1734,7 @@ test("[lifecycle] token refresh: writes token then runs startup script", async (
   });
 });
 
-test("[lifecycle] token refresh: no OIDC token available -> skips silently", async () => {
+test("[lifecycle] ensureFreshGatewayToken: no OIDC token available -> skips silently", async () => {
   const fake = new FakeSandboxController();
   await withTestEnv(fake, async () => {
     // Set override to undefined = "return undefined from getAiGatewayBearerTokenOptional"
@@ -1754,12 +1750,10 @@ test("[lifecycle] token refresh: no OIDC token available -> skips silently", asy
         meta.lastTokenRefreshAt = staleRefreshTime;
       });
 
-      await touchRunningSandbox();
-      await sleep(100);
+      await ensureFreshGatewayToken();
 
       const handle = fake.handlesByIds.get("sbx-no-oidc") as FakeSandboxHandle | undefined;
       if (handle) {
-        // Should have extendTimeout but no sh -c (token write)
         const shCmd = handle.commands.find(
           (c) => c.cmd === "sh" && c.args?.[0] === "-c",
         );
@@ -1778,7 +1772,7 @@ test("[lifecycle] token refresh: no OIDC token available -> skips silently", asy
   });
 });
 
-test("[lifecycle] token refresh: restart failure does not corrupt metadata", async () => {
+test("[lifecycle] ensureFreshGatewayToken: restart failure does not corrupt metadata", async () => {
   const fake = new FakeSandboxController();
 
   await withTestEnv(fake, async () => {
@@ -1803,8 +1797,7 @@ test("[lifecycle] token refresh: restart failure does not corrupt metadata", asy
       };
       fake.handlesByIds.set("sbx-restart-fail", handle);
 
-      await touchRunningSandbox();
-      await sleep(100);
+      await ensureFreshGatewayToken();
 
       // Metadata should NOT be updated since restart failed
       const meta = await getInitializedMeta();
@@ -1820,7 +1813,7 @@ test("[lifecycle] token refresh: restart failure does not corrupt metadata", asy
   });
 });
 
-test("[lifecycle] token refresh: re-pairs device identity after restart", async () => {
+test("[lifecycle] ensureFreshGatewayToken: re-pairs device identity after restart", async () => {
   const fake = new FakeSandboxController();
   await withTestEnv(fake, async () => {
     _setAiGatewayTokenOverrideForTesting("check-pair-token");
@@ -1833,8 +1826,7 @@ test("[lifecycle] token refresh: re-pairs device identity after restart", async 
         meta.lastTokenRefreshAt = Date.now() - 15 * 60 * 1000;
       });
 
-      await touchRunningSandbox();
-      await sleep(100);
+      await ensureFreshGatewayToken();
 
       const handle = fake.handlesByIds.get("sbx-check-pair") as FakeSandboxHandle | undefined;
       assert.ok(handle, "Handle should exist");
@@ -1844,6 +1836,44 @@ test("[lifecycle] token refresh: re-pairs device identity after restart", async 
         (c) => c.cmd === "node" && c.args?.[0] === OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
       );
       assert.ok(pairCmd, "Should re-pair device identity after gateway restart");
+    } finally {
+      _setAiGatewayTokenOverrideForTesting(null);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+test("[lifecycle] ensureFreshGatewayToken: force=true bypasses throttle", async () => {
+  const fake = new FakeSandboxController();
+  await withTestEnv(fake, async () => {
+    _setAiGatewayTokenOverrideForTesting("forced-token");
+
+    try {
+      await mutateMeta((meta) => {
+        meta.status = "running";
+        meta.sandboxId = "sbx-force-refresh";
+        meta.lastAccessedAt = null;
+        meta.lastTokenRefreshAt = Date.now(); // Just refreshed
+      });
+
+      // Without force, should skip
+      await ensureFreshGatewayToken();
+      let handle = fake.handlesByIds.get("sbx-force-refresh") as FakeSandboxHandle | undefined;
+      const cmdCountBefore = handle?.commands.length ?? 0;
+
+      // With force, should refresh even though interval not elapsed
+      await ensureFreshGatewayToken({ force: true });
+      handle = fake.handlesByIds.get("sbx-force-refresh") as FakeSandboxHandle | undefined;
+      assert.ok(handle, "Handle should exist");
+
+      const shCmd = handle.commands.find(
+        (c) => c.cmd === "sh" && c.args?.[0] === "-c",
+      );
+      assert.ok(shCmd, "Should attempt token refresh when force=true");
+      assert.ok(
+        handle.commands.length > cmdCountBefore,
+        "Should have run commands after force refresh",
+      );
     } finally {
       _setAiGatewayTokenOverrideForTesting(null);
     }
