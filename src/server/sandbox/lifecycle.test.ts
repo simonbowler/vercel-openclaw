@@ -1691,7 +1691,7 @@ test("[lifecycle] touchRunningSandbox token refresh interval elapsed -> triggers
   });
 });
 
-test("[lifecycle] token refresh: writes token then restarts gateway with bash -c (not -lc)", async () => {
+test("[lifecycle] token refresh: writes token then runs startup script", async () => {
   const fake = new FakeSandboxController();
   await withTestEnv(fake, async () => {
     _setAiGatewayTokenOverrideForTesting("fresh-oidc-token");
@@ -1720,21 +1720,11 @@ test("[lifecycle] token refresh: writes token then restarts gateway with bash -c
         "Token value should be passed as argument",
       );
 
-      // Step 2: gateway restart via bash -c (NOT bash -lc)
+      // Step 2: gateway restart via startup script (not inline bash -c)
       const restartCmd = handle.commands.find(
-        (c) => c.cmd === "bash" && c.args?.[0] === "-c",
+        (c) => c.cmd === "bash" && c.args?.[0] === OPENCLAW_STARTUP_SCRIPT_PATH,
       );
-      assert.ok(restartCmd, "Should restart gateway via bash -c");
-      const scriptContent = restartCmd.args?.[1] ?? "";
-      assert.ok(scriptContent.includes("pkill"), "Restart script should kill old gateway");
-      assert.ok(scriptContent.includes("setsid"), "Restart script should start gateway with setsid");
-      assert.ok(scriptContent.includes("AI_GATEWAY_API_KEY"), "Script should set AI_GATEWAY_API_KEY env");
-
-      // Verify NO bash -lc (login shell) is used
-      const loginCmd = handle.commands.find(
-        (c) => c.cmd === "bash" && c.args?.[0] === "-lc",
-      );
-      assert.equal(loginCmd, undefined, "Should NOT use bash -lc (login shell)");
+      assert.ok(restartCmd, "Should restart gateway via startup script");
 
       // Step 3: metadata updated
       const meta = await getInitializedMeta();
@@ -1803,10 +1793,10 @@ test("[lifecycle] token refresh: restart failure does not corrupt metadata", asy
         meta.lastTokenRefreshAt = refreshTime;
       });
 
-      // Pre-create the handle with a failing restart command handler
+      // Pre-create the handle with a failing startup script
       const handle = new FakeSandboxHandle("sbx-restart-fail");
       handle.commandHandler = (cmd, args) => {
-        if (cmd === "bash" && args?.[0] === "-c") {
+        if (cmd === "bash" && args?.[0] === OPENCLAW_STARTUP_SCRIPT_PATH) {
           return { exitCode: 255, output: "gateway restart failed" };
         }
         return { exitCode: 0, output: "" };
@@ -1830,15 +1820,15 @@ test("[lifecycle] token refresh: restart failure does not corrupt metadata", asy
   });
 });
 
-test("[lifecycle] token refresh: restart script reads token from correct file paths", async () => {
+test("[lifecycle] token refresh: re-pairs device identity after restart", async () => {
   const fake = new FakeSandboxController();
   await withTestEnv(fake, async () => {
-    _setAiGatewayTokenOverrideForTesting("check-paths-token");
+    _setAiGatewayTokenOverrideForTesting("check-pair-token");
 
     try {
       await mutateMeta((meta) => {
         meta.status = "running";
-        meta.sandboxId = "sbx-check-paths";
+        meta.sandboxId = "sbx-check-pair";
         meta.lastAccessedAt = null;
         meta.lastTokenRefreshAt = Date.now() - 15 * 60 * 1000;
       });
@@ -1846,40 +1836,14 @@ test("[lifecycle] token refresh: restart script reads token from correct file pa
       await touchRunningSandbox();
       await sleep(100);
 
-      const handle = fake.handlesByIds.get("sbx-check-paths") as FakeSandboxHandle | undefined;
+      const handle = fake.handlesByIds.get("sbx-check-pair") as FakeSandboxHandle | undefined;
       assert.ok(handle, "Handle should exist");
 
-      const restartCmd = handle.commands.find(
-        (c) => c.cmd === "bash" && c.args?.[0] === "-c",
+      // Verify force-pair runs after startup script
+      const pairCmd = handle.commands.find(
+        (c) => c.cmd === "node" && c.args?.[0] === OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
       );
-      assert.ok(restartCmd, "Should have restart command");
-      const script = restartCmd.args?.[1] ?? "";
-
-      // Verify the script reads from the correct paths
-      assert.ok(
-        script.includes("/home/vercel-sandbox/.openclaw/.gateway-token"),
-        "Should read gateway token from correct path",
-      );
-      assert.ok(
-        script.includes("/home/vercel-sandbox/.openclaw/.ai-gateway-api-key"),
-        "Should read AI gateway key from correct path",
-      );
-      assert.ok(
-        script.includes("OPENCLAW_CONFIG_PATH="),
-        "Should set OPENCLAW_CONFIG_PATH",
-      );
-      assert.ok(
-        script.includes("OPENAI_BASE_URL="),
-        "Should set OPENAI_BASE_URL for AI Gateway",
-      );
-      assert.ok(
-        script.includes("--port 3000"),
-        "Should start gateway on port 3000",
-      );
-      assert.ok(
-        script.includes("--bind loopback"),
-        "Should bind to loopback",
-      );
+      assert.ok(pairCmd, "Should re-pair device identity after gateway restart");
     } finally {
       _setAiGatewayTokenOverrideForTesting(null);
     }

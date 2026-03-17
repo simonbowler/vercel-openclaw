@@ -10,11 +10,8 @@ import { logError, logInfo, logWarn } from "@/server/log";
 import { setupOpenClaw, CommandFailedError, waitForGatewayReady } from "@/server/openclaw/bootstrap";
 import {
   OPENCLAW_AI_GATEWAY_API_KEY_PATH,
-  OPENCLAW_BIN,
-  OPENCLAW_CONFIG_PATH,
   OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
   OPENCLAW_GATEWAY_TOKEN_PATH,
-  OPENCLAW_LOG_FILE,
   OPENCLAW_STARTUP_SCRIPT_PATH,
   OPENCLAW_STATE_DIR,
 } from "@/server/openclaw/config";
@@ -357,24 +354,9 @@ export async function writeRestoreCredentialFiles(
 // startup script (which deletes paired.json, sets up shell hooks, etc.).
 // Instead: kill the old gateway, then start a fresh one with the updated
 // token read from disk.
-const REFRESH_RESTART_GATEWAY_SCRIPT = [
-  `exec 2>&1`,  // merge stderr into stdout so we capture all output
-  `pkill -f 'openclaw gateway' || true`,
-  `sleep 0.5`,
-  `if [ ! -f "${OPENCLAW_GATEWAY_TOKEN_PATH}" ]; then echo "ERR: gateway token file missing"; exit 1; fi`,
-  `gateway_token="$(cat ${OPENCLAW_GATEWAY_TOKEN_PATH})"`,
-  `if [ -z "$gateway_token" ]; then echo "ERR: gateway token is empty"; exit 1; fi`,
-  `ai_gateway_api_key="$(cat ${OPENCLAW_AI_GATEWAY_API_KEY_PATH} 2>/dev/null || true)"`,
-  `if [ ! -x "${OPENCLAW_BIN}" ]; then echo "ERR: openclaw binary not found at ${OPENCLAW_BIN}"; exit 1; fi`,
-  `setsid env \\`,
-  `  OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" \\`,
-  `  OPENCLAW_GATEWAY_TOKEN="$gateway_token" \\`,
-  `  AI_GATEWAY_API_KEY="$ai_gateway_api_key" \\`,
-  `  OPENAI_API_KEY="$ai_gateway_api_key" \\`,
-  `  OPENAI_BASE_URL="https://ai-gateway.vercel.sh/v1" \\`,
-  `  ${OPENCLAW_BIN} gateway --port 3000 --bind loopback >> ${OPENCLAW_LOG_FILE} 2>&1 &`,
-  `echo "gateway restarted pid=$!"`,
-].join("\n");
+// Use the existing startup script for restart — it reads the token files
+// from disk, kills any existing gateway, and starts a fresh one.
+// This is the same script used during initial bootstrap and snapshot restore.
 
 async function refreshAiGatewayToken(sandbox: SandboxHandle, sandboxId: string): Promise<void> {
   const freshToken = await getAiGatewayBearerTokenOptional();
@@ -402,9 +384,10 @@ async function refreshAiGatewayToken(sandbox: SandboxHandle, sandboxId: string):
 
   logInfo("sandbox.token_refresh.token_written", { sandboxId });
 
+  // Use the on-disk startup script which reads token files, kills old gateway,
+  // and starts a fresh one. This is the same script used during bootstrap.
   const restartResult = await sandbox.runCommand("bash", [
-    "-c",
-    REFRESH_RESTART_GATEWAY_SCRIPT,
+    OPENCLAW_STARTUP_SCRIPT_PATH,
   ]);
 
   const restartOutput = await restartResult.output("both").catch(() => "");
@@ -426,6 +409,17 @@ async function refreshAiGatewayToken(sandbox: SandboxHandle, sandboxId: string):
     sandboxId,
     output: restartOutput.slice(0, 200),
   });
+
+  // The startup script deletes paired.json — re-pair the device identity
+  // so the gateway continues to accept Control UI connections.
+  try {
+    await sandbox.runCommand("node", [
+      OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
+      OPENCLAW_STATE_DIR,
+    ]);
+  } catch {
+    // Best-effort only — matches setupOpenClaw behavior.
+  }
 
   await mutateMeta((next) => {
     next.lastTokenRefreshAt = Date.now();
