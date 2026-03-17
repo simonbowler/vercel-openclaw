@@ -2,6 +2,7 @@ import * as crypto from "node:crypto";
 
 import { RetryableSendError } from "@/server/channels/core/types";
 import type {
+  ChannelReply,
   ExtractedChannelMessage,
   OpenClawMessage,
   PlatformAdapter,
@@ -15,9 +16,14 @@ const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
 const SLACK_DELETE_MESSAGE_URL = "https://slack.com/api/chat.delete";
 const SLACK_UPDATE_MESSAGE_URL = "https://slack.com/api/chat.update";
 const SLACK_CONVERSATIONS_REPLIES_URL = "https://slack.com/api/conversations.replies";
+const SLACK_FILES_GET_UPLOAD_URL_EXTERNAL_URL = "https://slack.com/api/files.getUploadURLExternal";
+const SLACK_FILES_COMPLETE_UPLOAD_EXTERNAL_URL = "https://slack.com/api/files.completeUploadExternal";
 const SLACK_THREAD_HISTORY_LIMIT = 10;
 const SLACK_REQUEST_TIMEOUT_MS = 15_000;
 const SLACK_PROCESSING_PLACEHOLDER_TEXT = "_Thinking..._";
+const SLACK_FALLBACK_IMAGE_TEXT = "Sent an image.";
+const SLACK_DEFAULT_IMAGE_ALT_TEXT = "Image from OpenClaw";
+const SLACK_MAX_BLOCK_IMAGES = 5;
 
 type SlackConfig = {
   signingSecret: string;
@@ -55,6 +61,39 @@ type SlackThreadReply = {
 
 type SlackConversationsRepliesResponse = SlackSendResponse & {
   messages?: SlackThreadReply[];
+};
+
+type SlackFilesGetUploadURLExternalResponse = SlackSendResponse & {
+  upload_url?: string;
+  file_id?: string;
+};
+
+type SlackSectionBlock = {
+  type: "section";
+  text: {
+    type: "mrkdwn";
+    text: string;
+  };
+};
+
+type SlackImageBlock = {
+  type: "image";
+  image_url: string;
+  alt_text: string;
+};
+
+type SlackBlock = SlackSectionBlock | SlackImageBlock;
+
+type SlackReplyPayload = {
+  text: string;
+  blocks?: SlackBlock[];
+};
+
+type SlackDecodedImageData = {
+  bytes: Buffer;
+  filename: string;
+  mimeType: string;
+  altText: string;
 };
 
 export interface SlackExtractedMessage extends ExtractedChannelMessage {
@@ -152,9 +191,13 @@ async function updateProcessingPlaceholder(
   botToken: string,
   channel: string,
   ts: string,
-  text: string,
+  textOrPayload: string | SlackReplyPayload,
   fetchFn?: typeof fetch,
 ): Promise<void> {
+  const messagePayload: SlackReplyPayload =
+    typeof textOrPayload === "string"
+      ? { text: textOrPayload }
+      : textOrPayload;
   const runFetch = fetchFn ?? globalThis.fetch;
   let response: Response;
 
@@ -168,7 +211,8 @@ async function updateProcessingPlaceholder(
       body: JSON.stringify({
         channel,
         ts,
-        text,
+        text: messagePayload.text,
+        ...(messagePayload.blocks ? { blocks: messagePayload.blocks } : {}),
       }),
       signal: AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS),
     });
@@ -185,11 +229,11 @@ async function updateProcessingPlaceholder(
     throw error;
   }
 
-  let payload: SlackSendResponse | null = null;
+  let responsePayload: SlackSendResponse | null = null;
   try {
-    payload = (await response.json()) as SlackSendResponse;
+    responsePayload = (await response.json()) as SlackSendResponse;
   } catch {
-    payload = null;
+    responsePayload = null;
   }
 
   if (response.status === 429 || response.status >= 500) {
@@ -199,8 +243,8 @@ async function updateProcessingPlaceholder(
     );
   }
 
-  if (!response.ok || payload?.ok !== true) {
-    const detail = typeof payload?.error === "string" ? payload.error : "";
+  if (!response.ok || responsePayload?.ok !== true) {
+    const detail = typeof responsePayload?.error === "string" ? responsePayload.error : "";
     throw new Error(
       detail
         ? `slack_processing_placeholder_update_failed: status=${response.status} error=${detail}`
@@ -284,9 +328,13 @@ async function fetchSlackThreadHistory(options: {
 async function postSlackReply(
   botToken: string,
   message: SlackExtractedMessage,
-  replyText: string,
+  replyTextOrPayload: string | SlackReplyPayload,
   fetchFn?: typeof fetch,
 ): Promise<void> {
+  const messagePayload: SlackReplyPayload =
+    typeof replyTextOrPayload === "string"
+      ? { text: replyTextOrPayload }
+      : replyTextOrPayload;
   const runFetch = fetchFn ?? globalThis.fetch;
   let response: Response;
 
@@ -300,7 +348,8 @@ async function postSlackReply(
       body: JSON.stringify({
         channel: message.channel,
         thread_ts: message.threadTs,
-        text: replyText,
+        text: messagePayload.text,
+        ...(messagePayload.blocks ? { blocks: messagePayload.blocks } : {}),
       }),
       signal: AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS),
     });
@@ -315,11 +364,11 @@ async function postSlackReply(
     throw error;
   }
 
-  let payload: SlackSendResponse | null = null;
+  let responsePayload: SlackSendResponse | null = null;
   try {
-    payload = (await response.json()) as SlackSendResponse;
+    responsePayload = (await response.json()) as SlackSendResponse;
   } catch {
-    payload = null;
+    responsePayload = null;
   }
 
   if (response.status === 429 || response.status >= 500) {
@@ -329,8 +378,8 @@ async function postSlackReply(
     );
   }
 
-  if (!response.ok || payload?.ok !== true) {
-    const detail = typeof payload?.error === "string" ? payload.error : "";
+  if (!response.ok || responsePayload?.ok !== true) {
+    const detail = typeof responsePayload?.error === "string" ? responsePayload.error : "";
     throw new Error(
       detail ? `slack_send_failed: status=${response.status} error=${detail}` : `slack_send_failed: status=${response.status}`,
     );
@@ -517,6 +566,328 @@ async function deleteProcessingPlaceholder(
   });
 }
 
+function toNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function toObjectRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function toReplyImages(reply: ChannelReply): NonNullable<ChannelReply["images"]> {
+  return reply.images ?? [];
+}
+
+function isReplyImageKind(
+  image: NonNullable<ChannelReply["images"]>[number],
+  kind: "url" | "data",
+): boolean {
+  return image.kind === kind;
+}
+
+function toReplyImageUrl(
+  image: NonNullable<ChannelReply["images"]>[number],
+): string | undefined {
+  if (image.kind === "url") {
+    return image.url;
+  }
+  return undefined;
+}
+
+function toReplyImageAltText(
+  image: NonNullable<ChannelReply["images"]>[number],
+): string {
+  return image.alt ?? SLACK_DEFAULT_IMAGE_ALT_TEXT;
+}
+
+function toSlackFallbackText(reply: ChannelReply): string {
+  const text = toNonEmptyString(reply.text);
+  return text ?? SLACK_FALLBACK_IMAGE_TEXT;
+}
+
+function toDataReplyImages(
+  reply: ChannelReply,
+): Array<Extract<NonNullable<ChannelReply["images"]>[number], { kind: "data" }>> {
+  return toReplyImages(reply).filter(
+    (image): image is Extract<NonNullable<ChannelReply["images"]>[number], { kind: "data" }> =>
+      isReplyImageKind(image, "data"),
+  );
+}
+
+export function toSlackBlocks(reply: ChannelReply): SlackBlock[] | undefined {
+  const blocks: SlackBlock[] = [];
+  const replyText = toNonEmptyString(reply.text);
+  if (replyText) {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: replyText,
+      },
+    });
+  }
+
+  let urlImageCount = 0;
+  for (const image of toReplyImages(reply)) {
+    if (urlImageCount >= SLACK_MAX_BLOCK_IMAGES) {
+      break;
+    }
+
+    if (!isReplyImageKind(image, "url")) {
+      continue;
+    }
+
+    const imageUrl = toReplyImageUrl(image);
+    if (!imageUrl) {
+      continue;
+    }
+
+    blocks.push({
+      type: "image",
+      image_url: imageUrl,
+      alt_text: toReplyImageAltText(image),
+    });
+    urlImageCount += 1;
+  }
+
+  return blocks.length > 0 ? blocks : undefined;
+}
+
+function toImageExtension(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === "image/jpeg" || normalized === "image/jpg") {
+    return "jpg";
+  }
+  if (normalized === "image/gif") {
+    return "gif";
+  }
+  if (normalized === "image/webp") {
+    return "webp";
+  }
+  if (normalized === "image/svg+xml") {
+    return "svg";
+  }
+  return "png";
+}
+
+function sanitizeImageFilename(filename: string): string {
+  const sanitized = filename.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return sanitized.length > 0 ? sanitized : "openclaw-image";
+}
+
+function decodeReplyImageData(
+  image: Extract<NonNullable<ChannelReply["images"]>[number], { kind: "data" }>,
+): SlackDecodedImageData {
+  let base64Payload = image.base64.trim();
+  let inferredMimeType: string | undefined;
+  const dataUrlMatch = /^data:([^;,]+);base64,(.+)$/i.exec(base64Payload);
+  if (dataUrlMatch) {
+    inferredMimeType = toNonEmptyString(dataUrlMatch[1]);
+    base64Payload = dataUrlMatch[2] ?? "";
+  }
+
+  const normalizedBase64 = base64Payload
+    .replace(/\s+/g, "")
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+
+  if (normalizedBase64.length === 0 || normalizedBase64.length % 4 === 1) {
+    throw new Error("slack_upload_prepare_failed: invalid base64 image data");
+  }
+
+  if (/[^A-Za-z0-9+/=]/.test(normalizedBase64)) {
+    throw new Error("slack_upload_prepare_failed: invalid base64 characters");
+  }
+
+  const bytes = Buffer.from(normalizedBase64, "base64");
+  if (bytes.length === 0) {
+    throw new Error("slack_upload_prepare_failed: decoded image is empty");
+  }
+
+  const mimeType = image.mimeType ?? inferredMimeType ?? "image/png";
+  const extension = toImageExtension(mimeType);
+  const explicitFilename = toNonEmptyString(image.filename);
+  const filename = explicitFilename
+    ? sanitizeImageFilename(explicitFilename)
+    : `openclaw-image-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${extension}`;
+
+  return {
+    bytes,
+    filename: filename.includes(".") ? filename : `${filename}.${extension}`,
+    mimeType,
+    altText: toReplyImageAltText(image),
+  };
+}
+
+async function uploadSlackImageData(
+  botToken: string,
+  message: SlackExtractedMessage,
+  image: Extract<NonNullable<ChannelReply["images"]>[number], { kind: "data" }>,
+  fetchFn?: typeof fetch,
+): Promise<void> {
+  const runFetch = fetchFn ?? globalThis.fetch;
+  const decoded = decodeReplyImageData(image);
+
+  // Step 1: Get upload URL
+  let getUploadResponse: Response;
+  try {
+    getUploadResponse = await runFetch(SLACK_FILES_GET_UPLOAD_URL_EXTERNAL_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${botToken}`,
+      },
+      body: JSON.stringify({
+        filename: decoded.filename,
+        length: decoded.bytes.length,
+        alt_txt: decoded.altText,
+      }),
+      signal: AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (isLikelyNetworkError(error)) {
+      throw toRetryableSendError(
+        `slack_upload_prepare_network: ${error instanceof Error ? error.message : String(error)}`,
+        undefined,
+        error,
+      );
+    }
+    throw error;
+  }
+
+  let getUploadJson: SlackFilesGetUploadURLExternalResponse | null = null;
+  try {
+    getUploadJson = (await getUploadResponse.json()) as SlackFilesGetUploadURLExternalResponse;
+  } catch {
+    getUploadJson = null;
+  }
+
+  const getUploadErrorCode = typeof getUploadJson?.error === "string" ? getUploadJson.error : null;
+  const getUploadFailureMessage = `slack_upload_prepare_failed: status=${getUploadResponse.status}${
+    getUploadErrorCode ? ` error=${getUploadErrorCode}` : ""
+  }`;
+  const getUploadRetryAfterSeconds = parseRetryAfterSeconds(
+    getUploadResponse.headers.get("retry-after"),
+  );
+
+  if (getUploadResponse.status === 429 || getUploadResponse.status >= 500) {
+    throw toRetryableSendError(getUploadFailureMessage, getUploadRetryAfterSeconds);
+  }
+
+  if (!getUploadResponse.ok || getUploadJson?.ok !== true) {
+    throw new Error(getUploadFailureMessage);
+  }
+
+  const uploadUrl = toNonEmptyString(getUploadJson?.upload_url);
+  const fileId = toNonEmptyString(getUploadJson?.file_id);
+  if (!uploadUrl || !fileId) {
+    throw new Error("slack_upload_prepare_failed: missing upload_url or file_id");
+  }
+
+  // Step 2: Upload file bytes
+  const formData = new FormData();
+  formData.set("filename", decoded.filename);
+  formData.set("length", String(decoded.bytes.length));
+  formData.set(
+    "file",
+    new Blob([Uint8Array.from(decoded.bytes)], { type: decoded.mimeType }),
+    decoded.filename,
+  );
+
+  let uploadResponse: Response;
+  try {
+    uploadResponse = await runFetch(uploadUrl, {
+      method: "POST",
+      body: formData,
+      signal: AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (isLikelyNetworkError(error)) {
+      throw toRetryableSendError(
+        `slack_upload_transfer_network: ${error instanceof Error ? error.message : String(error)}`,
+        undefined,
+        error,
+      );
+    }
+    throw error;
+  }
+
+  const uploadFailureMessage = `slack_upload_transfer_failed: status=${uploadResponse.status}`;
+  const uploadRetryAfterSeconds = parseRetryAfterSeconds(uploadResponse.headers.get("retry-after"));
+  if (uploadResponse.status === 429 || uploadResponse.status >= 500) {
+    throw toRetryableSendError(uploadFailureMessage, uploadRetryAfterSeconds);
+  }
+
+  if (!uploadResponse.ok) {
+    throw new Error(uploadFailureMessage);
+  }
+
+  // Step 3: Complete upload and attach to thread
+  let completeUploadResponse: Response;
+  try {
+    completeUploadResponse = await runFetch(SLACK_FILES_COMPLETE_UPLOAD_EXTERNAL_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${botToken}`,
+      },
+      body: JSON.stringify({
+        files: [{ id: fileId, title: decoded.filename }],
+        channel_id: message.channel,
+        thread_ts: message.threadTs,
+      }),
+      signal: AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (isLikelyNetworkError(error)) {
+      throw toRetryableSendError(
+        `slack_upload_complete_network: ${error instanceof Error ? error.message : String(error)}`,
+        undefined,
+        error,
+      );
+    }
+    throw error;
+  }
+
+  let completeUploadJson: SlackSendResponse | null = null;
+  try {
+    completeUploadJson = (await completeUploadResponse.json()) as SlackSendResponse;
+  } catch {
+    completeUploadJson = null;
+  }
+
+  const completeUploadErrorCode =
+    typeof completeUploadJson?.error === "string" ? completeUploadJson.error : null;
+  const completeUploadFailureMessage = `slack_upload_complete_failed: status=${completeUploadResponse.status}${
+    completeUploadErrorCode ? ` error=${completeUploadErrorCode}` : ""
+  }`;
+  const completeUploadRetryAfterSeconds = parseRetryAfterSeconds(
+    completeUploadResponse.headers.get("retry-after"),
+  );
+
+  if (completeUploadResponse.status === 429 || completeUploadResponse.status >= 500) {
+    throw toRetryableSendError(completeUploadFailureMessage, completeUploadRetryAfterSeconds);
+  }
+
+  if (!completeUploadResponse.ok || completeUploadJson?.ok !== true) {
+    throw new Error(completeUploadFailureMessage);
+  }
+
+  logInfo("channels.slack_image_uploaded", {
+    channel: message.channel,
+    threadTs: message.threadTs,
+    filename: decoded.filename,
+    fileId,
+  });
+}
+
 export function createSlackAdapter(
   config: SlackConfig,
   options: { fetchFn?: typeof fetch } = {},
@@ -617,6 +988,70 @@ export function createSlackAdapter(
       }
 
       await postSlackReply(config.botToken, message, replyText, fetchFn);
+
+      if (placeholderTs) {
+        try {
+          await deleteProcessingPlaceholder(
+            config.botToken,
+            message.channel,
+            placeholderTs,
+            fetchFn,
+          );
+          message.processingPlaceholderTs = undefined;
+        } catch (error) {
+          logWarn("channels.slack_processing_placeholder_delete_failed_after_reply", {
+            channel: message.channel,
+            threadTs: message.threadTs,
+            placeholderTs,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    },
+
+    async sendReplyRich(message, reply) {
+      const slackPayload: SlackReplyPayload = {
+        text: toSlackFallbackText(reply),
+        blocks: toSlackBlocks(reply),
+      };
+      const dataImages = toDataReplyImages(reply);
+
+      const placeholderTs = message.processingPlaceholderTs;
+
+      if (placeholderTs) {
+        try {
+          await updateProcessingPlaceholder(
+            config.botToken,
+            message.channel,
+            placeholderTs,
+            slackPayload,
+            fetchFn,
+          );
+          message.processingPlaceholderTs = undefined;
+
+          for (const image of dataImages) {
+            await uploadSlackImageData(config.botToken, message, image, fetchFn);
+          }
+          return;
+        } catch (error) {
+          if (!canFallbackFromPlaceholderUpdateError(error)) {
+            throw error;
+          }
+
+          logWarn("channels.slack_processing_placeholder_update_fallback", {
+            channel: message.channel,
+            threadTs: message.threadTs,
+            placeholderTs,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      await postSlackReply(config.botToken, message, slackPayload, fetchFn);
+
+      for (const image of dataImages) {
+        await uploadSlackImageData(config.botToken, message, image, fetchFn);
+      }
 
       if (placeholderTs) {
         try {

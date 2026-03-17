@@ -5,6 +5,7 @@ import type { SingleMeta } from "@/shared/types";
 import { extractReply, toPlainText } from "@/server/channels/core/reply";
 import { startPlatformProcessingIndicator } from "@/server/channels/core/processing-indicator";
 import type {
+  ChannelReply,
   ExtractedChannelMessage,
   GatewayMessage,
   PlatformAdapter,
@@ -413,7 +414,7 @@ export async function processChannelJob<
         requestTimeoutMs,
       });
 
-      const replyText = await forwardToGateway({
+      const reply = await forwardToGateway({
         gatewayUrl,
         gatewayToken: readyMeta.gatewayToken,
         messages,
@@ -421,7 +422,13 @@ export async function processChannelJob<
         requestTimeoutMs,
       });
 
-      await adapter.sendReply(message, replyText);
+      const replyText = toPlainText(reply);
+
+      if (adapter.sendReplyRich) {
+        await adapter.sendReplyRich(message, reply);
+      } else {
+        await adapter.sendReply(message, replyText);
+      }
       logInfo("channels.platform_reply_sent", { channel: options.channel });
       logInfo("channels.delivery_success", { channel: options.channel });
       if (sessionKey) {
@@ -446,7 +453,7 @@ async function forwardToGateway(options: {
   messages: GatewayMessage[];
   sessionKey?: string;
   requestTimeoutMs?: number;
-}): Promise<string> {
+}): Promise<ChannelReply> {
   const timeoutMs = options.requestTimeoutMs ?? DEFAULT_CHANNEL_REQUEST_TIMEOUT_MS;
   const url = new URL("/v1/chat/completions", options.gatewayUrl).toString();
   const headers: Record<string, string> = {
@@ -515,7 +522,7 @@ async function forwardToGateway(options: {
     throw new Error("gateway_missing_reply");
   }
 
-  return toPlainText(reply);
+  return reply;
 }
 
 class RetryableChannelError extends Error {

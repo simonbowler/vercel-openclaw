@@ -1,6 +1,8 @@
 const TELEGRAM_API_BASE = "https://api.telegram.org";
 const TELEGRAM_MAX_TEXT_LEN = 4096;
+export const TELEGRAM_MAX_CAPTION_LEN = 1024;
 const TELEGRAM_TRUNCATION_MARKER = "...";
+const TELEGRAM_FILE_DOWNLOAD_TIMEOUT_MS = 30_000;
 
 type TelegramUser = {
   id: number;
@@ -158,4 +160,102 @@ export async function sendMessage(
     chat_id: chatId,
     text: clampTelegramText(text),
   });
+}
+
+type TelegramFile = {
+  file_id: string;
+  file_unique_id: string;
+  file_size?: number;
+  file_path?: string;
+};
+
+export async function getFile(
+  botToken: string,
+  fileId: string,
+): Promise<TelegramFile> {
+  return callTelegramApi<TelegramFile>(botToken, "getFile", { file_id: fileId });
+}
+
+export async function downloadFile(
+  botToken: string,
+  filePath: string,
+): Promise<Buffer> {
+  const url = `${TELEGRAM_API_BASE}/file/bot${botToken}/${filePath}`;
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(TELEGRAM_FILE_DOWNLOAD_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    throw new TelegramApiError({
+      method: "downloadFile",
+      status_code: response.status,
+      description: `HTTP ${response.status}`,
+    });
+  }
+
+  return Buffer.from(await response.arrayBuffer());
+}
+
+export type TelegramPhotoInput =
+  | { kind: "url"; url: string }
+  | { kind: "buffer"; buffer: Buffer; filename: string; mimeType: string };
+
+export async function sendPhoto(
+  botToken: string,
+  chatId: number | string,
+  photo: TelegramPhotoInput,
+  caption?: string,
+): Promise<TelegramSendMessageResult> {
+  if (photo.kind === "url") {
+    return callTelegramApi<TelegramSendMessageResult>(botToken, "sendPhoto", {
+      chat_id: chatId,
+      photo: photo.url,
+      ...(caption ? { caption: clampTelegramText(caption, TELEGRAM_MAX_CAPTION_LEN) } : {}),
+    });
+  }
+
+  const formData = new FormData();
+  formData.set("chat_id", String(chatId));
+  formData.set(
+    "photo",
+    new Blob([Uint8Array.from(photo.buffer)], { type: photo.mimeType }),
+    photo.filename,
+  );
+  if (caption) {
+    formData.set("caption", clampTelegramText(caption, TELEGRAM_MAX_CAPTION_LEN));
+  }
+
+  const apiUrl = `${TELEGRAM_API_BASE}/bot${botToken}/sendPhoto`;
+  const response = await fetch(apiUrl, {
+    method: "POST",
+    body: formData,
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  let payload: TelegramApiResponse<TelegramSendMessageResult> | null = null;
+  try {
+    payload = (await response.json()) as TelegramApiResponse<TelegramSendMessageResult>;
+  } catch {
+    payload = null;
+  }
+
+  if (!payload || !payload.ok || payload.result === undefined) {
+    const statusCode = typeof payload?.error_code === "number" ? payload.error_code : response.status;
+    const description =
+      typeof payload?.description === "string"
+        ? payload.description
+        : `HTTP ${response.status}`;
+    const retryAfter =
+      typeof payload?.parameters?.retry_after === "number"
+        ? payload.parameters.retry_after
+        : undefined;
+    throw new TelegramApiError({
+      method: "sendPhoto",
+      status_code: statusCode,
+      description,
+      retry_after: retryAfter,
+    });
+  }
+
+  return payload.result;
 }

@@ -57,6 +57,7 @@ export interface PlatformAdapter<
     payload: TPayload,
   ): ExtractMessageResult<TMessage> | Promise<ExtractMessageResult<TMessage>>;
   sendReply(message: TMessage, replyText: string): Promise<void>;
+  sendReplyRich?(message: TMessage, reply: ChannelReply): Promise<void>;
   buildGatewayMessages?(
     message: TMessage,
   ): Promise<GatewayMessage[]> | GatewayMessage[];
