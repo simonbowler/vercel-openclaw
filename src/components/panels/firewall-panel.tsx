@@ -47,6 +47,7 @@ export function FirewallPanel({
   const [eventPage, setEventPage] = useState(0);
   const [eventCategoryFilter, setEventCategoryFilter] = useState<string | null>(null);
   const [report, setReport] = useState<FirewallReportPayload | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [syncIndicator, setSyncIndicator] = useState<{ ok: boolean; reason?: string } | null>(null);
   const [limitationsOpen, setLimitationsOpen] = useState(false);
   const { confirm: confirmPromote, dialogProps: promoteDialogProps } = useConfirm();
@@ -721,10 +722,13 @@ export function FirewallPanel({
             </div>
             <button
               className="button ghost"
-              disabled={busy}
-              onClick={() => void refresh()}
+              disabled={busy || refreshing}
+              onClick={() => {
+                setRefreshing(true);
+                void refresh().finally(() => setRefreshing(false));
+              }}
             >
-              Refresh
+              {refreshing ? "Refreshing\u2026" : "Refresh"}
             </button>
           </div>
 

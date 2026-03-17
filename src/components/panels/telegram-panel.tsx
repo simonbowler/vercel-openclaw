@@ -28,6 +28,7 @@ export function TelegramPanel({
   const [preview, setPreview] = useState<TelegramPreviewPayload | null>(null);
   const [editing, setEditing] = useState(false);
   const [panelError, setPanelError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const { confirm, dialogProps } = useConfirm();
 
   const tg = status.channels.telegram;
@@ -167,10 +168,13 @@ export function TelegramPanel({
             </button>
             <button
               className="button ghost"
-              disabled={busy}
-              onClick={() => void refresh()}
+              disabled={busy || refreshing}
+              onClick={() => {
+                setRefreshing(true);
+                void refresh().finally(() => setRefreshing(false));
+              }}
             >
-              Refresh
+              {refreshing ? "Refreshing\u2026" : "Refresh"}
             </button>
           </div>
         </div>

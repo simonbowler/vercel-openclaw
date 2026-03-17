@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { StatusBadge } from "@/components/ui/badge";
 import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
 import type { StatusPayload, RunAction } from "@/components/admin-types";
@@ -14,6 +15,14 @@ export function StatusPanel({ status, busy, runAction }: StatusPanelProps) {
   const { confirm: confirmStop, dialogProps: stopDialogProps } = useConfirm();
   const { confirm: confirmSnapshot, dialogProps: snapshotDialogProps } =
     useConfirm();
+  const [optimisticStatus, setOptimisticStatus] = useState<string | null>(null);
+
+  // Clear optimistic override when server status actually changes
+  useEffect(() => {
+    if (optimisticStatus && status.status !== optimisticStatus) {
+      setOptimisticStatus(null);
+    }
+  }, [status.status, optimisticStatus]);
 
   async function handleStop(): Promise<void> {
     const ok = await confirmStop({
@@ -24,6 +33,7 @@ export function StatusPanel({ status, busy, runAction }: StatusPanelProps) {
       variant: "danger",
     });
     if (!ok) return;
+    setOptimisticStatus("snapshotting");
     void runAction("/api/admin/stop", {
       label: "Stop sandbox",
       method: "POST",
@@ -38,6 +48,7 @@ export function StatusPanel({ status, busy, runAction }: StatusPanelProps) {
       confirmLabel: "Take snapshot",
     });
     if (!ok) return;
+    setOptimisticStatus("snapshotting");
     void runAction("/api/admin/snapshot", {
       label: "Take snapshot",
       method: "POST",
@@ -51,7 +62,7 @@ export function StatusPanel({ status, busy, runAction }: StatusPanelProps) {
           <p className="eyebrow">Sandbox</p>
           <h2>Sandbox status</h2>
         </div>
-        <StatusBadge status={status.status} />
+        <StatusBadge status={optimisticStatus ?? status.status} />
       </div>
 
       <dl className="metrics-grid">

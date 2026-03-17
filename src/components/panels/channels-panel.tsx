@@ -68,6 +68,7 @@ export function ChannelsPanel({
 }: ChannelsPanelProps) {
   const [summary, setSummary] = useState<ChannelSummary | null>(null);
   const [preflight, setPreflight] = useState<PreflightData | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,14 +81,13 @@ export function ChannelsPanel({
     return () => { cancelled = true; };
   }, []);
 
-  function refreshPanelData(): void {
-    void Promise.all([
+  async function refreshPanelData(): Promise<void> {
+    const [nextSummary, nextPreflight] = await Promise.all([
       loadChannelSummary().catch(() => null),
       loadPreflightData().catch(() => null),
-    ]).then(([nextSummary, nextPreflight]) => {
-      if (nextSummary) setSummary(nextSummary);
-      if (nextPreflight) setPreflight(nextPreflight);
-    });
+    ]);
+    if (nextSummary) setSummary(nextSummary);
+    if (nextPreflight) setPreflight(nextPreflight);
   }
 
   const totalQueue =
@@ -116,13 +116,14 @@ export function ChannelsPanel({
           )}
           <button
             className="button ghost"
-            disabled={busy}
+            disabled={busy || refreshing}
             onClick={() => {
-              void refresh();
-              refreshPanelData();
+              setRefreshing(true);
+              void Promise.all([refresh(), refreshPanelData()])
+                .finally(() => setRefreshing(false));
             }}
           >
-            Refresh
+            {refreshing ? "Refreshing\u2026" : "Refresh"}
           </button>
         </div>
       </div>
