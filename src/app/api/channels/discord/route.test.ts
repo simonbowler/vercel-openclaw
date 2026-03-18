@@ -6,6 +6,12 @@ import {
   buildChannelConnectBlockedResponse,
 } from "@/server/channels/connectability";
 import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
+import { withHarness } from "@/test-utils/harness";
+import {
+  buildAuthGetRequest,
+  callRoute,
+  getDiscordChannelRoute,
+} from "@/test-utils/route-caller";
 
 afterEach(() => {
   _setAiGatewayTokenOverrideForTesting(null);
@@ -61,4 +67,62 @@ test("discord 409 response body matches expected shape", async () => {
   assert.equal(payload.connectability.channel, "discord");
   assert.equal(payload.connectability.canConnect, false);
   assert.ok(payload.connectability.issues.length > 0);
+});
+
+test("discord GET diagnostics reports endpoint drift", async () => {
+  await withHarness(async (h) => {
+    await h.mutateMeta((meta) => {
+      meta.channels.discord = {
+        publicKey: "pub-key",
+        applicationId: "app-123",
+        botToken: "bot-token",
+        configuredAt: Date.now(),
+        endpointConfigured: true,
+        endpointUrl: "https://old.example.com/api/channels/discord/webhook",
+        commandRegistered: true,
+        commandId: "cmd-123",
+      };
+    });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = h.fakeFetch.fetch;
+    h.fakeFetch.onGet(/discord\.com\/api\/v10\/applications\/@me/, () =>
+      Response.json({
+        id: "app-123",
+        verify_key: "pub-key",
+        interactions_endpoint_url:
+          "https://old.example.com/api/channels/discord/webhook",
+      }),
+    );
+
+    try {
+      const route = getDiscordChannelRoute();
+      const request = buildAuthGetRequest("/api/channels/discord?diagnostics=1", {
+        host: "new.example.com",
+        "x-forwarded-host": "new.example.com",
+        "x-forwarded-proto": "https",
+      });
+      const result = await callRoute(route.GET!, request);
+
+      assert.equal(result.status, 200);
+      const body = result.json as {
+        diagnostics?: {
+          currentEndpointUrl: string | null;
+          desiredEndpointUrl: string;
+          endpointDrift: boolean;
+        };
+      };
+      assert.equal(
+        body.diagnostics?.currentEndpointUrl,
+        "https://old.example.com/api/channels/discord/webhook",
+      );
+      assert.equal(
+        body.diagnostics?.desiredEndpointUrl,
+        "https://new.example.com/api/channels/discord/webhook",
+      );
+      assert.equal(body.diagnostics?.endpointDrift, true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
