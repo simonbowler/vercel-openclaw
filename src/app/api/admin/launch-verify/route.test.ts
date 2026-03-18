@@ -11,7 +11,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { withHarness } from "@/test-utils/harness";
-import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
 import {
   callRoute,
   buildPostRequest,
@@ -27,14 +26,15 @@ import type {
 } from "@/shared/launch-verification";
 
 /**
- * Helper: make preflight fail fast on the ai-gateway check.
- * Clears the AI gateway token so getAiGatewayAuthMode() returns "unavailable",
- * which is a hard fail in the preflight "ai-gateway" check.
+ * Helper: make preflight fail fast on the auth-config check.
+ * Sets sign-in-with-vercel mode without the required OAuth client ID,
+ * which is a hard fail regardless of Vercel/non-Vercel environment.
  * Does NOT require VERCEL=1, so the memory store still works.
  */
 function makePreflightFail(): void {
-  delete process.env.AI_GATEWAY_API_KEY;
-  _setAiGatewayTokenOverrideForTesting(undefined);
+  process.env.VERCEL_AUTH_MODE = "sign-in-with-vercel";
+  delete process.env.NEXT_PUBLIC_VERCEL_APP_CLIENT_ID;
+  delete process.env.VERCEL_APP_CLIENT_SECRET;
 }
 
 // ===========================================================================
@@ -300,6 +300,39 @@ test("launch-verify POST: chatCompletions sends X-AI-Gateway-Token header", asyn
     }
     // Verify mode is still correctly parsed regardless of phase outcomes
     assert.equal(body.mode, "safe");
+  });
+});
+
+// ===========================================================================
+// OPENCLAW_PACKAGE_SPEC consistency: preflight phase reflects contract
+// ===========================================================================
+
+// Full package-spec fail/pass scenarios are tested at the server level in
+// deploy-preflight.test.ts (including cross-surface consistency with
+// connectability) to avoid global store singleton conflicts that arise from
+// setting VERCEL=1 in route-level tests with parallel test files.
+
+test("launch-verify POST: preflight error propagates contract check failures to phase output", async () => {
+  await withHarness(async () => {
+    // Make preflight fail via auth-config (missing OAuth client ID in
+    // sign-in-with-vercel mode). Verify the phase error includes the failing
+    // check ID — the same mechanism that surfaces any contract failure.
+    makePreflightFail();
+
+    const route = getAdminLaunchVerifyRoute();
+    const req = buildAuthPostRequest("/api/admin/launch-verify", "{}");
+    const result = await callRoute(route.POST, req);
+
+    const body = result.json as LaunchVerificationPayload;
+    const preflightPhase = body.phases.find((p) => p.id === "preflight");
+    assert.ok(preflightPhase, "expected preflight phase");
+    assert.equal(preflightPhase.status, "fail");
+    assert.ok(
+      preflightPhase.error?.includes("auth-config"),
+      `preflight error should include the failing check ID; got: ${preflightPhase.error}`,
+    );
+
+    await drainAfterCallbacks();
   });
 });
 

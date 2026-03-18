@@ -676,6 +676,7 @@ test("DEFAULT_REQUEST_TIMEOUT_MS is exported and positive", () => {
 test("destructive flow: channelWakeFromSleep skips gracefully when no channels configured", async () => {
   // Verify channelWakeFromSleep shows up in destructive mode and skips when no secrets available
   const fetchedUrls: string[] = [];
+  let sandboxToken = "fresh-token";
 
   const { createServer } = await import("node:http");
   const server = createServer((req, res) => {
@@ -692,7 +693,22 @@ test("destructive flow: channelWakeFromSleep skips gracefully when no channels c
     } else if (req.url === "/api/channels/summary") {
       res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
     } else if (req.url === "/api/admin/ssh") {
-      res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
+      let body = "";
+      req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+      req.on("end", () => {
+        const parsed = JSON.parse(body) as { command?: string };
+        if (parsed.command?.includes("printf '%s' 'STALE-EXPIRED-TOKEN'")) {
+          sandboxToken = "STALE-EXPIRED-TOKEN";
+          res.end(JSON.stringify({ stdout: "", stderr: "", exitCode: 0 }));
+          return;
+        }
+        if (parsed.command?.includes("cat /home/vercel-sandbox/.openclaw/.ai-gateway-api-key")) {
+          res.end(JSON.stringify({ stdout: `${sandboxToken}\n`, stderr: "", exitCode: 0 }));
+          return;
+        }
+        res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
+      });
+      return;
     } else if (req.url === "/api/admin/ensure") {
       res.end(JSON.stringify({ state: "running" }));
     } else if (req.url === "/api/admin/snapshot") {
@@ -741,11 +757,13 @@ test("destructive flow: channelWakeFromSleep skips gracefully when no channels c
   }
 });
 
-test("CLI: safe-only mode runs 8 phases, --destructive runs 13", async () => {
+test("CLI: safe-only mode runs 8 phases, --destructive runs 16", async () => {
   // We just test the safe count (already tested above) and verify --destructive
-  // adds 5 destructive phases (ensure, chatCompletions, channelRoundTrip, channelWakeFromSleep, chatCompletions)
+  // adds 8 destructive phases (ensure, chatCompletions, channelRoundTrip,
+  // channelWakeFromSleep, chatCompletions, and three per-channel self-heal phases)
   // by running with a mock server that handles the destructive endpoints.
   const { createServer } = await import("node:http");
+  let sandboxToken = "fresh-token";
   const server = createServer((req, res) => {
     res.setHeader("Content-Type", "application/json");
     if (req.url === "/api/health") {
@@ -761,7 +779,22 @@ test("CLI: safe-only mode runs 8 phases, --destructive runs 13", async () => {
     } else if (req.url === "/api/channels/summary") {
       res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
     } else if (req.url === "/api/admin/ssh") {
-      res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
+      let body = "";
+      req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
+      req.on("end", () => {
+        const parsed = JSON.parse(body) as { command?: string };
+        if (parsed.command?.includes("printf '%s' 'STALE-EXPIRED-TOKEN'")) {
+          sandboxToken = "STALE-EXPIRED-TOKEN";
+          res.end(JSON.stringify({ stdout: "", stderr: "", exitCode: 0 }));
+          return;
+        }
+        if (parsed.command?.includes("cat /home/vercel-sandbox/.openclaw/.ai-gateway-api-key")) {
+          res.end(JSON.stringify({ stdout: `${sandboxToken}\n`, stderr: "", exitCode: 0 }));
+          return;
+        }
+        res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
+      });
+      return;
     } else if (req.url === "/api/admin/ensure") {
       // Already running
       res.end(JSON.stringify({ state: "running" }));
@@ -785,12 +818,15 @@ test("CLI: safe-only mode runs 8 phases, --destructive runs 13", async () => {
 
     const report = JSON.parse(result.stdout);
     assert.equal(report.passed, true);
-    assert.equal(report.phases.length, 13);
+    assert.equal(report.phases.length, 16);
 
     // Verify destructive phase names are present
     const names = report.phases.map((p: PhaseResult) => p.phase);
     assert.ok(names.includes("ensureRunning"));
     assert.ok(names.includes("channelWakeFromSleep"));
+    assert.ok(names.includes("selfHealTokenRefresh:slack"));
+    assert.ok(names.includes("selfHealTokenRefresh:telegram"));
+    assert.ok(names.includes("selfHealTokenRefresh:discord"));
     // chatCompletions appears multiple times (safe + destructive)
     assert.ok(names.filter((n: string) => n === "chatCompletions").length >= 2);
 

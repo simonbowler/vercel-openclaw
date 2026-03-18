@@ -8,6 +8,7 @@
 import { authHeaders, getAuthSource } from "./remote-auth.js";
 import {
   buildSlackSmokePayload,
+  buildDiscordSmokePayload,
   buildTelegramSmokePayload,
 } from "./remote-crypto.js";
 
@@ -584,7 +585,7 @@ async function removeTestChannels(
  */
 async function sendSmokeWebhook(
   baseUrl: string,
-  channel: "slack" | "telegram",
+  channel: "slack" | "telegram" | "discord",
   payloadBody: string,
   requestTimeoutMs: number,
 ): Promise<{ configured: boolean; sent: boolean; status?: number } | null> {
@@ -640,11 +641,13 @@ export async function channelRoundTrip(baseUrl: string, opts?: PhaseOptions & { 
     // 1. Try sending smoke webhooks (signed + delivered server-side)
     const slackPayload = buildSlackSmokePayload().body;
     const telegramPayload = buildTelegramSmokePayload();
+    const discordPayload = buildDiscordSmokePayload();
 
     let slackResult = await sendSmokeWebhook(baseUrl, "slack", slackPayload, reqTimeout);
     let telegramResult = await sendSmokeWebhook(baseUrl, "telegram", telegramPayload, reqTimeout);
+    let discordResult = await sendSmokeWebhook(baseUrl, "discord", discordPayload, reqTimeout);
 
-    if (!slackResult && !telegramResult) {
+    if (!slackResult && !telegramResult && !discordResult) {
       log(phase, "skipped", { reason: "smoke-webhook-endpoint-unavailable" });
       return {
         phase, passed: true, durationMs: 0, endpoint,
@@ -654,10 +657,14 @@ export async function channelRoundTrip(baseUrl: string, opts?: PhaseOptions & { 
 
     let hasSlack = slackResult?.configured === true && slackResult.sent === true;
     let hasTelegram = telegramResult?.configured === true && telegramResult.sent === true;
+    let hasDiscord = discordResult?.configured === true && discordResult.sent === true;
 
-    if (!hasSlack && !hasTelegram) {
+    if (!hasSlack && !hasTelegram && !hasDiscord) {
       // Channels not configured — auto-configure test channels and retry
-      const noneConfigured = (slackResult?.configured === false) && (telegramResult?.configured === false);
+      const noneConfigured =
+        slackResult?.configured === false &&
+        telegramResult?.configured === false &&
+        discordResult?.configured === false;
       if (noneConfigured) {
         log(phase, "auto-configuring", { reason: "no-channels-configured" });
         const configured = await configureTestChannels(baseUrl, reqTimeout);
@@ -673,19 +680,26 @@ export async function channelRoundTrip(baseUrl: string, opts?: PhaseOptions & { 
         // Retry with fresh payloads
         const retrySlackPayload = buildSlackSmokePayload().body;
         const retryTelegramPayload = buildTelegramSmokePayload();
+        const retryDiscordPayload = buildDiscordSmokePayload();
         slackResult = await sendSmokeWebhook(baseUrl, "slack", retrySlackPayload, reqTimeout);
         telegramResult = await sendSmokeWebhook(baseUrl, "telegram", retryTelegramPayload, reqTimeout);
+        discordResult = await sendSmokeWebhook(baseUrl, "discord", retryDiscordPayload, reqTimeout);
         hasSlack = slackResult?.configured === true && slackResult.sent === true;
         hasTelegram = telegramResult?.configured === true && telegramResult.sent === true;
+        hasDiscord = discordResult?.configured === true && discordResult.sent === true;
       }
 
-      if (!hasSlack && !hasTelegram) {
-        log(phase, "send-failed", { slack: slackResult, telegram: telegramResult });
+      if (!hasSlack && !hasTelegram && !hasDiscord) {
+        log(phase, "send-failed", {
+          slack: slackResult,
+          telegram: telegramResult,
+          discord: discordResult,
+        });
         return {
           phase, passed: false, durationMs: 0, endpoint,
           error: "Failed to send smoke webhooks",
           errorCode: "WEBHOOK_SEND_FAILED",
-          detail: { slack: slackResult, telegram: telegramResult },
+          detail: { slack: slackResult, telegram: telegramResult, discord: discordResult },
         };
       }
     }
@@ -694,6 +708,7 @@ export async function channelRoundTrip(baseUrl: string, opts?: PhaseOptions & { 
     const baselineSummary = await fetchChannelSummary(baseUrl, reqTimeout);
     const baselineSlackDL = baselineSummary?.slack?.deadLetterCount ?? 0;
     const baselineTelegramDL = baselineSummary?.telegram?.deadLetterCount ?? 0;
+    const baselineDiscordDL = baselineSummary?.discord?.deadLetterCount ?? 0;
 
     const results: Record<string, { sent: boolean; drained: boolean; deadLetterDelta: number; durationMs: number; error?: string }> = {};
     const t0 = performance.now();
@@ -703,6 +718,9 @@ export async function channelRoundTrip(baseUrl: string, opts?: PhaseOptions & { 
     }
     if (hasTelegram) {
       results.telegram = { sent: true, drained: false, deadLetterDelta: 0, durationMs: 0 };
+    }
+    if (hasDiscord) {
+      results.discord = { sent: true, drained: false, deadLetterDelta: 0, durationMs: 0 };
     }
 
     // 4. Poll until queues drain
@@ -734,7 +752,21 @@ export async function channelRoundTrip(baseUrl: string, opts?: PhaseOptions & { 
         }
       }
 
-      log(phase, "poll", { slackQueue: summary.slack?.queueDepth, telegramQueue: summary.telegram?.queueDepth });
+      if (hasDiscord && results.discord?.sent) {
+        if (summary.discord?.queueDepth === 0) {
+          results.discord.drained = true;
+          results.discord.deadLetterDelta =
+            (summary.discord?.deadLetterCount ?? 0) - baselineDiscordDL;
+        } else {
+          allDrained = false;
+        }
+      }
+
+      log(phase, "poll", {
+        slackQueue: summary.slack?.queueDepth,
+        telegramQueue: summary.telegram?.queueDepth,
+        discordQueue: summary.discord?.queueDepth,
+      });
 
       if (allDrained) break;
       delay = Math.min(delay * 1.5, 10_000);
@@ -1315,23 +1347,26 @@ async function sshCommand(
   }
 }
 
-/**
- * Simulates OIDC token expiry by corrupting the AI gateway key file and
- * killing the gateway process, then sends a Telegram smoke webhook and
- * verifies the self-healing pipeline recovers:
- *
- *   1. Gateway call fails (503/500 — dead or stale-token gateway)
- *   2. Pipeline force-refreshes the OIDC token on disk
- *   3. Startup script restarts the gateway with the fresh token
- *   4. Pipeline waits for gateway readiness, retries the gateway call
- *   5. Reply is delivered (queue drains without dead-letter)
- */
+export type SelfHealChannel = "slack" | "telegram" | "discord";
+
+function buildSelfHealPayload(channel: SelfHealChannel): string {
+  switch (channel) {
+    case "slack":
+      return buildSlackSmokePayload().body;
+    case "telegram":
+      return buildTelegramSmokePayload();
+    case "discord":
+      return buildDiscordSmokePayload();
+  }
+}
+
 export async function selfHealTokenRefresh(
   baseUrl: string,
   pollTimeoutMs: number,
+  channel: SelfHealChannel,
   opts?: PhaseOptions,
 ): Promise<PhaseResult> {
-  const phase = "selfHealTokenRefresh";
+  const phase = `selfHealTokenRefresh:${channel}`;
   const endpoint = "/api/admin/ssh";
   const reqTimeout = opts?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
@@ -1356,14 +1391,7 @@ export async function selfHealTokenRefresh(
     }
     log(phase, "pre-check-ok", { status: preCheck.status });
 
-    // Step 2: Corrupt the token file on disk so it differs from the fresh OIDC
-    // token. When ensureFreshGatewayToken runs during the Telegram queue consumer,
-    // it will detect the mismatch and perform a full refresh: write the fresh
-    // token, restart the gateway with env -u, and wait for readiness.
-    //
-    // The running gateway still works (it has the good token in memory), but after
-    // the restart it picks up the fresh file-based token via the app's env -u
-    // startup path — proving the full refresh cycle works end to end.
+    // Step 2: Corrupt the token file on disk so it differs from the fresh OIDC token.
     const corruptCmd = `printf '%s' 'STALE-EXPIRED-TOKEN' > ${SANDBOX_AI_KEY_PATH}`;
     const corruptResult = await sshCommand(baseUrl, corruptCmd, reqTimeout);
     if (!corruptResult) {
@@ -1388,15 +1416,25 @@ export async function selfHealTokenRefresh(
 
     // Step 4: Read baseline queue state
     const baselineSummary = await fetchChannelSummary(baseUrl, reqTimeout);
-    const baselineDL = baselineSummary?.telegram?.deadLetterCount ?? 0;
+    const channelSummary = baselineSummary?.[channel];
+    if (!channelSummary?.connected) {
+      return {
+        phase,
+        passed: true,
+        durationMs: 0,
+        endpoint,
+        detail: { skipped: true, reason: "channel_not_configured" },
+      };
+    }
+    const baselineDL = channelSummary.deadLetterCount ?? 0;
 
-    // Step 5: Send a Telegram smoke webhook
-    const telegramPayload = buildTelegramSmokePayload();
-    const sendResult = await sendSmokeWebhook(baseUrl, "telegram", telegramPayload, reqTimeout);
+    // Step 5: Send a smoke webhook for the selected channel
+    const payload = buildSelfHealPayload(channel);
+    const sendResult = await sendSmokeWebhook(baseUrl, channel, payload, reqTimeout);
     if (!sendResult?.sent) {
       return {
         phase, passed: false, durationMs: 0, endpoint,
-        error: "Failed to send Telegram smoke webhook",
+        error: `Failed to send ${channel} smoke webhook`,
         errorCode: "WEBHOOK_SEND_FAILED",
         detail: { sendResult },
       };
@@ -1411,14 +1449,15 @@ export async function selfHealTokenRefresh(
     while (Date.now() < deadline) {
       await sleep(delay);
       const summary = await fetchChannelSummary(baseUrl, reqTimeout);
-      if (!summary?.telegram || summary.telegram.queueDepth > 0) {
-        log(phase, "poll", { telegramQueue: summary?.telegram?.queueDepth });
+      const state = summary?.[channel];
+      if (!state || state.queueDepth > 0) {
+        log(phase, "poll", { channel, queueDepth: state?.queueDepth });
         delay = Math.min(delay * HEAL_POLL_BACKOFF, HEAL_POLL_MAX_MS);
         continue;
       }
 
       // Queue drained — check for dead letters
-      const dlDelta = (summary.telegram.deadLetterCount ?? 0) - baselineDL;
+      const dlDelta = (state.deadLetterCount ?? 0) - baselineDL;
       const totalMs = Math.round(performance.now() - t0);
 
       if (dlDelta > 0) {
@@ -1454,6 +1493,7 @@ export async function selfHealTokenRefresh(
         durationMs: totalMs,
         endpoint,
         detail: {
+          channel,
           gatewayRecovered,
           postCheckStatus: postCheck?.status,
           deadLetterDelta: dlDelta,

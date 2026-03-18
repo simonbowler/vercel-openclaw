@@ -66,6 +66,7 @@ export async function POST(request: Request): Promise<Response> {
             error: probe.error,
           },
           restoreMetrics: meta.lastRestoreMetrics ?? undefined,
+          restoreHistory: meta.restoreHistory,
         },
         { status: 200 },
       );

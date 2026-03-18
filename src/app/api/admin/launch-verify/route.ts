@@ -3,7 +3,13 @@ import {
   requireJsonRouteAuth,
   requireMutationAuth,
 } from "@/server/auth/route-auth";
-import { buildDeployPreflight } from "@/server/deploy-preflight";
+import {
+  buildDeployPreflight,
+  getLaunchVerifyBlocking,
+  LAUNCH_VERIFY_SKIP_PHASE_IDS,
+  type LaunchVerifyBlockingResult,
+  type PreflightPayload,
+} from "@/server/deploy-preflight";
 import { logInfo, logError } from "@/server/log";
 import { getPublicOrigin } from "@/server/public-url";
 import {
@@ -67,6 +73,77 @@ async function runPhase(
 function skipPhase(id: LaunchVerificationPhaseId, message: string): LaunchVerificationPhase {
   logInfo(`launch_verify.phase_skip`, { phase: id });
   return { id, status: "skip", durationMs: 0, message };
+}
+
+/**
+ * Evaluate the preflight phase: build the preflight payload, check for
+ * blocking failures via the canonical helper, and return both the phase
+ * result and the blocking decision.
+ *
+ * This is extracted from `runPhase` so both JSON and NDJSON paths can
+ * access the blocking result without re-computing preflight.
+ */
+async function evaluatePreflight(request: Request): Promise<{
+  phase: LaunchVerificationPhase;
+  blocking: LaunchVerifyBlockingResult;
+}> {
+  const start = Date.now();
+  let preflight: PreflightPayload;
+  try {
+    preflight = await buildDeployPreflight(request);
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    logError("launch_verify.phase_fail", { phase: "preflight", error: errMsg });
+    return {
+      phase: {
+        id: "preflight",
+        status: "fail",
+        durationMs: Date.now() - start,
+        message: "Phase preflight failed.",
+        error: errMsg,
+      },
+      blocking: {
+        blocking: true,
+        failingCheckIds: [],
+        errorMessage: errMsg,
+        skipPhaseIds: LAUNCH_VERIFY_SKIP_PHASE_IDS,
+      },
+    };
+  }
+
+  const blocking = getLaunchVerifyBlocking(preflight);
+
+  if (blocking.blocking) {
+    logError("launch_verify.phase_fail", { phase: "preflight", error: blocking.errorMessage });
+    return {
+      phase: {
+        id: "preflight",
+        status: "fail",
+        durationMs: Date.now() - start,
+        message: "Phase preflight failed.",
+        error: blocking.errorMessage,
+      },
+      blocking,
+    };
+  }
+
+  const channelWarnings = Object.values(preflight.channels ?? {}).filter(
+    (ch) => ch.status === "fail",
+  );
+  if (channelWarnings.length > 0) {
+    logInfo("launch_verify.preflight_channel_warnings", {
+      channels: channelWarnings.map((ch) => ch.channel),
+    });
+  }
+
+  const phase: LaunchVerificationPhase = {
+    id: "preflight",
+    status: "pass",
+    durationMs: Date.now() - start,
+    message: `All ${preflight.checks.length} config checks passed.`,
+  };
+  logInfo("launch_verify.phase_pass", { phase: "preflight", durationMs: phase.durationMs });
+  return { phase, blocking };
 }
 
 // NDJSON stream event types
@@ -138,37 +215,13 @@ function buildStreamingResponse(
       const phases: LaunchVerificationPhase[] = [];
 
       emitRunning("preflight");
-      const preflightPhase = await runPhase("preflight", async () => {
-        const preflight = await buildDeployPreflight(request);
-        const configCheckFailures = preflight.checks.filter(
-          (c) => c.status === "fail",
-        );
-        if (configCheckFailures.length > 0) {
-          const failingIds = configCheckFailures.map((c) => c.id);
-          const failingActions = preflight.actions
-            .filter((a) => a.status === "required")
-            .map((a) => a.remediation);
-          throw new Error(
-            `Preflight config checks failed: ${failingIds.join(", ")}. ${failingActions.join(" ")}`,
-          );
-        }
-        const channelWarnings = Object.values(preflight.channels ?? {}).filter(
-          (ch) => ch.status === "fail",
-        );
-        if (channelWarnings.length > 0) {
-          logInfo("launch_verify.preflight_channel_warnings", {
-            channels: channelWarnings.map((ch) => ch.channel),
-          });
-        }
-        return `All ${preflight.checks.length} config checks passed.`;
-      });
+      const { phase: preflightPhase, blocking } = await evaluatePreflight(request);
       phases.push(preflightPhase);
       emit({ type: "phase", phase: preflightPhase });
 
-      if (preflightPhase.status === "fail") {
-        const skips: LaunchVerificationPhaseId[] = ["queuePing", "ensureRunning", "chatCompletions", "wakeFromSleep"];
-        for (const id of skips) {
-          const s = skipPhase(id, "Skipped: preflight failed.");
+      if (blocking.blocking) {
+        for (const id of blocking.skipPhaseIds) {
+          const s = skipPhase(id as LaunchVerificationPhaseId, "Skipped: preflight failed.");
           phases.push(s);
           emit({ type: "phase", phase: s });
         }
@@ -331,37 +384,13 @@ async function buildJsonResponse(
 ): Promise<Response> {
   const phases: LaunchVerificationPhase[] = [];
 
-  const preflightPhase = await runPhase("preflight", async () => {
-    const preflight = await buildDeployPreflight(request);
-    const configCheckFailures = preflight.checks.filter(
-      (c) => c.status === "fail",
-    );
-    if (configCheckFailures.length > 0) {
-      const failingIds = configCheckFailures.map((c) => c.id);
-      const failingActions = preflight.actions
-        .filter((a) => a.status === "required")
-        .map((a) => a.remediation);
-      throw new Error(
-        `Preflight config checks failed: ${failingIds.join(", ")}. ${failingActions.join(" ")}`,
-      );
-    }
-    const channelWarnings = Object.values(preflight.channels ?? {}).filter(
-      (ch) => ch.status === "fail",
-    );
-    if (channelWarnings.length > 0) {
-      logInfo("launch_verify.preflight_channel_warnings", {
-        channels: channelWarnings.map((ch) => ch.channel),
-      });
-    }
-    return `All ${preflight.checks.length} config checks passed.`;
-  });
+  const { phase: preflightPhase, blocking } = await evaluatePreflight(request);
   phases.push(preflightPhase);
 
-  if (preflightPhase.status === "fail") {
-    phases.push(skipPhase("queuePing", "Skipped: preflight failed."));
-    phases.push(skipPhase("ensureRunning", "Skipped: preflight failed."));
-    phases.push(skipPhase("chatCompletions", "Skipped: preflight failed."));
-    phases.push(skipPhase("wakeFromSleep", "Skipped: preflight failed."));
+  if (blocking.blocking) {
+    for (const id of blocking.skipPhaseIds) {
+      phases.push(skipPhase(id as LaunchVerificationPhaseId, "Skipped: preflight failed."));
+    }
     const payload: LaunchVerificationPayload = {
       ok: false, mode, startedAt,
       completedAt: new Date().toISOString(), phases,

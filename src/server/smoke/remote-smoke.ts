@@ -159,9 +159,11 @@ function buildPhaseList(destructive: boolean): PhaseFn[] {
     (b, t, _r) => channelWakeFromSleep(b, t, { requestTimeoutMs: 30_000 }),
     // Verify the woken sandbox can still answer questions
     (b, _t, _r) => chatCompletions(b, { requestTimeoutMs: 60_000 }),
-    // Self-healing: corrupt the gateway token, kill the gateway,
-    // send a Telegram webhook, and verify the pipeline self-repairs
-    (b, t, _r) => selfHealTokenRefresh(b, t, { requestTimeoutMs: 30_000 }),
+    // Self-healing: corrupt the gateway token, send a channel webhook,
+    // and verify the shared pipeline self-repairs for each channel
+    (b, t, _r) => selfHealTokenRefresh(b, t, "slack", { requestTimeoutMs: 30_000 }),
+    (b, t, _r) => selfHealTokenRefresh(b, t, "telegram", { requestTimeoutMs: 30_000 }),
+    (b, t, _r) => selfHealTokenRefresh(b, t, "discord", { requestTimeoutMs: 30_000 }),
   ];
 
   return [...safe, ...destroy];
