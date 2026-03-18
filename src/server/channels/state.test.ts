@@ -115,7 +115,10 @@ test("configured slack returns correct public shape", async () => {
 test("configured telegram returns correct public shape", async () => {
   await withHarness(async (h) => {
     await h.mutateMeta((meta) => {
-      meta.channels.telegram = makeTelegramConfig();
+      meta.channels.telegram = makeTelegramConfig({
+        commandSyncStatus: "synced",
+        commandsRegisteredAt: 2500,
+      });
     });
     const meta = await h.getMeta();
     const state = await getPublicChannelState(makeRequest(), meta);
@@ -124,6 +127,8 @@ test("configured telegram returns correct public shape", async () => {
     assert.equal(state.telegram.botUsername, "test_bot");
     assert.equal(state.telegram.configuredAt, 2000);
     assert.equal(state.telegram.status, "connected");
+    assert.equal(state.telegram.commandSyncStatus, "synced");
+    assert.equal(state.telegram.commandsRegisteredAt, 2500);
     assert.ok(state.telegram.webhookUrl);
   });
 });
@@ -141,6 +146,23 @@ test("telegram with lastError shows error status", async () => {
   });
 });
 
+test("telegram command sync error is reflected in public state", async () => {
+  await withHarness(async (h) => {
+    await h.mutateMeta((meta) => {
+      meta.channels.telegram = makeTelegramConfig({
+        commandSyncStatus: "error",
+        commandSyncError: "sync failed",
+      });
+    });
+    const meta = await h.getMeta();
+    const state = await getPublicChannelState(makeRequest(), meta);
+
+    assert.equal(state.telegram.commandSyncStatus, "error");
+    assert.equal(state.telegram.commandSyncError, "sync failed");
+    assert.equal(state.telegram.commandsRegisteredAt, null);
+  });
+});
+
 test("unconfigured telegram shows disconnected status and null webhookUrl", async () => {
   await withHarness(async (h) => {
     const meta = await h.getMeta();
@@ -148,6 +170,9 @@ test("unconfigured telegram shows disconnected status and null webhookUrl", asyn
 
     assert.equal(state.telegram.status, "disconnected");
     assert.equal(state.telegram.webhookUrl, null);
+    assert.equal(state.telegram.commandSyncStatus, "unsynced");
+    assert.equal(state.telegram.commandsRegisteredAt, null);
+    assert.equal(state.telegram.commandSyncError, null);
   });
 });
 

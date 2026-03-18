@@ -5,7 +5,6 @@ import { toPlainText } from "@/server/channels/core/reply";
 import { startKeepAlive } from "@/server/channels/core/processing-indicator";
 import { RetryableSendError } from "@/server/channels/core/types";
 import type {
-  ChannelReply,
   GatewayMessage,
   PlatformAdapter,
 } from "@/server/channels/core/types";
@@ -26,6 +25,27 @@ export interface TelegramExtractedMessage {
   chatId: string;
   photoFileId?: string;
   history?: Array<{ role: "user" | "assistant"; content: string }>;
+}
+
+export function normalizeTelegramSlashCommand(
+  rawText: string,
+  botUsername: string,
+): { shouldHandle: boolean; text: string } {
+  const trimmed = rawText.trim();
+  const match = /^\/([a-z0-9_]+)(?:@([a-z0-9_]+))?(?:\s+(.*))?$/iu.exec(trimmed);
+  if (!match) {
+    return { shouldHandle: true, text: rawText };
+  }
+
+  const [, command, mentionedBot, args = ""] = match;
+  if (mentionedBot && mentionedBot.toLowerCase() !== botUsername.toLowerCase()) {
+    return { shouldHandle: false, text: rawText };
+  }
+
+  return {
+    shouldHandle: true,
+    text: `/${command}${args.length > 0 ? ` ${args}` : ""}`,
+  };
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
@@ -173,6 +193,7 @@ export function createTelegramAdapter(
     extractMessage(payload: unknown) {
       const text = extractTelegramText(payload);
       const photoFileId = extractTelegramPhotoFileId(payload);
+      const caption = extractTelegramCaption(payload);
 
       if (!text && !photoFileId) {
         return { kind: "skip", reason: "no_text" } as const;
@@ -183,12 +204,16 @@ export function createTelegramAdapter(
         return { kind: "fail", reason: "no_chat_id" } as const;
       }
 
-      const caption = extractTelegramCaption(payload);
+      const rawMessageText = text ?? caption ?? "";
+      const normalized = normalizeTelegramSlashCommand(rawMessageText, config.botUsername);
+      if (!normalized.shouldHandle) {
+        return { kind: "skip", reason: "command_for_other_bot" } as const;
+      }
 
       return {
         kind: "message",
         message: {
-          text: text ?? caption ?? "",
+          text: normalized.text,
           chatId,
           ...(photoFileId ? { photoFileId } : {}),
         },

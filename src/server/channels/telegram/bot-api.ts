@@ -26,6 +26,11 @@ type TelegramApiResponse<T> = {
   };
 };
 
+export type TelegramBotCommand = {
+  command: string;
+  description: string;
+};
+
 export class TelegramApiError extends Error {
   readonly method: string;
   readonly status_code: number;
@@ -149,6 +154,19 @@ export type TelegramWebhookInfo = {
 
 export async function getWebhookInfo(botToken: string): Promise<TelegramWebhookInfo> {
   return callTelegramApi<TelegramWebhookInfo>(botToken, "getWebhookInfo");
+}
+
+export async function setMyCommands(
+  botToken: string,
+  commands: TelegramBotCommand[],
+): Promise<void> {
+  await callTelegramApi(botToken, "setMyCommands", { commands });
+}
+
+export async function getMyCommands(
+  botToken: string,
+): Promise<TelegramBotCommand[]> {
+  return callTelegramApi<TelegramBotCommand[]>(botToken, "getMyCommands");
 }
 
 export async function deleteWebhook(botToken: string): Promise<void> {

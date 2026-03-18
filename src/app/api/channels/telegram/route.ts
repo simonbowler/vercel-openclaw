@@ -5,6 +5,7 @@ import {
   buildChannelConnectBlockedResponse,
 } from "@/server/channels/connectability";
 import { getMe, getWebhookInfo, deleteWebhook, setWebhook } from "@/server/channels/telegram/bot-api";
+import { syncTelegramCommands } from "@/server/channels/telegram/commands";
 import {
   createTelegramWebhookSecret,
   getPublicChannelState,
@@ -68,6 +69,18 @@ export async function PUT(request: Request): Promise<Response> {
     await setWebhook(botToken, webhookUrl, webhookSecret);
 
     const now = Date.now();
+    let commandSyncStatus: "synced" | "error" = "synced";
+    let commandSyncError: string | undefined;
+    let commandsRegisteredAt: number | undefined = now;
+
+    try {
+      await syncTelegramCommands(botToken);
+    } catch (error) {
+      commandSyncStatus = "error";
+      commandSyncError = error instanceof Error ? error.message : String(error);
+      commandsRegisteredAt = undefined;
+    }
+
     await setTelegramChannelConfig({
       botToken,
       webhookSecret,
@@ -76,6 +89,9 @@ export async function PUT(request: Request): Promise<Response> {
       webhookUrl,
       botUsername: bot.username ?? "",
       configuredAt: now,
+      commandSyncStatus,
+      commandsRegisteredAt,
+      commandSyncError,
     });
 
     const state = await getPublicChannelState(request);

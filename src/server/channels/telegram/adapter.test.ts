@@ -5,6 +5,7 @@ import { RetryableSendError } from "@/server/channels/core/types";
 import {
   createTelegramAdapter,
   isTelegramWebhookSecretValid,
+  normalizeTelegramSlashCommand,
 } from "@/server/channels/telegram/adapter";
 
 test("isTelegramWebhookSecretValid accepts current and unexpired previous secrets", () => {
@@ -50,6 +51,62 @@ test("createTelegramAdapter extracts chat text updates", async () => {
 
   assert.equal(result.message.text, "hello telegram");
   assert.equal(result.message.chatId, "42");
+});
+
+test("normalizeTelegramSlashCommand strips matching bot mention", () => {
+  assert.deepEqual(
+    normalizeTelegramSlashCommand("/ask@openclaw_bot hi there", "openclaw_bot"),
+    { shouldHandle: true, text: "/ask hi there" },
+  );
+});
+
+test("createTelegramAdapter skips slash commands addressed to another bot", async () => {
+  const adapter = createTelegramAdapter({
+    botToken: "bot-token",
+    webhookSecret: "secret",
+    webhookUrl: "https://example.com/api/channels/telegram/webhook",
+    botUsername: "openclaw_bot",
+    configuredAt: Date.now(),
+  });
+
+  const result = await adapter.extractMessage({
+    update_id: 1,
+    message: {
+      text: "/ask@other_bot hi",
+      chat: {
+        id: 42,
+      },
+    },
+  });
+
+  assert.deepEqual(result, { kind: "skip", reason: "command_for_other_bot" });
+});
+
+test("createTelegramAdapter normalizes matching slash commands in group chats", async () => {
+  const adapter = createTelegramAdapter({
+    botToken: "bot-token",
+    webhookSecret: "secret",
+    webhookUrl: "https://example.com/api/channels/telegram/webhook",
+    botUsername: "openclaw_bot",
+    configuredAt: Date.now(),
+  });
+
+  const result = await adapter.extractMessage({
+    update_id: 1,
+    message: {
+      text: "/ask@openclaw_bot hi",
+      chat: {
+        id: 42,
+      },
+    },
+  });
+
+  assert.equal(result.kind, "message");
+  if (result.kind !== "message") {
+    return;
+  }
+
+  assert.equal(result.message.text, "/ask hi");
 });
 
 test("createTelegramAdapter startProcessingIndicator triggers chat action immediately and stops cleanly", async () => {

@@ -29,6 +29,7 @@ export function TelegramPanel({
   const [editing, setEditing] = useState(false);
   const [panelError, setPanelError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncingCommands, setSyncingCommands] = useState(false);
   const { confirm, dialogProps } = useConfirm();
 
   const tg = status.channels.telegram;
@@ -99,6 +100,23 @@ export function TelegramPanel({
     }
   }
 
+  async function handleSyncCommands(): Promise<void> {
+    setPanelError(null);
+    setSyncingCommands(true);
+    try {
+      await runAction("/api/channels/telegram/sync-commands", {
+        label: "Sync Telegram commands",
+        method: "POST",
+      });
+    } catch (error) {
+      setPanelError(
+        error instanceof Error ? error.message : "Failed to sync commands",
+      );
+    } finally {
+      setSyncingCommands(false);
+    }
+  }
+
   return (
     <section className="channel-card channel-telegram">
       <div className="channel-head">
@@ -114,6 +132,21 @@ export function TelegramPanel({
           {tg.queueDepth > 0 && (
             <span className="channel-pill good">{tg.queueDepth} queued</span>
           )}
+          <span
+            className={`channel-pill ${
+              tg.commandSyncStatus === "synced"
+                ? "good"
+                : tg.commandSyncStatus === "error"
+                  ? "bad"
+                  : ""
+            }`}
+          >
+            {tg.commandSyncStatus === "synced"
+              ? "commands synced"
+              : tg.commandSyncStatus === "error"
+                ? "command sync error"
+                : "commands unsynced"}
+          </span>
           <span
             className={`channel-pill ${
               tg.status === "connected"
@@ -134,6 +167,7 @@ export function TelegramPanel({
 
       {panelError ? <p className="error-banner">{panelError}</p> : null}
       {tg.lastError ? <p className="error-banner">{tg.lastError}</p> : null}
+      {tg.commandSyncError ? <p className="error-banner">{tg.commandSyncError}</p> : null}
       <ConnectabilityNotice connectability={tg.connectability} />
 
       {tg.configured && !editing ? (
@@ -148,6 +182,15 @@ export function TelegramPanel({
             <span className="field-label">Webhook URL</span>
             <code className="inline-code">{tg.webhookUrl ?? "\u2014"}</code>
           </div>
+          <div className="channel-detail-row">
+            <span className="field-label">Commands</span>
+            <code className="inline-code">
+              {tg.commandSyncStatus}
+              {tg.commandsRegisteredAt
+                ? ` \u00b7 ${new Date(tg.commandsRegisteredAt).toLocaleString()}`
+                : ""}
+            </code>
+          </div>
           <div className="inline-actions">
             <button
               className="button secondary"
@@ -158,6 +201,13 @@ export function TelegramPanel({
               }}
             >
               Update token
+            </button>
+            <button
+              className="button secondary"
+              disabled={busy || syncingCommands}
+              onClick={() => void handleSyncCommands()}
+            >
+              {syncingCommands ? "Syncing\u2026" : "Sync commands"}
             </button>
             <button
               className="button ghost"

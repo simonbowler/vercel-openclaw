@@ -65,6 +65,9 @@ export type StatusPayload = {
       configuredAt: number | null;
       lastError: string | null;
       status: "connected" | "disconnected" | "error";
+      commandSyncStatus: "synced" | "unsynced" | "error";
+      commandsRegisteredAt: number | null;
+      commandSyncError: string | null;
       connectability: ChannelConnectability;
     };
     discord: {

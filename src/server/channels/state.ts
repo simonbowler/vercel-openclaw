@@ -37,6 +37,9 @@ export type PublicTelegramState = {
   configuredAt: number | null;
   lastError: string | null;
   status: "connected" | "disconnected" | "error";
+  commandSyncStatus: "synced" | "unsynced" | "error";
+  commandsRegisteredAt: number | null;
+  commandSyncError: string | null;
   connectability: ChannelConnectability;
 };
 
@@ -65,15 +68,15 @@ export type PublicChannelState = {
   discord: PublicDiscordState;
 };
 
-export function buildSlackWebhookUrl(request: Request): string {
+export function buildSlackWebhookUrl(request?: Request): string {
   return buildPublicUrl("/api/channels/slack/webhook", request);
 }
 
-export function buildTelegramWebhookUrl(request: Request): string {
+export function buildTelegramWebhookUrl(request?: Request): string {
   return buildPublicUrl("/api/channels/telegram/webhook", request);
 }
 
-export function buildDiscordPublicWebhookUrl(request: Request): string {
+export function buildDiscordPublicWebhookUrl(request?: Request): string {
   return buildPublicUrl("/api/channels/discord/webhook", request);
 }
 
@@ -190,6 +193,9 @@ function toPublicTelegramState(
     configuredAt: config?.configuredAt ?? null,
     lastError: config?.lastError ?? null,
     status,
+    commandSyncStatus: config?.commandSyncStatus ?? "unsynced",
+    commandsRegisteredAt: config?.commandsRegisteredAt ?? null,
+    commandSyncError: config?.commandSyncError ?? null,
     connectability,
   };
 }

@@ -18,6 +18,9 @@ export type TelegramChannelConfig = {
   webhookUrl: string;
   botUsername: string;
   configuredAt: number;
+  commandSyncStatus?: "synced" | "unsynced" | "error";
+  commandsRegisteredAt?: number;
+  commandSyncError?: string;
   lastError?: string;
 };
 
@@ -87,7 +90,16 @@ function isTelegramChannelConfig(value: unknown): value is TelegramChannelConfig
     typeof raw.webhookSecret === "string" &&
     typeof raw.webhookUrl === "string" &&
     typeof raw.botUsername === "string" &&
-    typeof raw.configuredAt === "number"
+    typeof raw.configuredAt === "number" &&
+    (raw.previousWebhookSecret === undefined || typeof raw.previousWebhookSecret === "string") &&
+    (raw.previousSecretExpiresAt === undefined || typeof raw.previousSecretExpiresAt === "number") &&
+    (raw.commandSyncStatus === undefined ||
+      raw.commandSyncStatus === "synced" ||
+      raw.commandSyncStatus === "unsynced" ||
+      raw.commandSyncStatus === "error") &&
+    (raw.commandsRegisteredAt === undefined || typeof raw.commandsRegisteredAt === "number") &&
+    (raw.commandSyncError === undefined || typeof raw.commandSyncError === "string") &&
+    (raw.lastError === undefined || typeof raw.lastError === "string")
   );
 }
 

@@ -7,6 +7,8 @@ import {
   sendChatAction,
   getMe,
   setWebhook,
+  setMyCommands,
+  getMyCommands,
   deleteWebhook,
   TelegramApiError,
   isRetryableTelegramSendError,
@@ -295,6 +297,48 @@ test("deleteWebhook: sends correct payload", async () => {
     await deleteWebhook("token");
     const body = JSON.parse(capturedBody);
     assert.equal(body.drop_pending_updates, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("setMyCommands: sends command payload", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedBody = "";
+
+  globalThis.fetch = async (_input, init) => {
+    capturedBody = init?.body as string;
+    return new Response(JSON.stringify({ ok: true, result: true }));
+  };
+
+  try {
+    await setMyCommands("token", [
+      { command: "ask", description: "Ask the AI a question" },
+    ]);
+    const body = JSON.parse(capturedBody);
+    assert.deepEqual(body.commands, [
+      { command: "ask", description: "Ask the AI a question" },
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("getMyCommands: returns command list", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        ok: true,
+        result: [{ command: "ask", description: "Ask the AI a question" }],
+      }),
+    );
+
+  try {
+    const commands = await getMyCommands("token");
+    assert.deepEqual(commands, [
+      { command: "ask", description: "Ask the AI a question" },
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
   }
