@@ -79,6 +79,63 @@ for (const relPath of docFiles) {
 }
 
 // ---------------------------------------------------------------------------
+// OPENCLAW_PACKAGE_SPEC policy accuracy check
+// The deployment contract hard-fails (not warns) on Vercel when the spec is
+// unset or unpinned. The runtime still falls back to openclaw@latest with a
+// warning log. Docs must not contradict either of these facts.
+// ---------------------------------------------------------------------------
+
+const policyDocFiles = ["README.md", "CLAUDE.md", "CONTRIBUTING.md"];
+const policyContradictions = [
+  {
+    // Catches "emits a warn (not a hard fail)", "warns (not fails)", etc.
+    // These phrases uniquely describe the OPENCLAW_PACKAGE_SPEC policy.
+    pattern: /\bwarn[s ]?\s*\(not\s+(?:a\s+(?:hard\s+)?)?fail[s]?\)/gi,
+    label: 'claims OPENCLAW_PACKAGE_SPEC contract status is warn (not fail) on Vercel — it is a hard fail',
+  },
+  {
+    // Catches "warn (not a hard fail)"
+    pattern: /\bwarn\b[^.]*\bnot\s+a\s+hard\s+fail\b/gi,
+    label: 'claims OPENCLAW_PACKAGE_SPEC contract status is warn (not a hard fail) on Vercel — it is a hard fail',
+  },
+  {
+    pattern: /\bruntime\s+refuses\s+to\s+install\b/gi,
+    label: 'claims runtime refuses to install when OPENCLAW_PACKAGE_SPEC is unpinned — runtime falls back to openclaw@latest',
+  },
+  {
+    // The "api-key" AI Gateway auth mode was removed. Only "oidc" and
+    // "unavailable" exist in getAiGatewayAuthMode() and the deployment
+    // contract. Docs must not reference a stale "api-key" mode.
+    pattern: /aiGatewayAuth[^;]*"api-key"/g,
+    label: 'references stale "api-key" AI Gateway auth mode — only "oidc" and "unavailable" exist',
+  },
+  {
+    // Catches "falls back to `api-key`" in prose descriptions
+    pattern: /falls\s+back\s+to\s+`api-key`/gi,
+    label: 'references stale "api-key" AI Gateway auth fallback — only "unavailable" exists',
+  },
+  {
+    // The preflight route probes OIDC at runtime, not just config.
+    // "config-only" misleads callers into thinking the check is static.
+    pattern: /preflight.*AI Gateway auth \(config-only\)/gi,
+    label: 'describes preflight AI Gateway check as "config-only" — it probes OIDC at runtime',
+  },
+];
+
+for (const relPath of policyDocFiles) {
+  const absPath = path.join(rootDir, relPath);
+  if (!existsSync(absPath)) continue;
+
+  const text = readFileSync(absPath, "utf8");
+  for (const { pattern, label } of policyContradictions) {
+    pattern.lastIndex = 0;
+    if (pattern.test(text)) {
+      failures.push(`${relPath}: ${label}`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Deployment contract env surface check
 // Extract env names from deployment-contract.ts and verify they appear in docs.
 // ---------------------------------------------------------------------------
@@ -86,19 +143,58 @@ for (const relPath of docFiles) {
 const contractPath = path.join(rootDir, "src", "server", "deployment-contract.ts");
 const contractSource = readFileSync(contractPath, "utf8");
 
-// Match all `env: ["VAR_NAME"]` or `env: ["VAR_NAME", "OTHER"]` patterns
-const envPattern = /env:\s*\[([^\]]+)\]/g;
-const contractEnvNames = new Set();
-
-let envMatch;
-while ((envMatch = envPattern.exec(contractSource)) !== null) {
-  const inner = envMatch[1];
-  // Extract quoted strings
+// Step 1: Build a map of const array declarations (e.g. `const FOO = ["A", "B"]`)
+const constArrayPattern = /const\s+(\w+)\s*(?::\s*\w+(?:\[\])?\s*)?=\s*\[([^\]]+)\]/g;
+const constArrays = new Map();
+let constMatch;
+while ((constMatch = constArrayPattern.exec(contractSource)) !== null) {
+  const names = [];
   const namePattern = /"([^"]+)"/g;
   let nameMatch;
-  while ((nameMatch = namePattern.exec(inner)) !== null) {
+  while ((nameMatch = namePattern.exec(constMatch[2])) !== null) {
+    names.push(nameMatch[1]);
+  }
+  if (names.length > 0) {
+    constArrays.set(constMatch[1], names);
+  }
+}
+
+// Step 2: Match inline `env: ["VAR"]` and referenced `env: CONST_NAME` patterns
+const contractEnvNames = new Set();
+
+// Inline arrays: env: ["VAR_NAME", "OTHER"]
+const envInlinePattern = /env:\s*\[([^\]]+)\]/g;
+let envMatch;
+while ((envMatch = envInlinePattern.exec(contractSource)) !== null) {
+  const namePattern = /"([^"]+)"/g;
+  let nameMatch;
+  while ((nameMatch = namePattern.exec(envMatch[1])) !== null) {
     contractEnvNames.add(nameMatch[1]);
   }
+}
+
+// Variable references: env: PUBLIC_ORIGIN_ENV
+const envRefPattern = /env:\s*([A-Z_][A-Z_0-9]*)/g;
+let refMatch;
+while ((refMatch = envRefPattern.exec(contractSource)) !== null) {
+  const resolved = constArrays.get(refMatch[1]);
+  if (resolved) {
+    for (const name of resolved) {
+      contractEnvNames.add(name);
+    }
+  }
+}
+
+// Vercel system env vars are auto-set by the platform and do not belong in
+// user-facing docs or .env.example. Exclude them from the doc surface check.
+const VERCEL_SYSTEM_ENV = new Set([
+  "VERCEL_PROJECT_PRODUCTION_URL",
+  "VERCEL_BRANCH_URL",
+  "VERCEL_URL",
+]);
+
+for (const name of VERCEL_SYSTEM_ENV) {
+  contractEnvNames.delete(name);
 }
 
 if (contractEnvNames.size === 0) {
@@ -108,8 +204,16 @@ if (contractEnvNames.size === 0) {
 const envDocFiles = {
   "README.md": path.join(rootDir, "README.md"),
   "CLAUDE.md": path.join(rootDir, "CLAUDE.md"),
+  "CONTRIBUTING.md": path.join(rootDir, "CONTRIBUTING.md"),
   ".env.example": path.join(rootDir, ".env.example"),
 };
+
+// Use word-boundary matching so that e.g. "BASE_DOMAIN" is not falsely found
+// inside "NEXT_PUBLIC_BASE_DOMAIN".
+function docContainsEnvName(content, envName) {
+  const pattern = new RegExp(`(?<![A-Z_])${envName}(?![A-Z_])`);
+  return pattern.test(content);
+}
 
 for (const envName of contractEnvNames) {
   for (const [label, filePath] of Object.entries(envDocFiles)) {
@@ -118,7 +222,7 @@ for (const envName of contractEnvNames) {
       continue;
     }
     const content = readFileSync(filePath, "utf8");
-    if (!content.includes(envName)) {
+    if (!docContainsEnvName(content, envName)) {
       failures.push(`${label}: missing deployment-contract env "${envName}"`);
     }
   }

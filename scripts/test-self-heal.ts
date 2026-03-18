@@ -30,7 +30,12 @@ const timeoutMs = Number(values.timeout) * 1000;
 
 async function main() {
   console.error(`Running selfHealTokenRefresh against ${baseUrl} (timeout: ${timeoutMs / 1000}s)`);
-  const result = await selfHealTokenRefresh(baseUrl!, timeoutMs, { requestTimeoutMs: 30_000 });
+  const result = await selfHealTokenRefresh(
+    baseUrl!,
+    timeoutMs,
+    "telegram",
+    { requestTimeoutMs: 30_000 },
+  );
   console.log(JSON.stringify(result, null, 2));
   process.exit(result.passed ? 0 : 1);
 }
