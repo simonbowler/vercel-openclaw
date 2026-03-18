@@ -6,6 +6,8 @@ export const OPENCLAW_CONFIG_PATH = `${OPENCLAW_STATE_DIR}/openclaw.json`;
 export const OPENCLAW_GATEWAY_TOKEN_PATH = `${OPENCLAW_STATE_DIR}/.gateway-token`;
 export const OPENCLAW_AI_GATEWAY_API_KEY_PATH = `${OPENCLAW_STATE_DIR}/.ai-gateway-api-key`;
 export const OPENCLAW_FORCE_PAIR_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/.force-pair.mjs`;
+export const OPENCLAW_TELEGRAM_BOT_TOKEN_PATH = `${OPENCLAW_STATE_DIR}/.telegram-bot-token`;
+export const OPENCLAW_TELEGRAM_WEBHOOK_PORT = 8787;
 export const OPENCLAW_IMAGE_GEN_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/openai-image-gen/SKILL.md`;
 export const OPENCLAW_IMAGE_GEN_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/skills/openai-image-gen/scripts/gen.mjs`;
 export const OPENCLAW_WEB_SEARCH_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/web-search/SKILL.md`;
@@ -47,6 +49,7 @@ function readBooleanEnv(name: string, defaultValue = false): boolean {
 export function buildGatewayConfig(
   apiKey?: string,
   proxyOrigin?: string,
+  telegramBotToken?: string,
 ): string {
   const controlUi: Record<string, unknown> = {
     allowInsecureAuth: readBooleanEnv("OPENCLAW_ALLOW_INSECURE_AUTH", false),
@@ -151,6 +154,24 @@ export function buildGatewayConfig(
     },
   };
 
+  // OpenClaw reads the bot token from its config file on the sandbox filesystem.
+  // The token is also written to a separate file (OPENCLAW_TELEGRAM_BOT_TOKEN_PATH)
+  // for the restore deleteWebhook script.  Neither file is logged or exposed
+  // via any API — they live only on the sandbox's restricted filesystem,
+  // consistent with how the gateway token and AI Gateway key are stored.
+  if (telegramBotToken) {
+    config.channels = {
+      telegram: {
+        enabled: true,
+        botToken: telegramBotToken,
+        // "open" allows any Telegram user to DM the bot.  This matches the
+        // old project's behavior and the admin-controlled webhook setup.
+        dmPolicy: "open",
+        webhookPort: OPENCLAW_TELEGRAM_WEBHOOK_PORT,
+      },
+    };
+  }
+
   return JSON.stringify(config);
 }
 
@@ -238,6 +259,10 @@ if [ -n "$ai_gateway_api_key" ]; then
   export OPENAI_API_KEY="$ai_gateway_api_key"
   export OPENAI_BASE_URL="https://ai-gateway.vercel.sh/v1"
 fi
+tg_token="$(cat "${OPENCLAW_TELEGRAM_BOT_TOKEN_PATH}" 2>/dev/null || true)"
+if [ -n "$tg_token" ]; then
+  curl -sf "https://api.telegram.org/bot${tg_token}/deleteWebhook?drop_pending_updates=false" >/dev/null 2>&1 || true
+fi
 pkill -f "openclaw.gateway" || true
 setsid env OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}" OPENCLAW_GATEWAY_TOKEN="$gateway_token" AI_GATEWAY_API_KEY="$ai_gateway_api_key" OPENAI_API_KEY="$ai_gateway_api_key" OPENAI_BASE_URL="https://ai-gateway.vercel.sh/v1" ${OPENCLAW_BIN} gateway --port ${OPENCLAW_PORT} --bind loopback >> ${OPENCLAW_LOG_FILE} 2>&1 &
 _learning_log=/tmp/shell-commands-for-learning.log
@@ -287,6 +312,11 @@ if [ -n "$ai_gateway_api_key" ]; then
   export AI_GATEWAY_API_KEY="$ai_gateway_api_key"
   export OPENAI_API_KEY="$ai_gateway_api_key"
   export OPENAI_BASE_URL="$ai_gateway_base_url"
+fi
+tg_token="$(cat "${OPENCLAW_TELEGRAM_BOT_TOKEN_PATH}" 2>/dev/null || true)"
+if [ -n "$tg_token" ]; then
+  echo '{"event":"fast_restore.delete_telegram_webhook"}' >&2
+  curl -sf "https://api.telegram.org/bot${tg_token}/deleteWebhook?drop_pending_updates=false" >/dev/null 2>&1 || true
 fi
 echo '{"event":"fast_restore.kill_old_gateway"}' >&2
 pkill -f "openclaw.gateway" || true

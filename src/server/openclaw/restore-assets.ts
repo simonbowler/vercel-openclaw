@@ -24,6 +24,7 @@ import {
   OPENCLAW_IMAGE_GEN_SKILL_PATH,
   OPENCLAW_STARTUP_SCRIPT_PATH,
   OPENCLAW_STATE_DIR,
+  OPENCLAW_TELEGRAM_BOT_TOKEN_PATH,
   OPENCLAW_STRUCTURED_EXTRACT_SCRIPT_PATH,
   OPENCLAW_STRUCTURED_EXTRACT_SKILL_PATH,
   OPENCLAW_TTS_SCRIPT_PATH,
@@ -72,13 +73,25 @@ export function buildStaticRestoreFiles(): { path: string; content: Buffer }[] {
 export function buildDynamicRestoreFiles(options: {
   proxyOrigin: string;
   apiKey?: string;
+  telegramBotToken?: string;
 }): { path: string; content: Buffer }[] {
-  return [
+  const files: { path: string; content: Buffer }[] = [
     {
       path: OPENCLAW_CONFIG_PATH,
-      content: Buffer.from(buildGatewayConfig(options.apiKey, options.proxyOrigin)),
+      content: Buffer.from(
+        buildGatewayConfig(options.apiKey, options.proxyOrigin, options.telegramBotToken),
+      ),
     },
   ];
+
+  if (options.telegramBotToken) {
+    files.push({
+      path: OPENCLAW_TELEGRAM_BOT_TOKEN_PATH,
+      content: Buffer.from(options.telegramBotToken),
+    });
+  }
+
+  return files;
 }
 
 export function buildRestoreAssetManifest(): RestoreAssetManifest {

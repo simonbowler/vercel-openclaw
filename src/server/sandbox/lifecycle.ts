@@ -1038,6 +1038,7 @@ async function createAndBootstrapSandbox(origin: string): Promise<SingleMeta> {
       gatewayToken: latest.gatewayToken,
       apiKey,
       proxyOrigin: origin,
+      telegramBotToken: latest.channels.telegram?.botToken,
     });
 
     const next = await mutateMeta((meta) => {
@@ -1155,6 +1156,7 @@ async function restoreSandboxFromSnapshot(
     const assetSyncResult = await syncRestoreAssetsIfNeeded(sandbox, {
       origin,
       apiKey: freshApiKey,
+      telegramBotToken: latest.channels.telegram?.botToken,
     });
     const assetSyncMs = Date.now() - assetSyncStart;
     logInfo("sandbox.restore.asset_sync", {
@@ -1313,7 +1315,7 @@ async function restoreSandboxFromSnapshot(
 
 async function syncRestoreAssetsIfNeeded(
   sandbox: SandboxHandle,
-  options: { origin: string; apiKey?: string },
+  options: { origin: string; apiKey?: string; telegramBotToken?: string },
 ): Promise<{ skippedStaticAssetSync: boolean; assetSha256: string }> {
   const manifest = buildRestoreAssetManifest();
   const existing = await sandbox.readFileToBuffer({
@@ -1332,6 +1334,7 @@ async function syncRestoreAssetsIfNeeded(
   const files = buildDynamicRestoreFiles({
     proxyOrigin: options.origin,
     apiKey: options.apiKey,
+    telegramBotToken: options.telegramBotToken,
   });
 
   const skippedStaticAssetSync = existingSha === manifest.sha256;

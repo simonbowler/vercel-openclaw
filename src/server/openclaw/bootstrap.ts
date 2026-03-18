@@ -36,6 +36,7 @@ import {
   OPENCLAW_STRUCTURED_EXTRACT_SCRIPT_PATH,
   OPENCLAW_STARTUP_SCRIPT_PATH,
   OPENCLAW_STATE_DIR,
+  OPENCLAW_TELEGRAM_BOT_TOKEN_PATH,
 } from "@/server/openclaw/config";
 
 import type { CommandResult, SandboxHandle } from "@/server/sandbox/controller";
@@ -96,6 +97,7 @@ export async function setupOpenClaw(
     gatewayToken: string;
     apiKey?: string;
     proxyOrigin: string;
+    telegramBotToken?: string;
   },
 ): Promise<{ startupScript: string; openclawVersion: string | null; runtime: BootstrapRuntime }> {
   const startupScript = buildStartupScript();
@@ -128,7 +130,7 @@ export async function setupOpenClaw(
     {
       path: OPENCLAW_CONFIG_PATH,
       content: Buffer.from(
-        buildGatewayConfig(options.apiKey, options.proxyOrigin),
+        buildGatewayConfig(options.apiKey, options.proxyOrigin, options.telegramBotToken),
       ),
     },
     {
@@ -199,6 +201,9 @@ export async function setupOpenClaw(
       path: OPENCLAW_STRUCTURED_EXTRACT_SCRIPT_PATH,
       content: Buffer.from(buildStructuredExtractScript()),
     },
+    ...(options.telegramBotToken
+      ? [{ path: OPENCLAW_TELEGRAM_BOT_TOKEN_PATH, content: Buffer.from(options.telegramBotToken) }]
+      : []),
   ]);
 
   const versionResult = await sandbox.runCommand(OPENCLAW_BIN, ["--version"]);

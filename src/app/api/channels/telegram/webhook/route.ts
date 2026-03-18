@@ -3,8 +3,12 @@ import { enqueueChannelJob } from "@/server/channels/driver";
 import { channelDedupKey } from "@/server/channels/keys";
 import { publishToChannelQueue } from "@/server/channels/queue";
 import { isTelegramWebhookSecretValid } from "@/server/channels/telegram/adapter";
-import { logError, logInfo } from "@/server/log";
+import { logError, logInfo, logWarn } from "@/server/log";
+import { OPENCLAW_TELEGRAM_WEBHOOK_PORT } from "@/server/openclaw/config";
+import { getSandboxDomain } from "@/server/sandbox/lifecycle";
 import { getInitializedMeta, getStore } from "@/server/store/store";
+
+const FORWARD_TIMEOUT_MS = 10_000;
 
 function extractUpdateId(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") {
@@ -47,6 +51,40 @@ export async function POST(request: Request): Promise<Response> {
       if (!accepted) {
         return Response.json({ ok: true });
       }
+    }
+
+    // --- Fast path: forward raw update to OpenClaw's native Telegram handler ---
+    // When the sandbox is running, OpenClaw handles the full Telegram lifecycle
+    // natively (images, replies, Bot API calls) on port 8787.  This avoids the
+    // app-layer image download/re-upload pipeline.
+    if (meta.status === "running" && meta.sandboxId) {
+      try {
+        const sandboxWebhookUrl = await getSandboxDomain(OPENCLAW_TELEGRAM_WEBHOOK_PORT);
+        const forwardUrl = `${sandboxWebhookUrl}/telegram-webhook`;
+        const forwardResponse = await fetch(forwardUrl, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-telegram-bot-api-secret-token": secretHeader,
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS),
+        });
+        if (forwardResponse.ok) {
+          logInfo("channels.telegram_fast_path_ok", { sandboxId: meta.sandboxId });
+          return Response.json({ ok: true });
+        }
+        logWarn("channels.telegram_fast_path_non_ok", {
+          status: forwardResponse.status,
+          sandboxId: meta.sandboxId,
+        });
+      } catch (error) {
+        logWarn("channels.telegram_fast_path_failed", {
+          error: error instanceof Error ? error.message : String(error),
+          sandboxId: meta.sandboxId,
+        });
+      }
+      // Fall through to queue-based path
     }
 
     const job = {
