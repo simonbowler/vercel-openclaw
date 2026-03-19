@@ -1323,29 +1323,26 @@ async function restoreSandboxFromSnapshot(
     logInfo("sandbox.restore.fast_restore_start", { sandboxId: sandbox.sandboxId });
     const launchStart = Date.now();
 
-    // Fire the launch script WITHOUT awaiting — start host-side probing
-    // immediately so readiness detection overlaps with the runCommand
-    // API round-trip.  The script exits instantly after setsid.
-    const launchPromise = sandbox.runCommand("bash", [
+    // Fire-and-forget: script backgrounds the gateway and exits immediately.
+    // We don't await for readiness — that's done via host-side HTTP probe below.
+    const launchResult = await sandbox.runCommand("bash", [
       OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
-    ]).then(async (result) => {
-      startupScriptMs = Date.now() - launchStart;
-      if (result.exitCode !== 0) {
-        const output = await result.output("both");
-        throw new CommandFailedError({
-          command: "fast-restore-script",
-          exitCode: result.exitCode,
-          output,
-        });
-      }
-      logInfo("sandbox.restore.launch_complete", { startupScriptMs, sandboxId: sandbox.sandboxId });
-    });
+    ]);
+    startupScriptMs = Date.now() - launchStart;
 
-    // Host-side readiness probe + firewall sync + launch all run concurrently.
-    // The gateway starts booting as soon as the script fires (before the
-    // runCommand API call even returns).
+    if (launchResult.exitCode !== 0) {
+      const output = await launchResult.output("both");
+      throw new CommandFailedError({
+        command: "fast-restore-script",
+        exitCode: launchResult.exitCode,
+        output,
+      });
+    }
+    logInfo("sandbox.restore.launch_complete", { startupScriptMs, sandboxId: sandbox.sandboxId });
+
+    // Host-side readiness probe + firewall sync run concurrently.
+    // The gateway is already booting inside the sandbox.
     await Promise.all([
-      launchPromise,
       (async () => {
         const t0 = Date.now();
         // Host-side HTTP probe via sandbox.domain(3000) — no runCommand overhead.
