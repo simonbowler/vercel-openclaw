@@ -168,6 +168,7 @@ export function buildGatewayConfig(
         // "open" allows any Telegram user to DM the bot.  This matches the
         // old project's behavior and the admin-controlled webhook setup.
         dmPolicy: "open",
+        allowFrom: ["*"],
         webhookPort: OPENCLAW_TELEGRAM_WEBHOOK_PORT,
       },
     };
