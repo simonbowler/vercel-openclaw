@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { pollUntil } from "@/server/async/poll";
 import { ApiError } from "@/shared/http";
@@ -267,9 +267,15 @@ export async function stopSandbox(): Promise<SingleMeta> {
     try {
       const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
       const snapshot = await sandbox.snapshot();
-      logInfo("sandbox.status_transition", { from: meta.status, to: "stopped", snapshotId: snapshot.snapshotId });
+      // Compute config hash for this snapshot.  The hash covers everything
+      // in buildGatewayConfig EXCEPT the proxy origin (which varies per
+      // restore) and the API key (passed via env, not in config).  If the
+      // hash matches at restore time, the writeFiles call is skipped.
+      const configHash = computeGatewayConfigHash(meta);
+
+      logInfo("sandbox.status_transition", { from: meta.status, to: "stopped", snapshotId: snapshot.snapshotId, configHash });
       return mutateMeta((next) => {
-        recordSnapshotMetadata(next, snapshot.snapshotId, "stop");
+        recordSnapshotMetadata(next, snapshot.snapshotId, "stop", configHash);
         next.sandboxId = null;
         next.portUrls = null;
         next.status = "stopped";
@@ -1265,21 +1271,36 @@ async function restoreSandboxFromSnapshot(
       meta.portUrls = resolvePortUrls(sandbox);
     });
 
-    // Credentials go via env. Config file (openclaw.json) still needs
-    // writeFiles because the Vercel Sandbox API rejects base64 content
-    // in env vars (returns 400).
+    // Credentials go via env. Config file (openclaw.json) is skipped when
+    // the snapshot's config hash matches (same channels, same deploy).
+    // This avoids a ~6s writeFiles API call on the common restore path.
     const tokenWriteMs = 0;
     const forcePairMs = 0;
 
+    const currentConfigHash = computeGatewayConfigHash(latest);
+    const skippedConfigWrite = latest.snapshotConfigHash === currentConfigHash;
+
     const assetSyncStart = Date.now();
-    await sandbox.writeFiles(
-      buildDynamicRestoreFiles({
-        proxyOrigin: origin,
-        apiKey: freshApiKey,
-        telegramBotToken: latest.channels.telegram?.botToken,
-        slackCredentials: slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
-      }),
-    );
+    if (skippedConfigWrite) {
+      logInfo("sandbox.restore.config_write_skipped", {
+        configHash: currentConfigHash,
+        sandboxId: sandbox.sandboxId,
+      });
+    } else {
+      await sandbox.writeFiles(
+        buildDynamicRestoreFiles({
+          proxyOrigin: origin,
+          apiKey: freshApiKey,
+          telegramBotToken: latest.channels.telegram?.botToken,
+          slackCredentials: slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
+        }),
+      );
+      logInfo("sandbox.restore.config_written", {
+        configHash: currentConfigHash,
+        snapshotConfigHash: latest.snapshotConfigHash,
+        sandboxId: sandbox.sandboxId,
+      });
+    }
     const assetSyncMs = Date.now() - assetSyncStart;
 
     const next = await mutateMeta((meta) => {
@@ -1513,13 +1534,36 @@ async function syncRestoreAssetsIfNeeded(
 // Snapshot metadata
 // ---------------------------------------------------------------------------
 
+/**
+ * Compute a hash of the gateway config inputs that are baked into a snapshot.
+ * Excludes the proxy origin (varies per restore) and API key (passed via env).
+ * When this hash matches at restore time, the writeFiles for openclaw.json
+ * can be skipped — the snapshot already has the right config.
+ */
+function computeGatewayConfigHash(meta: SingleMeta): string {
+  // Use a stable origin placeholder so the hash only changes when
+  // channel config or other gateway settings change.
+  const slackConfig = meta.channels.slack;
+  const configJson = buildGatewayConfig(
+    undefined,
+    "https://__config_hash_placeholder__",
+    meta.channels.telegram?.botToken,
+    slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
+  );
+  return createHash("sha256").update(configJson).digest("hex");
+}
+
 function recordSnapshotMetadata(
   meta: SingleMeta,
   snapshotId: string,
   reason: string,
+  configHash?: string,
 ): void {
   const timestamp = Date.now();
   meta.snapshotId = snapshotId;
+  if (configHash) {
+    meta.snapshotConfigHash = configHash;
+  }
   meta.snapshotHistory = [
     {
       id: randomUUID(),

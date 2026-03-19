@@ -180,6 +180,10 @@ export type SingleMeta = {
   id: "openclaw-single";
   sandboxId: string | null;
   snapshotId: string | null;
+  /** SHA-256 of the gateway config baked into the current snapshot.
+   *  When this matches the config computed at restore time, the dynamic
+   *  config writeFiles call (~6s) can be skipped entirely. */
+  snapshotConfigHash: string | null;
   openclawVersion: string | null;
   status: SingleStatus;
   gatewayToken: string;
@@ -217,6 +221,7 @@ export function createDefaultMeta(now: number, gatewayToken: string): SingleMeta
     id: "openclaw-single",
     sandboxId: null,
     snapshotId: null,
+    snapshotConfigHash: null,
     openclawVersion: null,
     status: "uninitialized",
     gatewayToken,
@@ -274,6 +279,10 @@ export function ensureMetaShape(input: unknown): SingleMeta | null {
     id: "openclaw-single",
     sandboxId: typeof raw.sandboxId === "string" ? raw.sandboxId : null,
     snapshotId: typeof raw.snapshotId === "string" ? raw.snapshotId : null,
+    snapshotConfigHash:
+      typeof (raw as Record<string, unknown>).snapshotConfigHash === "string"
+        ? (raw as Record<string, unknown>).snapshotConfigHash as string
+        : null,
     openclawVersion:
       typeof raw.openclawVersion === "string" ? raw.openclawVersion : null,
     status: isSingleStatus(raw.status) ? raw.status : "uninitialized",
