@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { _setSandboxControllerForTesting } from "@/server/sandbox/controller";
+import { _resetSandboxSleepConfigCacheForTesting } from "@/server/sandbox/timeout";
 import {
   _resetStoreForTesting,
   mutateMeta,
@@ -26,7 +27,7 @@ import {
   patchNextServerAfter,
   resetAfterCallbacks,
 } from "@/test-utils/route-caller";
-import { FakeSandboxController } from "@/test-utils/harness";
+import { FakeSandboxController, FakeSandboxHandle } from "@/test-utils/harness";
 
 // Patch before loading routes
 patchNextServerAfter();
@@ -189,5 +190,61 @@ test("POST /api/status: heartbeat with CSRF returns ok when sandbox is running",
     const body = result.json as { ok: boolean; status: string };
     assert.equal(body.ok, true);
     assert.equal(body.status, "running");
+  });
+});
+
+// ===========================================================================
+// GET /api/status — configured sleep-after values
+// ===========================================================================
+
+test("GET /api/status: returns configured sleep settings and timeout remaining", async () => {
+  await withTestEnv(async () => {
+    const controller = new FakeSandboxController();
+    _setSandboxControllerForTesting(controller);
+
+    const original = process.env.OPENCLAW_SANDBOX_SLEEP_AFTER_MS;
+    const originalFetch = globalThis.fetch;
+    try {
+      process.env.OPENCLAW_SANDBOX_SLEEP_AFTER_MS = "300000";
+      _resetSandboxSleepConfigCacheForTesting();
+
+      // Stub fetch for the gateway readiness probe triggered by ?health=1
+      globalThis.fetch = async () =>
+        new Response('<div id="openclaw-app">ready</div>', { status: 200 });
+
+      await mutateMeta((meta) => {
+        meta.status = "running";
+        meta.sandboxId = "sbx-status-timeout";
+        meta.lastAccessedAt = null;
+      });
+
+      controller.handlesByIds.set(
+        "sbx-status-timeout",
+        new FakeSandboxHandle("sbx-status-timeout", controller.events, 120_000),
+      );
+
+      const route = getStatusRoute();
+      const request = buildAuthGetRequest("/api/status?health=1");
+      const result = await callRoute(route.GET!, request);
+
+      assert.equal(result.status, 200);
+      const body = result.json as {
+        sleepAfterMs: number;
+        heartbeatIntervalMs: number;
+        timeoutRemainingMs: number | null;
+      };
+
+      assert.equal(body.sleepAfterMs, 300_000);
+      assert.equal(body.heartbeatIntervalMs, 150_000);
+      assert.equal(body.timeoutRemainingMs, 120_000);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (original === undefined) {
+        delete process.env.OPENCLAW_SANDBOX_SLEEP_AFTER_MS;
+      } else {
+        process.env.OPENCLAW_SANDBOX_SLEEP_AFTER_MS = original;
+      }
+      _resetSandboxSleepConfigCacheForTesting();
+    }
   });
 });
