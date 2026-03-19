@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { StatusBadge } from "@/components/ui/badge";
 import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
 import type { StatusPayload, RunAction } from "@/components/admin-types";
@@ -50,15 +49,11 @@ export function StatusPanel({ status, busy, runAction }: StatusPanelProps) {
   const { confirm: confirmStop, dialogProps: stopDialogProps } = useConfirm();
   const { confirm: confirmSnapshot, dialogProps: snapshotDialogProps } =
     useConfirm();
-  const [optimistic, setOptimistic] = useState<{
-    override: string;
-    whenServerWas: string;
-  } | null>(null);
 
   function handleRestart(): void {
-    setOptimistic({ override: "restoring", whenServerWas: status.status });
     void runAction("/api/admin/ensure", {
       label: "Restart sandbox",
+      successMessage: "Sandbox restart initiated",
       method: "POST",
     });
   }
@@ -72,9 +67,9 @@ export function StatusPanel({ status, busy, runAction }: StatusPanelProps) {
       variant: "danger",
     });
     if (!ok) return;
-    setOptimistic({ override: "stopping", whenServerWas: status.status });
     void runAction("/api/admin/stop", {
       label: "Stop sandbox",
+      successMessage: "Sandbox stopped",
       method: "POST",
     });
   }
@@ -87,20 +82,19 @@ export function StatusPanel({ status, busy, runAction }: StatusPanelProps) {
       confirmLabel: "Take snapshot",
     });
     if (!ok) return;
-    setOptimistic({ override: "snapshotting", whenServerWas: status.status });
     void runAction("/api/admin/snapshot", {
       label: "Take snapshot",
+      successMessage: "Snapshot created",
       method: "POST",
     });
   }
 
-  const displayStatus =
-    optimistic && status.status === optimistic.whenServerWas
-      ? optimistic.override
-      : status.status;
-  const showRestart = NEEDS_RESTART.has(displayStatus);
-  const showRunningActions = displayStatus === "running";
-  const isTransitional = IS_TRANSITIONAL.has(displayStatus);
+  // Always show the real server status — no client-side overrides.
+  // The `busy` flag disables buttons while actions are in-flight,
+  // and runAction triggers an immediate refresh on completion.
+  const showRestart = NEEDS_RESTART.has(status.status);
+  const showRunningActions = status.status === "running";
+  const isTransitional = IS_TRANSITIONAL.has(status.status);
 
   return (
     <article className="panel-card">
@@ -109,7 +103,7 @@ export function StatusPanel({ status, busy, runAction }: StatusPanelProps) {
           <p className="eyebrow">Sandbox</p>
           <h2>Sandbox status</h2>
         </div>
-        <StatusBadge status={displayStatus} />
+        <StatusBadge status={status.status} />
       </div>
 
       <dl className="metrics-grid">
