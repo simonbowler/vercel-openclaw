@@ -50,6 +50,7 @@ export function buildGatewayConfig(
   apiKey?: string,
   proxyOrigin?: string,
   telegramBotToken?: string,
+  slackCredentials?: { botToken: string; signingSecret: string },
 ): string {
   const controlUi: Record<string, unknown> = {
     allowInsecureAuth: readBooleanEnv("OPENCLAW_ALLOW_INSECURE_AUTH", false),
@@ -170,6 +171,20 @@ export function buildGatewayConfig(
         webhookPort: OPENCLAW_TELEGRAM_WEBHOOK_PORT,
       },
     };
+  }
+
+  // Slack HTTP mode: OpenClaw validates signatures and handles replies natively
+  // on the main gateway port (3000) at the configured webhook path.
+  if (slackCredentials) {
+    const channels = (config.channels as Record<string, unknown>) ?? {};
+    channels.slack = {
+      enabled: true,
+      mode: "http",
+      botToken: slackCredentials.botToken,
+      signingSecret: slackCredentials.signingSecret,
+      webhookPath: "/slack/events",
+    };
+    config.channels = channels;
   }
 
   return JSON.stringify(config);

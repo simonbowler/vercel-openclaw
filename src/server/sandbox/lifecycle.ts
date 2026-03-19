@@ -1034,11 +1034,13 @@ async function createAndBootstrapSandbox(origin: string): Promise<SingleMeta> {
 
     const latest = await getInitializedMeta();
     const apiKey = credential?.token ?? (await getAiGatewayBearerTokenOptional()) ?? undefined;
+    const slackCfg = latest.channels.slack;
     const setupResult = await setupOpenClaw(sandbox, {
       gatewayToken: latest.gatewayToken,
       apiKey,
       proxyOrigin: origin,
       telegramBotToken: latest.channels.telegram?.botToken,
+      slackCredentials: slackCfg ? { botToken: slackCfg.botToken, signingSecret: slackCfg.signingSecret } : undefined,
     });
 
     const next = await mutateMeta((meta) => {
@@ -1153,10 +1155,12 @@ async function restoreSandboxFromSnapshot(
 
     // Sync restore assets — skip static files when the manifest hash matches.
     const assetSyncStart = Date.now();
+    const slackConfig = latest.channels.slack;
     const assetSyncResult = await syncRestoreAssetsIfNeeded(sandbox, {
       origin,
       apiKey: freshApiKey,
       telegramBotToken: latest.channels.telegram?.botToken,
+      slackCredentials: slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
     });
     const assetSyncMs = Date.now() - assetSyncStart;
     logInfo("sandbox.restore.asset_sync", {
@@ -1315,7 +1319,7 @@ async function restoreSandboxFromSnapshot(
 
 async function syncRestoreAssetsIfNeeded(
   sandbox: SandboxHandle,
-  options: { origin: string; apiKey?: string; telegramBotToken?: string },
+  options: { origin: string; apiKey?: string; telegramBotToken?: string; slackCredentials?: { botToken: string; signingSecret: string } },
 ): Promise<{ skippedStaticAssetSync: boolean; assetSha256: string }> {
   const manifest = buildRestoreAssetManifest();
   const existing = await sandbox.readFileToBuffer({
@@ -1335,6 +1339,7 @@ async function syncRestoreAssetsIfNeeded(
     proxyOrigin: options.origin,
     apiKey: options.apiKey,
     telegramBotToken: options.telegramBotToken,
+    slackCredentials: options.slackCredentials,
   });
 
   const skippedStaticAssetSync = existingSha === manifest.sha256;

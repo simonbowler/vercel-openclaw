@@ -98,6 +98,7 @@ export async function setupOpenClaw(
     apiKey?: string;
     proxyOrigin: string;
     telegramBotToken?: string;
+    slackCredentials?: { botToken: string; signingSecret: string };
   },
 ): Promise<{ startupScript: string; openclawVersion: string | null; runtime: BootstrapRuntime }> {
   const startupScript = buildStartupScript();
@@ -130,7 +131,7 @@ export async function setupOpenClaw(
     {
       path: OPENCLAW_CONFIG_PATH,
       content: Buffer.from(
-        buildGatewayConfig(options.apiKey, options.proxyOrigin, options.telegramBotToken),
+        buildGatewayConfig(options.apiKey, options.proxyOrigin, options.telegramBotToken, options.slackCredentials),
       ),
     },
     {

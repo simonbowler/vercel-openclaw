@@ -74,12 +74,18 @@ export function buildDynamicRestoreFiles(options: {
   proxyOrigin: string;
   apiKey?: string;
   telegramBotToken?: string;
+  slackCredentials?: { botToken: string; signingSecret: string };
 }): { path: string; content: Buffer }[] {
   const files: { path: string; content: Buffer }[] = [
     {
       path: OPENCLAW_CONFIG_PATH,
       content: Buffer.from(
-        buildGatewayConfig(options.apiKey, options.proxyOrigin, options.telegramBotToken),
+        buildGatewayConfig(
+          options.apiKey,
+          options.proxyOrigin,
+          options.telegramBotToken,
+          options.slackCredentials,
+        ),
       ),
     },
   ];
