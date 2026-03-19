@@ -1390,6 +1390,25 @@ async function restoreSandboxFromSnapshot(
       }
     });
 
+    // Re-register the Telegram webhook if configured.  Old snapshots may
+    // contain a startup script that calls deleteWebhook, which clears the
+    // webhook URL on Telegram's side.  Re-registering here ensures the
+    // webhook is always active after a restore, regardless of what the
+    // baked-in startup script did.
+    if (latest.channels.telegram?.botToken && latest.channels.telegram?.webhookUrl) {
+      try {
+        const { reconcileTelegramIntegration } = await import("@/server/channels/telegram/reconcile");
+        await reconcileTelegramIntegration({ force: true });
+        logInfo("sandbox.restore.telegram_webhook_reconciled", {
+          webhookUrl: latest.channels.telegram.webhookUrl,
+        });
+      } catch (err) {
+        logWarn("sandbox.restore.telegram_webhook_reconcile_failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     // Background static asset sync — not on the hot path.  The gateway
     // already booted with the snapshot's cached scripts/skills.  This
     // updates them to the current deploy version for the next session.
