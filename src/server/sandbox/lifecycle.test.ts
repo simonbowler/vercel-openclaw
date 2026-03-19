@@ -798,13 +798,8 @@ test("restoreSandboxFromSnapshot overlaps firewall sync with local readiness and
         typeof m.bootOverlapMs === "number",
         "bootOverlapMs should be a number",
       );
-      // firewallSyncMs should be 0 (policy passed at create time)
-      assert.equal(m.firewallSyncMs, 0, "firewallSyncMs should be 0 (policy at create time)");
-      // Firewall policy was passed at create time, not via updateNetworkPolicy
-      assert.ok(
-        handle.createTimeNetworkPolicy != null,
-        "Firewall policy should be set at create time",
-      );
+      // firewallSyncMs should be present (firewall applied post-create)
+      assert.ok(typeof m.firewallSyncMs === "number", "firewallSyncMs should be a number");
       // localReadyMs comes from the fast-restore script's readiness JSON
       assert.ok(
         typeof m.localReadyMs === "number" && m.localReadyMs >= 0,
