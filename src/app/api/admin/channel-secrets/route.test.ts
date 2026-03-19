@@ -232,3 +232,139 @@ test("channel-secrets: authenticated DELETE succeeds", async () => {
     assert.equal(body.removed, true);
   });
 });
+
+// ===========================================================================
+// 6. POST input validation
+// ===========================================================================
+
+test("channel-secrets: POST rejects non-object JSON", async () => {
+  await withAdminAuthEnv(async () => {
+    const route = getAdminChannelSecretsRoute();
+    const request = buildAuthPostRequest(
+      "/api/admin/channel-secrets",
+      JSON.stringify("just a string"),
+    );
+    const result = await callRoute(route.POST!, request);
+    assert.equal(result.status, 400);
+    const body = result.json as { error: string };
+    assert.equal(body.error, "INVALID_JSON");
+  });
+});
+
+test("channel-secrets: POST rejects unsupported channel", async () => {
+  await withAdminAuthEnv(async () => {
+    const route = getAdminChannelSecretsRoute();
+    const request = buildAuthPostRequest(
+      "/api/admin/channel-secrets",
+      JSON.stringify({ channel: "whatsapp", body: "{}" }),
+    );
+    const result = await callRoute(route.POST!, request);
+    assert.equal(result.status, 400);
+    const body = result.json as { error: string };
+    assert.equal(body.error, "UNSUPPORTED_CHANNEL");
+  });
+});
+
+test("channel-secrets: POST rejects empty body", async () => {
+  await withAdminAuthEnv(async () => {
+    const route = getAdminChannelSecretsRoute();
+    const request = buildAuthPostRequest(
+      "/api/admin/channel-secrets",
+      JSON.stringify({ channel: "slack", body: "" }),
+    );
+    const result = await callRoute(route.POST!, request);
+    assert.equal(result.status, 400);
+    const body = result.json as { error: string };
+    assert.equal(body.error, "EMPTY_BODY");
+  });
+});
+
+test("channel-secrets: POST rejects payload larger than 64 KiB", async () => {
+  await withAdminAuthEnv(async () => {
+    const route = getAdminChannelSecretsRoute();
+    const largeBody = "x".repeat(65537);
+    const request = buildAuthPostRequest(
+      "/api/admin/channel-secrets",
+      JSON.stringify({ channel: "slack", body: largeBody }),
+    );
+    const result = await callRoute(route.POST!, request);
+    assert.equal(result.status, 413);
+    const body = result.json as { error: string };
+    assert.equal(body.error, "PAYLOAD_TOO_LARGE");
+  });
+});
+
+test("channel-secrets: POST rejects missing body field", async () => {
+  await withAdminAuthEnv(async () => {
+    const route = getAdminChannelSecretsRoute();
+    const request = buildAuthPostRequest(
+      "/api/admin/channel-secrets",
+      JSON.stringify({ channel: "slack" }),
+    );
+    const result = await callRoute(route.POST!, request);
+    assert.equal(result.status, 400);
+    const body = result.json as { error: string };
+    assert.equal(body.error, "MISSING_FIELDS");
+  });
+});
+
+// ===========================================================================
+// 7. Telegram smoke dispatch uses canonical public URL with bypass param
+// ===========================================================================
+
+test("channel-secrets: POST dispatches telegram webhook via canonical public URL", async () => {
+  await withAdminAuthEnv(async () => {
+    process.env.NEXT_PUBLIC_BASE_DOMAIN = "https://example.test";
+    process.env.VERCEL_AUTOMATION_BYPASS_SECRET = "bypass-secret";
+
+    const route = getAdminChannelSecretsRoute();
+
+    // Configure test channels
+    const putRequest = buildAuthPutRequest("/api/admin/channel-secrets", "{}");
+    await callRoute(route.PUT!, putRequest);
+
+    // Intercept fetch to capture the dispatch URL
+    let capturedUrl = "";
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (input: RequestInfo | URL) => {
+      capturedUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      return Response.json({ ok: true });
+    };
+
+    try {
+      const postRequest = buildAuthPostRequest(
+        "/api/admin/channel-secrets",
+        JSON.stringify({
+          channel: "telegram",
+          body: '{"ok":true}',
+        }),
+      );
+      const result = await callRoute(route.POST!, postRequest);
+      assert.equal(result.status, 200);
+
+      assert.ok(
+        capturedUrl.startsWith(
+          "https://example.test/api/channels/telegram/webhook",
+        ),
+        `Expected canonical URL, got: ${capturedUrl}`,
+      );
+      assert.ok(
+        capturedUrl.includes("x-vercel-protection-bypass=bypass-secret"),
+        `Expected bypass param, got: ${capturedUrl}`,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+
+      // Clean up
+      await callRoute(
+        route.DELETE!,
+        buildAuthDeleteRequest("/api/admin/channel-secrets", "{}"),
+      );
+    }
+  });
+});

@@ -8,10 +8,72 @@ import {
   signDiscordPayload,
   signSlackPayload,
 } from "@/server/smoke/remote-crypto";
-import { logInfo, logWarn } from "@/server/log";
+import { extractRequestId, logInfo, logWarn } from "@/server/log";
+import { buildPublicUrl } from "@/server/public-url";
 
 const DISCORD_SMOKE_PRIVATE_KEY_STORE_KEY =
   "smoke:discord:private-key-pkcs8-pem";
+
+const MAX_SMOKE_WEBHOOK_BYTES = 64 * 1024;
+
+type SmokeChannel = "slack" | "telegram" | "discord";
+
+function parseSmokeDispatchInput(
+  input: unknown,
+): { channel: SmokeChannel; payloadBody: string; payloadBytes: number } {
+  if (!input || typeof input !== "object") {
+    throw new ApiError(400, "INVALID_JSON", "Request body must be a JSON object.");
+  }
+
+  const raw = input as { channel?: unknown; body?: unknown };
+  if (
+    raw.channel !== "slack" &&
+    raw.channel !== "telegram" &&
+    raw.channel !== "discord"
+  ) {
+    throw new ApiError(
+      400,
+      "UNSUPPORTED_CHANNEL",
+      "Only slack, telegram, and discord are supported.",
+    );
+  }
+
+  if (typeof raw.body !== "string") {
+    throw new ApiError(
+      400,
+      "MISSING_FIELDS",
+      "channel and body are required strings.",
+    );
+  }
+
+  const payloadBytes = Buffer.byteLength(raw.body, "utf8");
+  if (payloadBytes === 0) {
+    throw new ApiError(400, "EMPTY_BODY", "body must not be empty.");
+  }
+  if (payloadBytes > MAX_SMOKE_WEBHOOK_BYTES) {
+    throw new ApiError(
+      413,
+      "PAYLOAD_TOO_LARGE",
+      `body must be at most ${MAX_SMOKE_WEBHOOK_BYTES} bytes.`,
+    );
+  }
+
+  return { channel: raw.channel, payloadBody: raw.body, payloadBytes };
+}
+
+function buildSmokeDispatchUrl(
+  channel: SmokeChannel,
+  request: Request,
+): string {
+  switch (channel) {
+    case "slack":
+      return buildPublicUrl("/api/channels/slack/webhook", request);
+    case "telegram":
+      return buildPublicUrl("/api/channels/telegram/webhook", request);
+    case "discord":
+      return buildPublicUrl("/api/channels/discord/webhook", request);
+  }
+}
 
 /**
  * Smoke testing endpoint for channel webhooks.
@@ -39,7 +101,10 @@ export async function PUT(request: Request): Promise<Response> {
     const slackSigningSecret = randomBytes(32).toString("hex");
     const telegramWebhookSecret = randomBytes(24).toString("base64url");
     const discordKeys = generateDiscordSmokeKeyPair();
-    const origin = new URL(request.url).origin;
+    const telegramWebhookUrl = buildPublicUrl(
+      "/api/channels/telegram/webhook",
+      request,
+    );
 
     await mutateMeta((meta) => {
       meta.channels.slack = {
@@ -53,7 +118,7 @@ export async function PUT(request: Request): Promise<Response> {
       meta.channels.telegram = {
         botToken: "000000000:smoke-test-bot-token",
         webhookSecret: telegramWebhookSecret,
-        webhookUrl: `${origin}/api/channels/telegram/webhook`,
+        webhookUrl: telegramWebhookUrl,
         botUsername: "smoke_test_bot",
         configuredAt: now,
       };
@@ -94,35 +159,66 @@ export async function POST(request: Request): Promise<Response> {
     return auth;
   }
 
-  let input: { channel?: string; body?: string };
+  const requestId = extractRequestId(request);
+
+  let rawInput: unknown;
   try {
-    input = await request.json();
+    rawInput = await request.json();
   } catch {
-    return jsonError(new ApiError(400, "INVALID_JSON", "Request body must be valid JSON."));
+    return jsonError(
+      new ApiError(400, "INVALID_JSON", "Request body must be valid JSON."),
+    );
   }
 
-  const { channel, body: payloadBody } = input;
-  if (typeof channel !== "string" || typeof payloadBody !== "string") {
-    return jsonError(new ApiError(400, "MISSING_FIELDS", "channel and body are required strings."));
+  let parsed: {
+    channel: SmokeChannel;
+    payloadBody: string;
+    payloadBytes: number;
+  };
+  try {
+    parsed = parseSmokeDispatchInput(rawInput);
+  } catch (error) {
+    if (error instanceof ApiError) {
+      return jsonError(error);
+    }
+    throw error;
   }
+
+  const { channel, payloadBody, payloadBytes } = parsed;
+  const targetUrl = buildSmokeDispatchUrl(channel, request);
+
+  logInfo("admin.smoke_webhook_dispatch_requested", {
+    requestId,
+    channel,
+    payloadBytes,
+  });
 
   try {
     const meta = await getInitializedMeta();
-    const origin = new URL(request.url).origin;
 
     if (channel === "slack") {
       const config = meta.channels.slack;
       if (!config) {
         return authJsonOk({ configured: false, sent: false, channel }, auth);
       }
+
       const headers = signSlackPayload(config.signingSecret, payloadBody);
-      const res = await fetch(`${origin}/api/channels/slack/webhook`, {
+      const res = await fetch(targetUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers },
         body: payloadBody,
       });
-      logInfo("admin.smoke_webhook_sent", { channel, status: res.status });
-      return authJsonOk({ configured: true, sent: res.ok, status: res.status, channel }, auth);
+
+      logInfo("admin.smoke_webhook_dispatch_completed", {
+        requestId,
+        channel,
+        status: res.status,
+        ok: res.ok,
+      });
+      return authJsonOk(
+        { configured: true, sent: res.ok, status: res.status, channel },
+        auth,
+      );
     }
 
     if (channel === "telegram") {
@@ -130,7 +226,8 @@ export async function POST(request: Request): Promise<Response> {
       if (!config) {
         return authJsonOk({ configured: false, sent: false, channel }, auth);
       }
-      const res = await fetch(`${origin}/api/channels/telegram/webhook`, {
+
+      const res = await fetch(targetUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -138,55 +235,64 @@ export async function POST(request: Request): Promise<Response> {
         },
         body: payloadBody,
       });
-      logInfo("admin.smoke_webhook_sent", { channel, status: res.status });
-      return authJsonOk({ configured: true, sent: res.ok, status: res.status, channel }, auth);
-    }
 
-    if (channel === "discord") {
-      const config = meta.channels.discord;
-      if (!config) {
-        return authJsonOk({ configured: false, sent: false, channel }, auth);
-      }
-
-      const privateKeyPkcs8Pem = await getStore().getValue<string>(
-        DISCORD_SMOKE_PRIVATE_KEY_STORE_KEY,
-      );
-      if (!privateKeyPkcs8Pem) {
-        return jsonError(
-          new ApiError(
-            409,
-            "DISCORD_SMOKE_KEY_MISSING",
-            "Discord smoke signing key is not configured.",
-          ),
-        );
-      }
-
-      const headers = signDiscordPayload(privateKeyPkcs8Pem, payloadBody);
-      const res = await fetch(`${origin}/api/channels/discord/webhook`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...headers },
-        body: payloadBody,
+      logInfo("admin.smoke_webhook_dispatch_completed", {
+        requestId,
+        channel,
+        status: res.status,
+        ok: res.ok,
       });
-      logInfo("admin.smoke_webhook_sent", { channel, status: res.status });
       return authJsonOk(
         { configured: true, sent: res.ok, status: res.status, channel },
         auth,
       );
     }
 
-    return jsonError(
-      new ApiError(
-        400,
-        "UNSUPPORTED_CHANNEL",
-        "Only slack, telegram, and discord are supported.",
-      ),
+    // discord
+    const config = meta.channels.discord;
+    if (!config) {
+      return authJsonOk({ configured: false, sent: false, channel }, auth);
+    }
+
+    const privateKeyPkcs8Pem = await getStore().getValue<string>(
+      DISCORD_SMOKE_PRIVATE_KEY_STORE_KEY,
+    );
+    if (!privateKeyPkcs8Pem) {
+      return jsonError(
+        new ApiError(
+          409,
+          "DISCORD_SMOKE_KEY_MISSING",
+          "Discord smoke signing key is not configured.",
+        ),
+      );
+    }
+
+    const headers = signDiscordPayload(privateKeyPkcs8Pem, payloadBody);
+    const res = await fetch(targetUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: payloadBody,
+    });
+
+    logInfo("admin.smoke_webhook_dispatch_completed", {
+      requestId,
+      channel,
+      status: res.status,
+      ok: res.ok,
+    });
+    return authJsonOk(
+      { configured: true, sent: res.ok, status: res.status, channel },
+      auth,
     );
   } catch (error) {
     logWarn("admin.smoke_webhook_failed", {
+      requestId,
       channel,
       error: error instanceof Error ? error.message : String(error),
     });
-    return jsonError(new ApiError(503, "SEND_FAILED", "Failed to send smoke webhook."));
+    return jsonError(
+      new ApiError(503, "SEND_FAILED", "Failed to send smoke webhook."),
+    );
   }
 }
 
