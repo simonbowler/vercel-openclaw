@@ -55,6 +55,10 @@ export async function publishToChannelQueue<TPayload>(
   channel: ChannelName,
   job: QueuedChannelJob<TPayload>,
 ): Promise<{ queued: boolean; messageId: string | null }> {
+  if (process.env.NODE_ENV === "test") {
+    return { queued: false, messageId: null };
+  }
+
   const topic = CHANNEL_TOPICS[channel];
   const idempotencyKey = resolveIdempotencyKey(channel, job);
 
