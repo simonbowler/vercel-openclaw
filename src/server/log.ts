@@ -141,6 +141,44 @@ export type LogFilters = {
 };
 
 /**
+ * Test whether a single log entry matches all non-empty filter criteria.
+ *
+ * This is the shared predicate used by both server-buffer and sandbox-log
+ * filtering so that correlation semantics stay consistent across sources.
+ */
+export function matchesLogEntry(entry: LogEntry, filters: LogFilters): boolean {
+  if (filters.level && entry.level !== filters.level) return false;
+  if (filters.source && entry.source !== filters.source) return false;
+  if (filters.search) {
+    const term = filters.search.toLowerCase();
+    const haystack =
+      entry.message.toLowerCase() +
+      " " +
+      (entry.data ? JSON.stringify(entry.data).toLowerCase() : "");
+    if (!haystack.includes(term)) return false;
+  }
+  if (filters.opId) {
+    const id = filters.opId;
+    if (entry.data?.opId !== id && entry.data?.parentOpId !== id) return false;
+  }
+  if (filters.requestId && entry.data?.requestId !== filters.requestId) return false;
+  if (filters.channel && entry.data?.channel !== filters.channel) return false;
+  if (filters.sandboxId && entry.data?.sandboxId !== filters.sandboxId) return false;
+  if (filters.messageId && entry.data?.messageId !== filters.messageId) return false;
+  return true;
+}
+
+/**
+ * Filter an array of log entries using the shared matcher.
+ */
+export function filterLogEntries(
+  entries: readonly LogEntry[],
+  filters: LogFilters,
+): LogEntry[] {
+  return entries.filter((entry) => matchesLogEntry(entry, filters));
+}
+
+/**
  * Return filtered server-side log entries.
  *
  * Supports both the original level/source/search filters and the new
@@ -148,46 +186,7 @@ export type LogFilters = {
  * that match against the `data` context attached to each log entry.
  */
 export function getFilteredServerLogs(filters: LogFilters): LogEntry[] {
-  let entries = _buffer;
-
-  if (filters.level) {
-    entries = entries.filter((e) => e.level === filters.level);
-  }
-  if (filters.source) {
-    entries = entries.filter((e) => e.source === filters.source);
-  }
-  if (filters.search) {
-    const term = filters.search.toLowerCase();
-    entries = entries.filter(
-      (e) =>
-        e.message.toLowerCase().includes(term) ||
-        (e.data && JSON.stringify(e.data).toLowerCase().includes(term)),
-    );
-  }
-  if (filters.opId) {
-    const id = filters.opId;
-    entries = entries.filter(
-      (e) => e.data?.opId === id || e.data?.parentOpId === id,
-    );
-  }
-  if (filters.requestId) {
-    const rid = filters.requestId;
-    entries = entries.filter((e) => e.data?.requestId === rid);
-  }
-  if (filters.channel) {
-    const ch = filters.channel;
-    entries = entries.filter((e) => e.data?.channel === ch);
-  }
-  if (filters.sandboxId) {
-    const sid = filters.sandboxId;
-    entries = entries.filter((e) => e.data?.sandboxId === sid);
-  }
-  if (filters.messageId) {
-    const mid = filters.messageId;
-    entries = entries.filter((e) => e.data?.messageId === mid);
-  }
-
-  return [...entries];
+  return filterLogEntries(_buffer, filters);
 }
 
 /** Reset the buffer — for testing only. */

@@ -98,6 +98,7 @@ function installFailingSandboxSync(): {
           throw new Error("sandbox policy update failed");
         },
         async readFileToBuffer() { return null; },
+        async stop() {},
       };
     },
   };
@@ -268,6 +269,7 @@ function installSucceedingSandboxController(opts?: {
           return policy;
         },
         async readFileToBuffer() { return null; },
+        async stop() {},
       } satisfies SandboxHandle;
     },
   };

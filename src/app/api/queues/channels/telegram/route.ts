@@ -18,6 +18,7 @@ export const POST = handleCallback<QueuedChannelJob>(
     const op = createOperationContext({
       trigger: "channel.queue.consumer",
       reason: "channel:telegram",
+      requestId: job.requestId ?? null,
       channel: "telegram",
       messageId: metadata.messageId,
       deliveryCount: metadata.deliveryCount,

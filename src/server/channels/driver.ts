@@ -63,6 +63,8 @@ export type QueuedChannelJob<TPayload = unknown> = {
   opId?: string;
   /** Parent operation ID when this job was spawned from another correlated flow. */
   parentOpId?: string | null;
+  /** Ingress request ID (x-vercel-id / x-request-id) for end-to-end correlation across async handoffs. */
+  requestId?: string | null;
 };
 
 type FailedEntry = {
@@ -107,6 +109,12 @@ export async function enqueueChannelJob<TPayload>(
   const rawJob = JSON.stringify(job);
   const isRetry = (job.retryCount ?? 0) > 0 || typeof job.nextAttemptAt === "number";
 
+  const correlationCtx = {
+    ...(job.opId ? { opId: job.opId } : {}),
+    ...(job.parentOpId ? { parentOpId: job.parentOpId } : {}),
+    ...(job.requestId ? { requestId: job.requestId } : {}),
+  };
+
   if (isRetry) {
     await store.enqueueFront(queueKey, rawJob);
     logInfo("channels.job_enqueued", {
@@ -114,6 +122,7 @@ export async function enqueueChannelJob<TPayload>(
       receivedAt: job.receivedAt,
       retryCount: job.retryCount ?? 0,
       deduped: false,
+      ...correlationCtx,
     });
     return;
   }
@@ -131,6 +140,7 @@ export async function enqueueChannelJob<TPayload>(
       channel,
       dedupId,
       receivedAt: job.receivedAt,
+      ...correlationCtx,
     });
     return;
   }
@@ -140,6 +150,7 @@ export async function enqueueChannelJob<TPayload>(
     receivedAt: job.receivedAt,
     retryCount: job.retryCount ?? 0,
     deduped: false,
+    ...correlationCtx,
   });
 }
 
@@ -365,6 +376,7 @@ export async function processChannelJob<
     trigger: "channel.queue.consumer",
     reason: `channel:${options.channel}`,
     channel: options.channel,
+    requestId: job.requestId ?? null,
     retryCount: job.retryCount ?? null,
     parentOpId: job.parentOpId ?? null,
   });

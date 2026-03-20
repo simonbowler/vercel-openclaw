@@ -6,7 +6,7 @@ import {
   getSlackUrlVerificationChallenge,
   isValidSlackSignature,
 } from "@/server/channels/slack/adapter";
-import { logInfo, logWarn } from "@/server/log";
+import { extractRequestId, logInfo, logWarn } from "@/server/log";
 import { createOperationContext, withOperationContext } from "@/server/observability/operation-context";
 import { getSandboxDomain } from "@/server/sandbox/lifecycle";
 import { getInitializedMeta, getStore } from "@/server/store/store";
@@ -47,6 +47,7 @@ function extractSlackDedupId(payload: unknown): string | null {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const requestId = extractRequestId(request);
   const rawBody = await request.text().catch(() => "");
   const signatureHeader = request.headers.get("x-slack-signature");
   const timestampHeader = request.headers.get("x-slack-request-timestamp");
@@ -99,6 +100,7 @@ export async function POST(request: Request): Promise<Response> {
   const op = createOperationContext({
     trigger: "channel.slack.webhook",
     reason: "incoming slack webhook",
+    requestId: requestId ?? null,
     channel: "slack",
     dedupId: dedupId ?? null,
     sandboxId: meta.sandboxId ?? null,
@@ -157,6 +159,7 @@ export async function POST(request: Request): Promise<Response> {
     receivedAt: Date.now(),
     origin: getPublicOrigin(request),
     opId: op.opId,
+    requestId: requestId ?? null,
   };
 
   const { queued } = await publishToChannelQueue("slack", job);

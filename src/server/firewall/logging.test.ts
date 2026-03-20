@@ -93,6 +93,7 @@ function installSucceedingSandboxController(
           return policy;
         },
         async readFileToBuffer() { return null; },
+        async stop() {},
       } satisfies SandboxHandle;
     },
   };

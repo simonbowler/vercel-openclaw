@@ -167,6 +167,7 @@ test("GET /api/admin/logs: sandbox log parsing prefers top-level source over ctx
             return "allow-all";
           },
           async readFileToBuffer() { return null; },
+          async stop() {},
         } satisfies SandboxHandle;
       },
     };
@@ -329,5 +330,260 @@ test("GET /api/admin/logs: ignores invalid channel param", async () => {
     const body = result.json as { logs: unknown[] };
     // Invalid channel is ignored, so all logs are returned
     assert.ok(body.logs.length >= 1);
+  });
+});
+
+// ===========================================================================
+// GET /api/admin/logs — sandbox-path tests (non-running states & filtering)
+// ===========================================================================
+
+/**
+ * Build a fake SandboxController whose `get()` returns a sandbox that
+ * yields `stdout` from `runCommand`.
+ */
+function fakeSandboxController(
+  sandboxId: string,
+  stdout: string,
+): SandboxController {
+  return {
+    async create() {
+      throw new Error("not used");
+    },
+    async get() {
+      return {
+        sandboxId,
+        get timeout() {
+          return 1800000;
+        },
+        async runCommand() {
+          return {
+            exitCode: 0,
+            output: async () => stdout,
+          };
+        },
+        async writeFiles() {},
+        domain() {
+          return `https://${sandboxId}.fake.vercel.run`;
+        },
+        async snapshot() {
+          return { snapshotId: `snap-${sandboxId}` };
+        },
+        async extendTimeout() {},
+        async updateNetworkPolicy() {
+          return "allow-all" as const;
+        },
+        async readFileToBuffer() {
+          return null;
+        },
+        async stop() {},
+      } satisfies SandboxHandle;
+    },
+  };
+}
+
+test("GET /api/admin/logs: reads sandbox logs while booting", async () => {
+  await withTestEnv(async () => {
+    const stdout = JSON.stringify({
+      ts: "2026-03-20T06:00:00.000Z",
+      level: "info",
+      source: "channels",
+      msg: "channels.wake_requested",
+      ctx: { opId: "op_boot", channel: "slack" },
+    });
+
+    _setSandboxControllerForTesting(
+      fakeSandboxController("sandbox-booting", stdout),
+    );
+    await mutateMeta((meta) => {
+      meta.status = "booting";
+      meta.sandboxId = "sandbox-booting";
+    });
+
+    const route = getAdminLogsRoute();
+    const result = await callRoute(
+      route.GET!,
+      buildAuthGetRequest("/api/admin/logs?opId=op_boot"),
+    );
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      logs: Array<{ message: string; data?: { opId?: string; channel?: string } }>;
+    };
+    assert.equal(body.logs.length, 1);
+    assert.equal(body.logs[0]?.message, "channels.wake_requested");
+    assert.equal(body.logs[0]?.data?.opId, "op_boot");
+    assert.equal(body.logs[0]?.data?.channel, "slack");
+  });
+});
+
+test("GET /api/admin/logs: reads sandbox logs while restoring and filters by requestId", async () => {
+  await withTestEnv(async () => {
+    const stdout = [
+      JSON.stringify({
+        ts: "2026-03-20T06:00:00.000Z",
+        level: "info",
+        source: "channels",
+        msg: "channels.wake_requested",
+        ctx: { requestId: "req-sbx-1", opId: "op_1" },
+      }),
+      JSON.stringify({
+        ts: "2026-03-20T06:00:01.000Z",
+        level: "info",
+        source: "channels",
+        msg: "channels.wake_requested",
+        ctx: { requestId: "req-sbx-2", opId: "op_2" },
+      }),
+    ].join("\n");
+
+    _setSandboxControllerForTesting(
+      fakeSandboxController("sandbox-restoring", stdout),
+    );
+    await mutateMeta((meta) => {
+      meta.status = "restoring";
+      meta.sandboxId = "sandbox-restoring";
+    });
+
+    const route = getAdminLogsRoute();
+    const result = await callRoute(
+      route.GET!,
+      buildAuthGetRequest("/api/admin/logs?requestId=req-sbx-1"),
+    );
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      logs: Array<{ data?: { requestId?: string } }>;
+    };
+    assert.equal(body.logs.length, 1);
+    assert.equal(body.logs[0]?.data?.requestId, "req-sbx-1");
+  });
+});
+
+test("GET /api/admin/logs: reads sandbox logs while in setup", async () => {
+  await withTestEnv(async () => {
+    const stdout = JSON.stringify({
+      ts: "2026-03-20T06:00:00.000Z",
+      level: "info",
+      source: "lifecycle",
+      msg: "sandbox.setup.started",
+      ctx: { sandboxId: "sandbox-setup", opId: "op_setup" },
+    });
+
+    _setSandboxControllerForTesting(
+      fakeSandboxController("sandbox-setup", stdout),
+    );
+    await mutateMeta((meta) => {
+      meta.status = "setup";
+      meta.sandboxId = "sandbox-setup";
+    });
+
+    const route = getAdminLogsRoute();
+    const result = await callRoute(
+      route.GET!,
+      buildAuthGetRequest("/api/admin/logs?opId=op_setup"),
+    );
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      logs: Array<{ message: string; data?: { opId?: string } }>;
+    };
+    assert.equal(body.logs.length, 1);
+    assert.equal(body.logs[0]?.message, "sandbox.setup.started");
+  });
+});
+
+test("GET /api/admin/logs: excludes tail header lines from sandbox output", async () => {
+  await withTestEnv(async () => {
+    const stdout = [
+      "==> /tmp/openclaw/openclaw-a.log <==",
+      JSON.stringify({
+        ts: "2026-03-20T06:00:00.000Z",
+        level: "info",
+        source: "firewall",
+        msg: "sandbox.restore.phase_complete",
+        ctx: { opId: "op_hdr" },
+      }),
+      "==> /tmp/openclaw/openclaw-b.log <==",
+    ].join("\n");
+
+    _setSandboxControllerForTesting(
+      fakeSandboxController("sandbox-headers", stdout),
+    );
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sandbox-headers";
+    });
+
+    const route = getAdminLogsRoute();
+    const result = await callRoute(
+      route.GET!,
+      buildAuthGetRequest("/api/admin/logs?opId=op_hdr"),
+    );
+
+    assert.equal(result.status, 200);
+    const body = result.json as { logs: Array<{ message: string }> };
+    assert.equal(body.logs.length, 1);
+    assert.equal(body.logs[0]?.message, "sandbox.restore.phase_complete");
+  });
+});
+
+test("GET /api/admin/logs: does not read sandbox logs when status is stopped", async () => {
+  await withTestEnv(async () => {
+    let sandboxGetCalled = false;
+    const controller: SandboxController = {
+      async create() {
+        throw new Error("not used");
+      },
+      async get() {
+        sandboxGetCalled = true;
+        throw new Error("should not be called");
+      },
+    };
+
+    _setSandboxControllerForTesting(controller);
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.sandboxId = "sandbox-stopped";
+    });
+
+    const route = getAdminLogsRoute();
+    const result = await callRoute(
+      route.GET!,
+      buildAuthGetRequest("/api/admin/logs"),
+    );
+
+    assert.equal(result.status, 200);
+    assert.equal(sandboxGetCalled, false, "should not attempt to read sandbox logs when stopped");
+  });
+});
+
+test("GET /api/admin/logs: returns 200 even when sandbox tail fails", async () => {
+  await withTestEnv(async () => {
+    const controller: SandboxController = {
+      async create() {
+        throw new Error("not used");
+      },
+      async get() {
+        throw new Error("sandbox unavailable");
+      },
+    };
+
+    _setSandboxControllerForTesting(controller);
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sandbox-failing";
+    });
+
+    // Add a server log so we can verify it still comes through
+    logInfo("channels.wake_requested", { opId: "op_survive" });
+
+    const route = getAdminLogsRoute();
+    const result = await callRoute(
+      route.GET!,
+      buildAuthGetRequest("/api/admin/logs?opId=op_survive"),
+    );
+
+    assert.equal(result.status, 200);
+    const body = result.json as { logs: Array<{ message: string }> };
+    assert.ok(body.logs.length >= 1, "should still return server logs on sandbox failure");
   });
 });

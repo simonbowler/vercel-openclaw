@@ -3,7 +3,7 @@ import { enqueueChannelJob } from "@/server/channels/driver";
 import { verifyDiscordRequestSignature } from "@/server/channels/discord/adapter";
 import { channelDedupKey } from "@/server/channels/keys";
 import { publishToChannelQueue } from "@/server/channels/queue";
-import { logInfo } from "@/server/log";
+import { extractRequestId, logInfo } from "@/server/log";
 import { createOperationContext, withOperationContext } from "@/server/observability/operation-context";
 import { getInitializedMeta, getStore } from "@/server/store/store";
 
@@ -21,6 +21,7 @@ function extractInteractionId(payload: unknown): string | null {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const requestId = extractRequestId(request);
   const meta = await getInitializedMeta();
   const config = meta.channels.discord;
   if (!config) {
@@ -65,6 +66,7 @@ export async function POST(request: Request): Promise<Response> {
   const op = createOperationContext({
     trigger: "channel.discord.webhook",
     reason: "incoming discord webhook",
+    requestId: requestId ?? null,
     channel: "discord",
     dedupId: interactionId ?? null,
     sandboxId: meta.sandboxId ?? null,
@@ -79,6 +81,7 @@ export async function POST(request: Request): Promise<Response> {
     receivedAt: Date.now(),
     origin: getPublicOrigin(request),
     opId: op.opId,
+    requestId: requestId ?? null,
   };
 
   const { queued } = await publishToChannelQueue("discord", job);

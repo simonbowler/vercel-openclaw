@@ -20,6 +20,7 @@ import test from "node:test";
 import type { NetworkPolicy } from "@vercel/sandbox";
 
 import type { SandboxController, SandboxHandle } from "@/server/sandbox/controller";
+import { buildRestoreAssetManifest, OPENCLAW_RESTORE_ASSET_MANIFEST_PATH } from "@/server/openclaw/restore-assets";
 import { _setSandboxControllerForTesting } from "@/server/sandbox/controller";
 import {
   _resetStoreForTesting,
@@ -172,6 +173,9 @@ function makeFakeHandle(
   policies: NetworkPolicy[],
 ): SandboxHandle {
   let snapCount = 0;
+  const restoreAssetManifest = Buffer.from(
+    `${JSON.stringify(buildRestoreAssetManifest())}\n`,
+  );
   return {
     sandboxId,
     get timeout() { return 1800000; },
@@ -192,7 +196,13 @@ function makeFakeHandle(
       policies.push(policy);
       return policy;
     },
-    async readFileToBuffer() { return null; },
+    async readFileToBuffer(file) {
+      if (file.path === OPENCLAW_RESTORE_ASSET_MANIFEST_PATH) {
+        return restoreAssetManifest;
+      }
+      return null;
+    },
+    async stop() {},
   } satisfies SandboxHandle;
 }
 
@@ -428,7 +438,7 @@ test("POST /api/admin/snapshots/restore: restores from valid snapshotId", async 
     });
   } finally {
     // Give the detached lifecycle work time to settle before removing the handler
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 250));
     process.removeListener("unhandledRejection", handler);
   }
 });

@@ -17,6 +17,7 @@ export const POST = handleCallback<QueuedChannelJob>(
     const op = createOperationContext({
       trigger: "channel.queue.consumer",
       reason: "channel:slack",
+      requestId: job.requestId ?? null,
       channel: "slack",
       messageId: metadata.messageId,
       deliveryCount: metadata.deliveryCount,

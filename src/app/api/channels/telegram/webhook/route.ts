@@ -3,7 +3,7 @@ import { enqueueChannelJob } from "@/server/channels/driver";
 import { channelDedupKey } from "@/server/channels/keys";
 import { publishToChannelQueue } from "@/server/channels/queue";
 import { isTelegramWebhookSecretValid } from "@/server/channels/telegram/adapter";
-import { logError, logInfo, logWarn } from "@/server/log";
+import { extractRequestId, logError, logInfo, logWarn } from "@/server/log";
 import { createOperationContext, withOperationContext } from "@/server/observability/operation-context";
 import { OPENCLAW_TELEGRAM_WEBHOOK_PORT } from "@/server/openclaw/config";
 import { getSandboxDomain } from "@/server/sandbox/lifecycle";
@@ -25,6 +25,7 @@ function extractUpdateId(payload: unknown): string | null {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const requestId = extractRequestId(request);
   const meta = await getInitializedMeta();
   const config = meta.channels.telegram;
   if (!config) {
@@ -57,6 +58,7 @@ export async function POST(request: Request): Promise<Response> {
     const op = createOperationContext({
       trigger: "channel.telegram.webhook",
       reason: "incoming telegram webhook",
+      requestId: requestId ?? null,
       channel: "telegram",
       dedupId: updateId ?? null,
       sandboxId: meta.sandboxId ?? null,
@@ -105,6 +107,7 @@ export async function POST(request: Request): Promise<Response> {
       receivedAt: Date.now(),
       origin: getPublicOrigin(request),
       opId: op.opId,
+      requestId: requestId ?? null,
     };
 
     const { queued } = await publishToChannelQueue("telegram", job);

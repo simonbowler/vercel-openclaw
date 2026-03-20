@@ -1,8 +1,13 @@
 import { getSandboxController } from "@/server/sandbox/controller";
 
-import type { LogEntry, LogLevel, LogSource } from "@/shared/types";
+import type { LogEntry, LogLevel, LogSource, SingleStatus } from "@/shared/types";
 import { requireJsonRouteAuth, authJsonOk } from "@/server/auth/route-auth";
-import { getFilteredServerLogs } from "@/server/log";
+import {
+  filterLogEntries,
+  getFilteredServerLogs,
+  logWarn,
+  type LogFilters,
+} from "@/server/log";
 import { getInitializedMeta } from "@/server/store/store";
 
 const MAX_LOG_LINES = 200;
@@ -84,6 +89,33 @@ function isValidSource(value: string): value is LogSource {
   return valid.includes(value);
 }
 
+/**
+ * Sandbox logs are readable whenever the sandbox exists and is in an active
+ * lifecycle state — not just "running". The setup, booting, and restoring
+ * states are exactly when operators most need sandbox-side logs.
+ */
+function shouldReadSandboxLogs(
+  status: SingleStatus,
+  sandboxId: string | null,
+): boolean {
+  if (!sandboxId) return false;
+  return (
+    status === "setup" ||
+    status === "booting" ||
+    status === "restoring" ||
+    status === "running"
+  );
+}
+
+/**
+ * Detect `tail` header lines emitted when multiple files match the glob.
+ * These have the form `==> /path/to/file <==` and should be excluded.
+ */
+function isTailHeaderLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.startsWith("==> ") && trimmed.endsWith(" <==");
+}
+
 export async function GET(request: Request): Promise<Response> {
   const auth = await requireJsonRouteAuth(request);
   if (auth instanceof Response) {
@@ -107,8 +139,7 @@ export async function GET(request: Request): Promise<Response> {
       ? channelParam
       : undefined;
 
-  // Collect server-side structured logs from the ring buffer
-  const serverLogs = getFilteredServerLogs({
+  const filters: LogFilters = {
     level,
     source,
     search: searchParam,
@@ -117,44 +148,38 @@ export async function GET(request: Request): Promise<Response> {
     channel,
     sandboxId: sandboxIdParam,
     messageId: messageIdParam,
-  });
+  };
 
-  // Collect sandbox logs if running
+  // Collect server-side structured logs from the ring buffer
+  const serverLogs = getFilteredServerLogs(filters);
+
+  // Collect sandbox logs when the sandbox exists and is in an active state
   let sandboxLogs: LogEntry[] = [];
   const meta = await getInitializedMeta();
-  if (meta.status === "running" && meta.sandboxId) {
+  if (shouldReadSandboxLogs(meta.status, meta.sandboxId)) {
     try {
-      const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
+      const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId! });
       const result = await sandbox.runCommand("bash", [
         "-c",
-        `tail -n ${MAX_LOG_LINES} ${LOG_FILE_GLOB} 2>/dev/null || echo ""`,
+        `tail -q -n ${MAX_LOG_LINES} ${LOG_FILE_GLOB} 2>/dev/null || echo ""`,
       ]);
 
       const stdout = await result.output("stdout");
-      const lines = stdout.split("\n");
-      for (let i = 0; i < lines.length; i++) {
-        const entry = parseLogLine(lines[i], i);
-        if (entry) {
-          // Apply filters to sandbox logs too
-          if (level && entry.level !== level) continue;
-          if (source && entry.source !== source) continue;
-          if (searchParam) {
-            const term = searchParam.toLowerCase();
-            const matches =
-              entry.message.toLowerCase().includes(term) ||
-              (entry.data && JSON.stringify(entry.data).toLowerCase().includes(term));
-            if (!matches) continue;
-          }
-          if (opIdParam && entry.data?.opId !== opIdParam && entry.data?.parentOpId !== opIdParam) continue;
-          if (requestIdParam && entry.data?.requestId !== requestIdParam) continue;
-          if (channel && entry.data?.channel !== channel) continue;
-          if (sandboxIdParam && entry.data?.sandboxId !== sandboxIdParam) continue;
-          if (messageIdParam && entry.data?.messageId !== messageIdParam) continue;
-          sandboxLogs.push(entry);
-        }
+      const parsed: LogEntry[] = [];
+
+      for (const [index, line] of stdout.split("\n").entries()) {
+        if (isTailHeaderLine(line)) continue;
+        const entry = parseLogLine(line, index);
+        if (entry) parsed.push(entry);
       }
-    } catch {
-      // Sandbox logs unavailable — return server logs only
+
+      sandboxLogs = filterLogEntries(parsed, filters);
+    } catch (error) {
+      logWarn("admin.logs.sandbox_tail_failed", {
+        sandboxId: meta.sandboxId,
+        status: meta.status,
+        error: error instanceof Error ? error.message : String(error),
+      });
       sandboxLogs = [];
     }
   }

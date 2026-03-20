@@ -1165,12 +1165,16 @@ async function createAndBootstrapSandbox(
       return current;
     }
 
+    /** Merge operation context (when available) with extra fields for structured logs. */
+    const ctx = (extra?: Record<string, unknown>) =>
+      options?.op ? withOperationContext(options.op, extra) : (extra ?? {});
+
     // Auth-required boot: on Vercel, require a usable AI Gateway credential.
     const credential = await resolveAiGatewayCredentialOptional();
     if (isVercelDeployment() && !credential) {
-      logError("sandbox.create.no_ai_gateway_credential", {
+      logError("sandbox.create.no_ai_gateway_credential", ctx({
         message: "Cannot create sandbox on Vercel without AI Gateway credential. OIDC may be temporarily unavailable.",
-      });
+      }));
       await mutateMeta((meta) => {
         meta.status = "error";
         meta.lastError =
@@ -1180,7 +1184,7 @@ async function createAndBootstrapSandbox(
       return getInitializedMeta();
     }
 
-    logInfo("sandbox.status_transition", { from: current.status, to: "creating" });
+    logInfo("sandbox.status_transition", ctx({ from: current.status, to: "creating" }));
     await mutateMeta((meta) => {
       meta.status = "creating";
       meta.lastError = null;
@@ -1196,7 +1200,7 @@ async function createAndBootstrapSandbox(
       ...(await buildRuntimeEnv()),
     });
 
-    logInfo("sandbox.status_transition", { from: "creating", to: "setup", sandboxId: sandbox.sandboxId, vcpus, sleepAfterMs });
+    logInfo("sandbox.status_transition", ctx({ from: "creating", to: "setup", sandboxId: sandbox.sandboxId, vcpus, sleepAfterMs }));
     await mutateMeta((meta) => {
       meta.status = "setup";
       meta.sandboxId = sandbox.sandboxId;
@@ -1248,11 +1252,11 @@ async function createAndBootstrapSandbox(
       firewallApplied = true;
     } catch (err) {
       firewallError = err instanceof Error ? err.message : String(err);
-      logWarn("sandbox.create.firewall_sync_failed", {
+      logWarn("sandbox.create.firewall_sync_failed", ctx({
         sandboxId: sandbox.sandboxId,
         mode: pending.firewall.mode,
         error: firewallError,
-      });
+      }));
     }
     const firewallCompletedAt = Date.now();
     const firewallDurationMs = firewallCompletedAt - firewallStartedAt;
@@ -1279,18 +1283,18 @@ async function createAndBootstrapSandbox(
     // In enforcing mode, firewall sync failure is a hard blocker — the
     // sandbox must not become available without its network policy applied.
     if (!firewallApplied && pending.firewall.mode === "enforcing") {
-      logError("sandbox.create.firewall_sync_blocked_create", {
+      logError("sandbox.create.firewall_sync_blocked_create", ctx({
         sandboxId: sandbox.sandboxId,
         error: firewallError,
-      });
+      }));
 
       try {
         await sandbox.stop({ blocking: true });
       } catch (stopError) {
-        logWarn("sandbox.create.firewall_sync_cleanup_failed", {
+        logWarn("sandbox.create.firewall_sync_cleanup_failed", ctx({
           sandboxId: sandbox.sandboxId,
           error: stopError instanceof Error ? stopError.message : String(stopError),
-        });
+        }));
       }
 
       await mutateMeta((meta) => {
@@ -1303,22 +1307,22 @@ async function createAndBootstrapSandbox(
       return getInitializedMeta();
     }
 
-    logInfo("sandbox.status_transition", {
+    logInfo("sandbox.status_transition", ctx({
       from: "setup",
       to: "running",
       sandboxId: sandbox.sandboxId,
-    });
+    }));
 
     await mutateMeta((meta) => {
       meta.status = "running";
       meta.lastError = null;
     });
 
-    logInfo("sandbox.create.complete", {
+    logInfo("sandbox.create.complete", ctx({
       sandboxId: sandbox.sandboxId,
       openclawVersion: setupResult.openclawVersion,
       firewallApplied,
-    });
+    }));
     return getInitializedMeta();
   });
 }
