@@ -70,11 +70,16 @@ export function getStore(): Store {
     return singletonStore;
   }
 
-  const upstash = UpstashStore.fromEnv();
-  if (upstash) {
-    singletonStore = upstash;
-    logInfo("store.initialized", { backend: singletonStore.name });
-    return singletonStore;
+  // Never connect to Upstash during tests — even if env vars leak in from
+  // .env.local or vercel env pull.  This prevents test harness fake sandbox
+  // IDs (sbx-fake-*) from corrupting production metadata.
+  if (process.env.NODE_ENV !== "test") {
+    const upstash = UpstashStore.fromEnv();
+    if (upstash) {
+      singletonStore = upstash;
+      logInfo("store.initialized", { backend: singletonStore.name });
+      return singletonStore;
+    }
   }
 
   if (requiresDurableStore()) {
