@@ -165,13 +165,15 @@ export async function runLaunchVerifyCompletion(options: {
       makeRequest: async () => {
         // Re-read meta so retries after token refresh pick up the new token.
         const currentMeta = await getInitializedMeta();
+        const gatewayToken = currentMeta.gatewayToken ?? options.gatewayToken;
         return fetch(
           new URL("/v1/chat/completions", options.gatewayUrl),
           {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              Authorization: `Bearer ${currentMeta.gatewayToken}`,
+              Authorization: `Bearer ${gatewayToken}`,
+              "X-AI-Gateway-Token": gatewayToken,
             },
             body: JSON.stringify({
               model: "default",

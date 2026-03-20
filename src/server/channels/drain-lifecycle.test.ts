@@ -368,7 +368,9 @@ test("Drain lifecycle: sandbox create failure → job retried (not permanently f
 
     // Make the sandbox controller throw on every create attempt
     // so ensureSandboxReady times out quickly.
-    h.controller.setCreateFailure(new Error("sandbox_create_quota_exceeded"));
+    h.controller.create = async () => {
+      throw new Error("sandbox_create_quota_exceeded");
+    };
 
     // Install gateway handler that returns not-ready (ensures timeout)
     h.fakeFetch.onGet(/fake\.vercel\.run/, () =>
