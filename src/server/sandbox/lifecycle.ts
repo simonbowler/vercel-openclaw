@@ -22,6 +22,7 @@ import {
   OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
   OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
   OPENCLAW_GATEWAY_TOKEN_PATH,
+  OPENCLAW_LOG_FILE,
   OPENCLAW_STARTUP_SCRIPT_PATH,
   OPENCLAW_STATE_DIR,
 } from "@/server/openclaw/config";
@@ -278,6 +279,38 @@ export async function ensureSandboxReady(options: {
   return result.meta;
 }
 
+async function cleanupBeforeSnapshot(
+  sandbox: SandboxHandle,
+  firewallMode: SingleMeta["firewall"]["mode"],
+): Promise<void> {
+  logInfo("openclaw.pre_snapshot_cleanup", { sandboxId: sandbox.sandboxId });
+
+  const cleanupCommands = [
+    `rm -f ${OPENCLAW_LOG_FILE}`,
+    "rm -rf /tmp/openclaw",
+    "rm -rf /home/vercel-sandbox/.npm /root/.npm /tmp/openclaw-npm-cache",
+    "rm -rf /home/vercel-sandbox/.npm/_logs",
+  ];
+
+  if (firewallMode !== "learning") {
+    cleanupCommands.push("rm -f /tmp/shell-commands-for-learning.log");
+  }
+
+  const result = await sandbox.runCommand("bash", [
+    "-lc",
+    cleanupCommands.join("\n"),
+  ]);
+
+  if (result.exitCode !== 0) {
+    const output = await result.output("both");
+    throw new CommandFailedError({
+      command: "cleanup-before-snapshot",
+      exitCode: result.exitCode,
+      output,
+    });
+  }
+}
+
 export async function stopSandbox(): Promise<SingleMeta> {
   logInfo("sandbox.stop_requested");
   return withLifecycleLock(async () => {
@@ -297,6 +330,7 @@ export async function stopSandbox(): Promise<SingleMeta> {
     logInfo("sandbox.snapshotting", { sandboxId: meta.sandboxId });
     try {
       const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
+      await cleanupBeforeSnapshot(sandbox, meta.firewall.mode);
       const snapshot = await sandbox.snapshot();
       // Compute config hash for this snapshot.  The hash covers everything
       // in buildGatewayConfig EXCEPT the proxy origin (which varies per

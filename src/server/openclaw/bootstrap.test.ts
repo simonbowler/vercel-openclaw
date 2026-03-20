@@ -56,28 +56,35 @@ test("setupOpenClaw executes commands in correct order", async () => {
 
     const cmds = handle.commands.map((c) => c.cmd);
 
-    // npm install → sh (bun install) → (writeFiles) → openclaw --version →
-    // bash startup → curl (gateway probe) → node (force-pair)
+    // npm install → sh (bun install) → bash (npm cache cleanup) → (writeFiles)
+    // → openclaw --version → bash startup → curl (gateway probe) → node (force-pair)
     assert.equal(cmds[0], "npm", "first command should be npm install");
     assert.equal(cmds[1], "sh", "second command should be bun install");
-    assert.equal(cmds[2], OPENCLAW_BIN, "third command should be version check");
-    assert.equal(cmds[3], "bash", "fourth command should be startup script");
-    assert.equal(cmds[4], "curl", "fifth command should be gateway probe");
-    assert.equal(cmds[5], "node", "sixth command should be force-pair");
+    assert.equal(cmds[2], "bash", "third command should be npm cache cleanup");
+    assert.equal(cmds[3], OPENCLAW_BIN, "fourth command should be version check");
+    assert.equal(cmds[4], "bash", "fifth command should be startup script");
+    assert.equal(cmds[5], "curl", "sixth command should be gateway probe");
+    assert.equal(cmds[6], "node", "seventh command should be force-pair");
 
     // Verify npm install uses the resolved package spec (openclaw@latest in non-Vercel env)
     assert.deepEqual(handle.commands[0].args, [
       "install", "-g", "openclaw@latest", "--ignore-scripts",
     ]);
 
+    // Verify npm cache cleanup args
+    assert.deepEqual(handle.commands[2].args, [
+      "-lc",
+      "rm -rf /home/vercel-sandbox/.npm /root/.npm /tmp/openclaw-npm-cache",
+    ]);
+
     // Verify version check args
-    assert.deepEqual(handle.commands[2].args, ["--version"]);
+    assert.deepEqual(handle.commands[3].args, ["--version"]);
 
     // Verify startup script invocation
-    assert.deepEqual(handle.commands[3].args, [OPENCLAW_STARTUP_SCRIPT_PATH]);
+    assert.deepEqual(handle.commands[4].args, [OPENCLAW_STARTUP_SCRIPT_PATH]);
 
     // Verify force-pair invocation
-    assert.deepEqual(handle.commands[5].args, [
+    assert.deepEqual(handle.commands[6].args, [
       OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
       OPENCLAW_STATE_DIR,
     ]);
@@ -1038,6 +1045,45 @@ test("detectDrift returns true for range spec", () => {
 
 test("detectDrift returns true when installedVersion is null", () => {
   assert.equal(detectDrift("openclaw@1.2.3", null), true);
+});
+
+// ---------------------------------------------------------------------------
+// setupOpenClaw — npm cache cleanup
+// ---------------------------------------------------------------------------
+
+test("setupOpenClaw runs npm cache cleanup for all known cache directories", async () => {
+  const h = createScenarioHarness();
+  try {
+    const handle = await createHandle(h);
+
+    await setupOpenClaw(handle, {
+      gatewayToken: "tok",
+      proxyOrigin: "https://proxy.test",
+    });
+
+    const npmCacheCleanupCmd = handle.commands.find(
+      (c) =>
+        c.cmd === "bash"
+        && c.args?.[0] === "-lc"
+        && c.args?.[1]?.includes("/tmp/openclaw-npm-cache"),
+    );
+
+    assert.ok(npmCacheCleanupCmd, "npm cache cleanup command not run");
+    assert.ok(
+      npmCacheCleanupCmd.args?.[1]?.includes("/home/vercel-sandbox/.npm"),
+      "cleanup command should remove /home/vercel-sandbox/.npm",
+    );
+    assert.ok(
+      npmCacheCleanupCmd.args?.[1]?.includes("/root/.npm"),
+      "cleanup command should remove /root/.npm",
+    );
+    assert.ok(
+      npmCacheCleanupCmd.args?.[1]?.includes("/tmp/openclaw-npm-cache"),
+      "cleanup command should remove /tmp/openclaw-npm-cache",
+    );
+  } finally {
+    h.teardown();
+  }
 });
 
 // ---------------------------------------------------------------------------
