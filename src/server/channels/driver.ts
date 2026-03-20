@@ -30,6 +30,7 @@ import { logError, logInfo, logWarn } from "@/server/log";
 import { logStateSnapshot } from "@/server/observability/state-snapshot";
 import { getPublicOriginFromHint } from "@/server/public-url";
 import { getSandboxController } from "@/server/sandbox/controller";
+import type { TokenRefreshResult } from "@/server/sandbox/lifecycle";
 import {
   ensureFreshGatewayToken,
   ensureSandboxReady,
@@ -577,8 +578,8 @@ export async function processChannelJob<
         },
         onRefreshNeeded: async () => {
           try {
-            await ensureFreshGatewayToken({ force: true });
-            return true;
+            const refreshResult = await ensureFreshGatewayToken({ force: true });
+            return shouldRetryGatewayRequestAfterRefresh(refreshResult);
           } catch {
             return false;
           }
@@ -592,13 +593,23 @@ export async function processChannelJob<
             sandboxId: readyMeta.sandboxId,
             error: recoveryResult.error,
           }));
-          await reconcileSandboxHealth({
-            origin: resolveAppOrigin(job.origin),
-            reason: `channel:${options.channel}:gateway_410`,
-            op,
-          });
+          try {
+            await reconcileSandboxHealth({
+              origin: resolveAppOrigin(job.origin),
+              reason: `channel:${options.channel}:gateway_410`,
+              op,
+            });
+          } catch (reconcileError) {
+            logWarn("channels.gateway_410_reconcile_failed", withOperationContext(op, {
+              channel: options.channel,
+              sandboxId: readyMeta.sandboxId,
+              gatewayError: recoveryResult.error,
+              attempted: "reconcileSandboxHealth",
+              error: formatError(reconcileError),
+            }));
+          }
           throw new RetryableChannelError(
-            `sandbox_gone_410: reconciliation scheduled`,
+            "sandbox_gone_410: reconciliation scheduled",
             DEFAULT_CHANNEL_WAKE_RETRY_AFTER_SECONDS,
           );
         }
@@ -798,6 +809,17 @@ function serializeLeasedChannelQueueEntry(
   };
 
   return JSON.stringify(envelope);
+}
+
+function shouldRetryGatewayRequestAfterRefresh(
+  refreshResult: TokenRefreshResult,
+): boolean {
+  if (refreshResult.refreshed) {
+    return true;
+  }
+
+  return refreshResult.reason.includes("no-refresh-needed") ||
+    refreshResult.reason.includes("refreshed-by-another");
 }
 
 export function isRetryable(error: unknown): boolean {
