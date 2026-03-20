@@ -147,14 +147,25 @@ const realController: SandboxController = {
 // Module-level singleton with test override
 // ---------------------------------------------------------------------------
 
-let activeController: SandboxController = realController;
+const SANDBOX_CONTROLLER_TEST_GUARD_ERROR =
+  "Sandbox controller not initialized for testing. Call _setSandboxControllerForTesting() first.";
+
+let activeController: SandboxController | null = null;
 
 export function getSandboxController(): SandboxController {
-  return activeController;
+  if (activeController) {
+    return activeController;
+  }
+
+  if (process.env.NODE_ENV === "test") {
+    throw new Error(SANDBOX_CONTROLLER_TEST_GUARD_ERROR);
+  }
+
+  return realController;
 }
 
 export function _setSandboxControllerForTesting(
   controller: SandboxController | null,
 ): void {
-  activeController = controller ?? realController;
+  activeController = controller;
 }
