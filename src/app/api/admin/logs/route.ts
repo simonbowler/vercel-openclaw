@@ -154,9 +154,25 @@ export async function GET(request: Request): Promise<Response> {
   const serverLogs = getFilteredServerLogs(filters);
 
   // Collect sandbox logs when the sandbox exists and is in an active state
-  let sandboxLogs: LogEntry[] = [];
   const meta = await getInitializedMeta();
+
+  const diagnostics = {
+    sandbox: {
+      attempted: false,
+      included: false,
+      status: meta.status,
+      sandboxId: meta.sandboxId,
+      tailError: null as string | null,
+      parsedLineCount: 0,
+      matchedLineCount: 0,
+    },
+    filters,
+  };
+
+  let sandboxLogs: LogEntry[] = [];
   if (shouldReadSandboxLogs(meta.status, meta.sandboxId)) {
+    diagnostics.sandbox.attempted = true;
+
     try {
       const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId! });
       const result = await sandbox.runCommand("bash", [
@@ -173,12 +189,19 @@ export async function GET(request: Request): Promise<Response> {
         if (entry) parsed.push(entry);
       }
 
+      diagnostics.sandbox.included = true;
+      diagnostics.sandbox.parsedLineCount = parsed.length;
+
       sandboxLogs = filterLogEntries(parsed, filters);
+      diagnostics.sandbox.matchedLineCount = sandboxLogs.length;
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      diagnostics.sandbox.tailError = message;
+
       logWarn("admin.logs.sandbox_tail_failed", {
         sandboxId: meta.sandboxId,
         status: meta.status,
-        error: error instanceof Error ? error.message : String(error),
+        error: message,
       });
       sandboxLogs = [];
     }
@@ -189,5 +212,16 @@ export async function GET(request: Request): Promise<Response> {
     (a, b) => b.timestamp - a.timestamp,
   );
 
-  return authJsonOk({ logs: allLogs }, auth);
+  return authJsonOk(
+    {
+      logs: allLogs,
+      diagnostics: {
+        serverLogCount: serverLogs.length,
+        sandboxLogCount: sandboxLogs.length,
+        totalLogCount: allLogs.length,
+        ...diagnostics,
+      },
+    },
+    auth,
+  );
 }

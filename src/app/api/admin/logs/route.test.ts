@@ -587,3 +587,144 @@ test("GET /api/admin/logs: returns 200 even when sandbox tail fails", async () =
     assert.ok(body.logs.length >= 1, "should still return server logs on sandbox failure");
   });
 });
+
+// ===========================================================================
+// GET /api/admin/logs — diagnostics object
+// ===========================================================================
+
+test("GET /api/admin/logs: includes sandbox diagnostics while restoring", async () => {
+  await withTestEnv(async () => {
+    _setSandboxControllerForTesting(
+      fakeSandboxController(
+        "sandbox-restoring",
+        JSON.stringify({
+          ts: "2026-03-20T06:00:00.000Z",
+          level: "info",
+          source: "channels",
+          msg: "channels.wake_requested",
+          ctx: { requestId: "req-sbx-1", opId: "op_1" },
+        }),
+      ),
+    );
+
+    await mutateMeta((meta) => {
+      meta.status = "restoring";
+      meta.sandboxId = "sandbox-restoring";
+    });
+
+    const route = getAdminLogsRoute();
+    const result = await callRoute(
+      route.GET!,
+      buildAuthGetRequest("/api/admin/logs?requestId=req-sbx-1"),
+    );
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      logs: Array<unknown>;
+      diagnostics: {
+        serverLogCount: number;
+        sandboxLogCount: number;
+        totalLogCount: number;
+        sandbox: {
+          attempted: boolean;
+          included: boolean;
+          status: string;
+          sandboxId: string | null;
+          tailError: string | null;
+          parsedLineCount: number;
+          matchedLineCount: number;
+        };
+      };
+    };
+
+    assert.equal(body.diagnostics.sandbox.attempted, true);
+    assert.equal(body.diagnostics.sandbox.included, true);
+    assert.equal(body.diagnostics.sandbox.status, "restoring");
+    assert.equal(body.diagnostics.sandbox.sandboxId, "sandbox-restoring");
+    assert.equal(body.diagnostics.sandbox.tailError, null);
+    assert.equal(body.diagnostics.sandbox.parsedLineCount, 1);
+    assert.equal(body.diagnostics.sandbox.matchedLineCount, 1);
+    assert.equal(body.diagnostics.sandboxLogCount, 1);
+  });
+});
+
+test("GET /api/admin/logs: diagnostics report tailError when sandbox get throws", async () => {
+  await withTestEnv(async () => {
+    const controller: SandboxController = {
+      async create() {
+        throw new Error("not used");
+      },
+      async get() {
+        throw new Error("sandbox unavailable");
+      },
+    };
+
+    _setSandboxControllerForTesting(controller);
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sandbox-failing-diag";
+    });
+
+    logInfo("channels.wake_requested", { opId: "op_diag" });
+
+    const route = getAdminLogsRoute();
+    const result = await callRoute(
+      route.GET!,
+      buildAuthGetRequest("/api/admin/logs?opId=op_diag"),
+    );
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      logs: Array<unknown>;
+      diagnostics: {
+        serverLogCount: number;
+        sandboxLogCount: number;
+        totalLogCount: number;
+        sandbox: {
+          attempted: boolean;
+          included: boolean;
+          tailError: string | null;
+        };
+      };
+    };
+
+    assert.equal(body.diagnostics.sandbox.attempted, true);
+    assert.equal(body.diagnostics.sandbox.included, false);
+    assert.ok(body.diagnostics.sandbox.tailError, "should report tailError");
+    assert.match(body.diagnostics.sandbox.tailError!, /sandbox unavailable/);
+    assert.equal(body.diagnostics.sandboxLogCount, 0);
+    assert.ok(body.diagnostics.serverLogCount >= 1, "server logs still returned");
+  });
+});
+
+test("GET /api/admin/logs: diagnostics show sandbox not attempted when stopped", async () => {
+  await withTestEnv(async () => {
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.sandboxId = "sandbox-stopped-diag";
+    });
+
+    const route = getAdminLogsRoute();
+    const result = await callRoute(
+      route.GET!,
+      buildAuthGetRequest("/api/admin/logs"),
+    );
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      diagnostics: {
+        sandbox: {
+          attempted: boolean;
+          included: boolean;
+          status: string;
+          tailError: string | null;
+        };
+      };
+    };
+
+    assert.equal(body.diagnostics.sandbox.attempted, false);
+    assert.equal(body.diagnostics.sandbox.included, false);
+    assert.equal(body.diagnostics.sandbox.status, "stopped");
+    assert.equal(body.diagnostics.sandbox.tailError, null);
+  });
+});

@@ -72,6 +72,8 @@ export async function publishToChannelQueue<TPayload>(
       idempotencyKey,
       receivedAt: job.receivedAt,
       ...(job.opId ? { opId: job.opId } : {}),
+      ...(job.requestId ? { requestId: job.requestId } : {}),
+      ...(job.dedupId ? { dedupId: job.dedupId } : {}),
     });
 
     return { queued: true, messageId: result.messageId };
@@ -82,6 +84,8 @@ export async function publishToChannelQueue<TPayload>(
       idempotencyKey,
       error: error instanceof Error ? error.message : String(error),
       ...(job.opId ? { opId: job.opId } : {}),
+      ...(job.requestId ? { requestId: job.requestId } : {}),
+      ...(job.dedupId ? { dedupId: job.dedupId } : {}),
     });
 
     return { queued: false, messageId: null };

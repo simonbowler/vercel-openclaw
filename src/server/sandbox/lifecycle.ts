@@ -7,6 +7,7 @@ import { MAX_RESTORE_HISTORY } from "@/shared/types";
 import {
   withOperationContext,
 } from "@/server/observability/operation-context";
+import { logStateSnapshot } from "@/server/observability/state-snapshot";
 import {
   getAiGatewayBearerTokenOptional,
   resolveAiGatewayCredentialOptional,
@@ -1584,20 +1585,65 @@ async function restoreSandboxFromSnapshot(
 
         startupScriptMs = Date.now() - t0;
 
+        const stdout = await restoreResult.output("stdout");
+        let stderr = "";
+        let stderrUnavailable = false;
+        try {
+          stderr = await restoreResult.output("stderr");
+        } catch {
+          stderrUnavailable = true;
+        }
+
+        logStateSnapshot({
+          event:
+            restoreResult.exitCode === 0
+              ? "sandbox.restore.fast_restore_result"
+              : "sandbox.restore.fast_restore_failed",
+          level: restoreResult.exitCode === 0 ? "info" : "error",
+          meta: next,
+          op,
+          extra: {
+            sandboxId: sandbox.sandboxId,
+            exitCode: restoreResult.exitCode,
+            stdoutHead: stdout.slice(0, 500),
+            stderrHead: stderr.slice(0, 500),
+            stderrUnavailable,
+            startupScriptMs,
+          },
+        });
+
         if (restoreResult.exitCode !== 0) {
-          const output = await restoreResult.output("both");
           throw new CommandFailedError({
             command: "fast-restore-script",
             exitCode: restoreResult.exitCode,
-            output,
+            output: [stdout, stderr].filter(Boolean).join("\n"),
           });
         }
 
         // Parse the JSON readiness report from stdout.
-        const stdout = await restoreResult.output("stdout");
         try {
-          const parsed = JSON.parse(stdout.trim());
-          localReadyMs = typeof parsed.readyMs === "number" ? parsed.readyMs : startupScriptMs;
+          const parsed = JSON.parse(stdout.trim()) as {
+            ready?: boolean;
+            attempts?: number;
+            readyMs?: number;
+          };
+
+          localReadyMs =
+            typeof parsed.readyMs === "number" ? parsed.readyMs : startupScriptMs;
+
+          logStateSnapshot({
+            event: "sandbox.restore.local_ready_report",
+            meta: next,
+            op,
+            extra: {
+              sandboxId: sandbox.sandboxId,
+              ready: parsed.ready === true,
+              attempts:
+                typeof parsed.attempts === "number" ? parsed.attempts : null,
+              readyMs: typeof parsed.readyMs === "number" ? parsed.readyMs : null,
+              startupScriptMs,
+            },
+          });
         } catch {
           // Fallback: script exited 0 so gateway is ready.
           localReadyMs = startupScriptMs;

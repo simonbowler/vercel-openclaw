@@ -3003,3 +3003,163 @@ test("ensureSandboxRunning with op context includes opId in ensure_running log",
     assert.equal(ensureLog.data?.status, "running");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fast-restore structured log tests
+// ---------------------------------------------------------------------------
+
+test("successful restore emits sandbox.restore.fast_restore_result with structured context", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-log-result";
+      meta.gatewayToken = "test-gw-token";
+    });
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    _setAiGatewayTokenOverrideForTesting("test-key");
+    _resetLogBuffer();
+
+    try {
+      const { meta } = await triggerRestore(fake, { tokenOverride: "test-key" });
+      assert.equal(meta.status, "running");
+
+      const logs = getServerLogs();
+      const resultLog = logs.find(
+        (l) => l.message === "sandbox.restore.fast_restore_result",
+      );
+      assert.ok(resultLog, "Should emit sandbox.restore.fast_restore_result");
+      assert.equal(resultLog.data?.exitCode, 0);
+      assert.equal(resultLog.level, "info");
+      assert.ok(
+        typeof resultLog.data?.stdoutHead === "string",
+        "stdoutHead should be a string",
+      );
+      assert.ok(
+        typeof resultLog.data?.stderrHead === "string",
+        "stderrHead should be a string",
+      );
+      assert.ok(
+        typeof resultLog.data?.startupScriptMs === "number",
+        "startupScriptMs should be a number",
+      );
+    } finally {
+      _setAiGatewayTokenOverrideForTesting(null);
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("successful restore emits sandbox.restore.local_ready_report with parsed JSON stdout", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-log-ready";
+      meta.gatewayToken = "test-gw-token";
+    });
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    _setAiGatewayTokenOverrideForTesting("test-key");
+    _resetLogBuffer();
+
+    try {
+      await triggerRestore(fake, { tokenOverride: "test-key" });
+
+      const logs = getServerLogs();
+      const readyLog = logs.find(
+        (l) => l.message === "sandbox.restore.local_ready_report",
+      );
+      assert.ok(readyLog, "Should emit sandbox.restore.local_ready_report");
+      assert.equal(readyLog.data?.ready, true);
+      assert.equal(readyLog.data?.attempts, 3);
+      assert.equal(readyLog.data?.readyMs, 150);
+      assert.ok(
+        typeof readyLog.data?.startupScriptMs === "number",
+        "startupScriptMs should be present",
+      );
+    } finally {
+      _setAiGatewayTokenOverrideForTesting(null);
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("non-zero fast-restore exit emits sandbox.restore.fast_restore_failed before error", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  fake.defaultResponders.push((cmd, args) => {
+    if (cmd === "bash" && args?.[0] === OPENCLAW_FAST_RESTORE_SCRIPT_PATH) {
+      return {
+        exitCode: 1,
+        output: async (stream?: "stdout" | "stderr" | "both") => {
+          if (stream === "stdout") return "error output from script";
+          if (stream === "stderr") return "stderr details";
+          return "error output from script\nstderr details";
+        },
+      };
+    }
+    return undefined;
+  });
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-log-fail";
+      meta.gatewayToken = "test-gw-token";
+    });
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    _setAiGatewayTokenOverrideForTesting("test-key");
+    _resetLogBuffer();
+
+    try {
+      let scheduledCallback: (() => Promise<void> | void) | null = null;
+
+      await ensureSandboxRunning({
+        origin: "https://test.example.com",
+        reason: "restore-fail-log-test",
+        schedule(cb) {
+          scheduledCallback = cb;
+        },
+      });
+
+      assert.ok(scheduledCallback);
+      await (scheduledCallback as () => Promise<void>)();
+
+      const logs = getServerLogs();
+      const failedLog = logs.find(
+        (l) => l.message === "sandbox.restore.fast_restore_failed",
+      );
+      assert.ok(failedLog, "Should emit sandbox.restore.fast_restore_failed");
+      assert.equal(failedLog.level, "error");
+      assert.equal(failedLog.data?.exitCode, 1);
+      assert.ok(
+        typeof failedLog.data?.stdoutHead === "string",
+        "stdoutHead should be present",
+      );
+      assert.ok(
+        typeof failedLog.data?.stderrHead === "string",
+        "stderrHead should be present",
+      );
+
+      const meta = await getInitializedMeta();
+      assert.equal(meta.status, "error");
+    } finally {
+      _setAiGatewayTokenOverrideForTesting(null);
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

@@ -1243,6 +1243,185 @@ test("[processChannelJob] all delivery phase logs share a single opId", async ()
 // runWithProcessingIndicator lifecycle tests
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Queue transition snapshot events
+// ---------------------------------------------------------------------------
+
+test("[drain] emits channels.job_leased and channels.job_acked snapshots on successful processing", async () => {
+  await withHarness(async (h) => {
+    const channel: ChannelName = "slack";
+
+    await h.mutateMeta((meta) => {
+      meta.channels.slack = {
+        signingSecret: "test-signing-secret",
+        botToken: "xoxb-test-bot-token",
+        configuredAt: Date.now(),
+      };
+    });
+
+    h.installDefaultGatewayHandlers("snapshot-test-reply");
+    await h.driveToRunning();
+
+    await enqueueChannelJob(channel, createJob({
+      payload: { text: "snapshot-test" },
+      opId: "op_snap_1",
+      requestId: "req_snap_1",
+    }));
+
+    _resetLogBuffer();
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = h.fakeFetch.fetch;
+
+    try {
+      await drainChannelQueue({
+        channel,
+        getConfig: (m) => m.channels.slack,
+        createAdapter: () => ({
+          extractMessage: (payload: { text: string }) => ({
+            kind: "message" as const,
+            message: { text: payload.text },
+          }),
+          sendReply: async () => {},
+        }),
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    const logs = getServerLogs();
+    const logMessages = logs.map((l) => l.message);
+
+    // Verify snapshot events were emitted
+    assert.ok(
+      logMessages.includes("channels.job_leased"),
+      "Should emit channels.job_leased snapshot",
+    );
+    assert.ok(
+      logMessages.includes("channels.job_acked"),
+      "Should emit channels.job_acked snapshot",
+    );
+
+    // Verify job_leased includes queue depth and sandbox state
+    const leasedLog = logs.find((l) => l.message === "channels.job_leased");
+    assert.ok(leasedLog?.data);
+    const leasedData = leasedLog.data as Record<string, unknown>;
+    assert.equal(leasedData.channel, "slack");
+    assert.equal(leasedData.status, "running");
+    assert.equal(typeof leasedData.queueQueued, "number");
+    assert.equal(typeof leasedData.queueProcessing, "number");
+    assert.equal(leasedData.opId, "op_snap_1");
+    assert.equal(leasedData.requestId, "req_snap_1");
+    assert.equal(leasedData.retryCount, 0);
+
+    // Verify job_acked includes queue depth and sandbox state
+    const ackedLog = logs.find((l) => l.message === "channels.job_acked");
+    assert.ok(ackedLog?.data);
+    const ackedData = ackedLog.data as Record<string, unknown>;
+    assert.equal(ackedData.channel, "slack");
+    assert.equal(ackedData.status, "running");
+    assert.equal(typeof ackedData.queueQueued, "number");
+    assert.equal(typeof ackedData.queueProcessing, "number");
+  });
+});
+
+test("[drain] emits channels.job_leased and channels.job_parked snapshots for future jobs", async () => {
+  await withEnv(TEST_ENV, async () => {
+    const channel: ChannelName = "slack";
+
+    const futureJob = createJob({
+      retryCount: 1,
+      nextAttemptAt: Date.now() + 60_000,
+      opId: "op_park_1",
+    });
+    await enqueueChannelJob(channel, futureJob);
+
+    _resetLogBuffer();
+
+    await drainChannelQueue({
+      channel,
+      getConfig: () => ({ configured: true }),
+      createAdapter: () => ({
+        extractMessage: () => {
+          throw new Error("should not be called");
+        },
+        sendReply: async () => {},
+      }),
+    });
+
+    const logs = getServerLogs();
+    const logMessages = logs.map((l) => l.message);
+
+    assert.ok(
+      logMessages.includes("channels.job_leased"),
+      "Should emit channels.job_leased before parking",
+    );
+    assert.ok(
+      logMessages.includes("channels.job_parked"),
+      "Should emit channels.job_parked for future nextAttemptAt",
+    );
+
+    // Verify parked snapshot includes queue state
+    const parkedLog = logs.find((l) => l.message === "channels.job_parked");
+    assert.ok(parkedLog?.data);
+    const parkedData = parkedLog.data as Record<string, unknown>;
+    assert.equal(parkedData.channel, "slack");
+    assert.equal(parkedData.retryCount, 1);
+    assert.ok(typeof parkedData.nextAttemptAt === "number");
+    assert.equal(parkedData.opId, "op_park_1");
+    assert.equal(typeof parkedData.queueQueued, "number");
+    assert.equal(typeof parkedData.queueProcessing, "number");
+  });
+});
+
+test("[drain] emits channels.job_retry_parked snapshot on retryable error", async () => {
+  await withEnv(TEST_ENV, async () => {
+    const channel: ChannelName = "slack";
+
+    await enqueueChannelJob(channel, createJob({ opId: "op_retry_1" }));
+
+    _resetLogBuffer();
+
+    await drainChannelQueue({
+      channel,
+      getConfig: () => ({ configured: true }),
+      createAdapter: () => ({
+        extractMessage: () => {
+          const err = new Error("fetch failed");
+          throw err;
+        },
+        sendReply: async () => {},
+      }),
+    });
+
+    const logs = getServerLogs();
+    const logMessages = logs.map((l) => l.message);
+
+    assert.ok(
+      logMessages.includes("channels.job_leased"),
+      "Should emit channels.job_leased",
+    );
+    assert.ok(
+      logMessages.includes("channels.job_retry_parked"),
+      "Should emit channels.job_retry_parked on retryable error",
+    );
+
+    const retryLog = logs.find((l) => l.message === "channels.job_retry_parked");
+    assert.ok(retryLog?.data);
+    const retryData = retryLog.data as Record<string, unknown>;
+    assert.equal(retryData.channel, "slack");
+    assert.equal(retryData.retryCount, 1);
+    assert.ok(typeof retryData.nextAttemptAt === "number");
+    assert.match(retryData.error as string, /fetch failed/);
+    assert.equal(typeof retryData.queueQueued, "number");
+    assert.equal(typeof retryData.queueProcessing, "number");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runWithProcessingIndicator lifecycle tests
+// ---------------------------------------------------------------------------
+
 test("runWithProcessingIndicator starts and stops the new indicator path", async () => {
   const events: string[] = [];
 

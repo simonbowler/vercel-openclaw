@@ -27,6 +27,7 @@ import {
   callGatewayWithAuthRecovery,
 } from "@/server/gateway/auth-recovery";
 import { logError, logInfo, logWarn } from "@/server/log";
+import { logStateSnapshot } from "@/server/observability/state-snapshot";
 import { getPublicOriginFromHint } from "@/server/public-url";
 import { getSandboxController } from "@/server/sandbox/controller";
 import {
@@ -188,6 +189,14 @@ export async function drainChannelQueue<
   }
 
   try {
+    const snapshotQueue = async (): Promise<{ queued: number; processing: number }> => {
+      const [queued, processing] = await Promise.all([
+        store.getQueueLength(queueKey),
+        store.getQueueLength(processingKey),
+      ]);
+      return { queued, processing };
+    };
+
     const recovered = await store.requeueExpiredLeases(
       queueKey,
       processingKey,
@@ -230,6 +239,26 @@ export async function drainChannelQueue<
         continue;
       }
 
+      // --- Snapshot: job leased ---
+      {
+        const [meta, queue] = await Promise.all([getInitializedMeta(), snapshotQueue()]);
+        logStateSnapshot({
+          event: "channels.job_leased",
+          meta,
+          channel: options.channel,
+          queue,
+          extra: {
+            receivedAt: job.receivedAt,
+            retryCount: job.retryCount ?? 0,
+            nextAttemptAt: job.nextAttemptAt ?? null,
+            leasedAt: leasedEntry.leasedAt,
+            visibilityTimeoutAt: leasedEntry.visibilityTimeoutAt,
+            opId: job.opId ?? null,
+            requestId: job.requestId ?? null,
+          },
+        });
+      }
+
       const now = Date.now();
       if (
         typeof job.nextAttemptAt === "number" &&
@@ -246,10 +275,20 @@ export async function drainChannelQueue<
           parkedLease,
         );
 
-        if (!parked) {
-          logWarn("channels.job_park_failed", {
+        // --- Snapshot: job parked or park failed ---
+        {
+          const [meta, queue] = await Promise.all([getInitializedMeta(), snapshotQueue()]);
+          logStateSnapshot({
+            event: parked ? "channels.job_parked" : "channels.job_park_failed",
+            level: parked ? "info" : "warn",
+            meta,
             channel: options.channel,
-            retryCount: job.retryCount ?? 0,
+            queue,
+            extra: {
+              retryCount: job.retryCount ?? 0,
+              nextAttemptAt: job.nextAttemptAt,
+              opId: job.opId ?? null,
+            },
           });
         }
 
@@ -259,9 +298,21 @@ export async function drainChannelQueue<
       try {
         await processChannelJob(options, job);
         const acknowledged = await store.ackQueueItem(processingKey, leasedValue);
-        if (!acknowledged) {
-          logWarn("channels.job_ack_missing", {
+
+        // --- Snapshot: job acked or ack missing ---
+        {
+          const [meta, queue] = await Promise.all([getInitializedMeta(), snapshotQueue()]);
+          logStateSnapshot({
+            event: acknowledged ? "channels.job_acked" : "channels.job_ack_missing",
+            level: acknowledged ? "info" : "warn",
+            meta,
             channel: options.channel,
+            queue,
+            extra: {
+              receivedAt: job.receivedAt,
+              retryCount: job.retryCount ?? 0,
+              opId: job.opId ?? null,
+            },
           });
         }
       } catch (error) {
@@ -279,17 +330,22 @@ export async function drainChannelQueue<
               retryLease,
             );
 
-            if (!updated) {
-              logWarn("channels.job_retry_park_failed", {
+            // --- Snapshot: retry parked or retry park failed ---
+            {
+              const [meta, queue] = await Promise.all([getInitializedMeta(), snapshotQueue()]);
+              logStateSnapshot({
+                event: updated ? "channels.job_retry_parked" : "channels.job_retry_park_failed",
+                level: "warn",
+                meta,
                 channel: options.channel,
-                error: formatError(error),
-                retryCount: retryJob.retryCount ?? 0,
-              });
-            } else {
-              logWarn("channels.job_requeued", {
-                channel: options.channel,
-                error: formatError(error),
-                retryCount: retryJob.retryCount ?? 0,
+                queue,
+                extra: {
+                  error: formatError(error),
+                  retryCount: retryJob.retryCount ?? 0,
+                  nextAttemptAt: retryJob.nextAttemptAt ?? null,
+                  lastError: retryJob.lastError ?? null,
+                  opId: retryJob.opId ?? null,
+                },
               });
             }
 
