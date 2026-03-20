@@ -286,27 +286,35 @@ async function cleanupBeforeSnapshot(
   logInfo("openclaw.pre_snapshot_cleanup", { sandboxId: sandbox.sandboxId });
 
   const cleanupCommands = [
-    `rm -f ${OPENCLAW_LOG_FILE}`,
-    "rm -rf /tmp/openclaw",
-    "rm -rf /home/vercel-sandbox/.npm /root/.npm /tmp/openclaw-npm-cache",
-    "rm -rf /home/vercel-sandbox/.npm/_logs",
+    `rm -f ${OPENCLAW_LOG_FILE} || true`,
+    "rm -rf /tmp/openclaw || true",
+    "rm -rf /home/vercel-sandbox/.npm || true",
+    "rm -rf /root/.npm || true",
+    "rm -rf /tmp/openclaw-npm-cache || true",
   ];
 
   if (firewallMode !== "learning") {
-    cleanupCommands.push("rm -f /tmp/shell-commands-for-learning.log");
+    cleanupCommands.push("rm -f /tmp/shell-commands-for-learning.log || true");
   }
 
-  const result = await sandbox.runCommand("bash", [
-    "-lc",
-    cleanupCommands.join("\n"),
-  ]);
+  try {
+    const result = await sandbox.runCommand("bash", [
+      "-lc",
+      cleanupCommands.join("\n"),
+    ]);
 
-  if (result.exitCode !== 0) {
-    const output = await result.output("both");
-    throw new CommandFailedError({
-      command: "cleanup-before-snapshot",
-      exitCode: result.exitCode,
-      output,
+    if (result.exitCode !== 0) {
+      const output = await result.output("both");
+      throw new CommandFailedError({
+        command: "cleanup-before-snapshot",
+        exitCode: result.exitCode,
+        output,
+      });
+    }
+  } catch (error) {
+    logWarn("openclaw.pre_snapshot_cleanup_failed", {
+      sandboxId: sandbox.sandboxId,
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 }

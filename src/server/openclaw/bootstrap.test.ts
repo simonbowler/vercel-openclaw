@@ -74,7 +74,11 @@ test("setupOpenClaw executes commands in correct order", async () => {
     // Verify npm cache cleanup args
     assert.deepEqual(handle.commands[2].args, [
       "-lc",
-      "rm -rf /home/vercel-sandbox/.npm /root/.npm /tmp/openclaw-npm-cache",
+      [
+        "rm -rf /home/vercel-sandbox/.npm || true",
+        "rm -rf /root/.npm || true",
+        "rm -rf /tmp/openclaw-npm-cache || true",
+      ].join("\n"),
     ]);
 
     // Verify version check args
@@ -1080,6 +1084,18 @@ test("setupOpenClaw runs npm cache cleanup for all known cache directories", asy
     assert.ok(
       npmCacheCleanupCmd.args?.[1]?.includes("/tmp/openclaw-npm-cache"),
       "cleanup command should remove /tmp/openclaw-npm-cache",
+    );
+    assert.ok(
+      npmCacheCleanupCmd.args?.[1]?.includes("rm -rf /home/vercel-sandbox/.npm || true"),
+      "cleanup command should ignore /home/vercel-sandbox/.npm removal failures",
+    );
+    assert.ok(
+      npmCacheCleanupCmd.args?.[1]?.includes("rm -rf /root/.npm || true"),
+      "cleanup command should ignore /root/.npm removal failures",
+    );
+    assert.ok(
+      npmCacheCleanupCmd.args?.[1]?.includes("rm -rf /tmp/openclaw-npm-cache || true"),
+      "cleanup command should ignore /tmp/openclaw-npm-cache removal failures",
     );
   } finally {
     h.teardown();

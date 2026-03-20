@@ -152,6 +152,86 @@ test("stopSandbox snapshots and transitions to stopped", async () => {
   });
 });
 
+test("stopSandbox runs best-effort pre-snapshot cleanup commands with per-command fallback", async () => {
+  const fake = new FakeSandboxController();
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sbx-cleanup-best-effort";
+      meta.portUrls = { "3000": "https://sbx-cleanup-best-effort-3000.fake.vercel.run" };
+      meta.firewall.mode = "enforcing";
+    });
+
+    await stopSandbox();
+
+    const handle = fake.getHandle("sbx-cleanup-best-effort");
+    assert.ok(handle, "sandbox handle should exist");
+    const cleanupCommand = handle.commands.find(
+      (command) => command.cmd === "bash" && command.args?.[0] === "-lc",
+    );
+
+    assert.ok(cleanupCommand, "pre-snapshot cleanup command should run");
+    assert.equal(
+      cleanupCommand.args?.[1],
+      [
+        "rm -f /tmp/openclaw.log || true",
+        "rm -rf /tmp/openclaw || true",
+        "rm -rf /home/vercel-sandbox/.npm || true",
+        "rm -rf /root/.npm || true",
+        "rm -rf /tmp/openclaw-npm-cache || true",
+        "rm -f /tmp/shell-commands-for-learning.log || true",
+      ].join("\n"),
+    );
+    assert.ok(
+      !cleanupCommand.args?.[1]?.includes("/home/vercel-sandbox/.npm/_logs"),
+      "cleanup command should not redundantly remove nested npm log path",
+    );
+  });
+});
+
+test("stopSandbox logs warning and continues when pre-snapshot cleanup fails", async () => {
+  const fake = new FakeSandboxController();
+  const handle = new FakeSandboxHandle("sbx-cleanup-warning", fake.events);
+  handle.responders.push((cmd, args) => {
+    if (
+      cmd === "bash"
+      && args?.[0] === "-lc"
+      && args?.[1]?.includes("rm -f /tmp/openclaw.log || true")
+    ) {
+      return { exitCode: 1, output: async () => "permission denied" };
+    }
+    return undefined;
+  });
+  fake.handlesByIds.set("sbx-cleanup-warning", handle);
+
+  await withTestEnv(fake, async () => {
+    _resetLogBuffer();
+
+    await mutateMeta((meta) => {
+      meta.status = "running";
+      meta.sandboxId = "sbx-cleanup-warning";
+      meta.portUrls = { "3000": "https://sbx-cleanup-warning-3000.fake.vercel.run" };
+      meta.firewall.mode = "learning";
+    });
+
+    const result = await stopSandbox();
+
+    assert.equal(result.status, "stopped");
+    assert.ok(result.snapshotId?.startsWith("snap-"));
+
+    const warningLog = getServerLogs().find(
+      (entry) =>
+        entry.level === "warn"
+        && entry.message === "openclaw.pre_snapshot_cleanup_failed"
+        && entry.data?.sandboxId === "sbx-cleanup-warning",
+    );
+
+    assert.ok(warningLog, "cleanup failure should be logged as a warning");
+    assert.match(String(warningLog.data?.error), /cleanup-before-snapshot/);
+    assert.match(String(warningLog.data?.error), /permission denied/);
+  });
+});
+
 test("snapshotSandbox delegates to stopSandbox", async () => {
   const fake = new FakeSandboxController();
   await withTestEnv(fake, async () => {
@@ -677,7 +757,7 @@ test("restoreSandboxFromSnapshot skips static files on second restore when manif
         meta.sandboxId = null;
         meta.portUrls = null;
         meta.lastRestoreMetrics = {
-          ...(meta.lastRestoreMetrics ?? {} as any),
+          ...(meta.lastRestoreMetrics ?? {}),
           assetSha256: currentManifestHash,
         };
       });

@@ -172,7 +172,11 @@ export async function setupOpenClaw(
 
   const npmCacheCleanup = await sandbox.runCommand("bash", [
     "-lc",
-    "rm -rf /home/vercel-sandbox/.npm /root/.npm /tmp/openclaw-npm-cache",
+    [
+      "rm -rf /home/vercel-sandbox/.npm || true",
+      "rm -rf /root/.npm || true",
+      "rm -rf /tmp/openclaw-npm-cache || true",
+    ].join("\n"),
   ]);
   await assertCommandSuccess("npm cache cleanup", npmCacheCleanup);
   logInfo("openclaw.setup.npm_cache_cleared", { sandboxId: sandbox.sandboxId });
