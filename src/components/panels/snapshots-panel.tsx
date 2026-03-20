@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { toast } from "sonner";
 import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
 import type { SnapshotRecord } from "@/shared/types";
 import type { StatusPayload, RunAction, RequestJson } from "@/components/admin-types";
@@ -76,6 +75,7 @@ export function SnapshotsPanel({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ reason: "manual" }),
       label: "Create snapshot",
+      successMessage: "Snapshot created",
     });
     await fetchSnapshots();
   };
@@ -89,15 +89,13 @@ export function SnapshotsPanel({
     });
     if (!ok) return;
 
-    const result = await requestJson<{ status: string }>("/api/admin/snapshots/restore", {
+    await requestJson<{ status: string }>("/api/admin/snapshots/restore", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ snapshotId }),
       label: `Restore ${snapshotId.slice(0, 12)}...`,
+      successMessage: "Restore initiated",
     });
-    if (result) {
-      toast.success("Restore initiated");
-    }
   };
 
   const handleDelete = async (snapshotId: string) => {
@@ -114,9 +112,9 @@ export function SnapshotsPanel({
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ snapshotId }),
       label: `Delete ${snapshotId.slice(0, 12)}...`,
+      successMessage: "Snapshot deleted",
     });
     if (result?.ok) {
-      toast.success("Snapshot deleted");
       await fetchSnapshots();
     }
   };

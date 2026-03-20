@@ -114,7 +114,7 @@ export function AdminShell({
 
   async function requestJson<T>(
     action: string,
-    input: RequestInit & { label: string; refreshAfter?: boolean },
+    input: RequestInit & { label: string; successMessage?: string; refreshAfter?: boolean },
   ): Promise<T | null> {
     setPendingAction(input.label);
     try {
@@ -145,7 +145,7 @@ export function AdminShell({
       if (input.refreshAfter !== false) {
         await refresh();
       }
-      toast.success(input.label);
+      toast.success(input.successMessage ?? input.label);
       return payload;
     } catch (nextError) {
       const message =
@@ -161,7 +161,7 @@ export function AdminShell({
 
   async function runAction(
     action: string,
-    input: RequestInit & { label: string },
+    input: RequestInit & { label: string; successMessage?: string },
   ): Promise<void> {
     await requestJson(action, input);
   }

@@ -41,6 +41,7 @@ export function TelegramPanel({
       "/api/channels/telegram/preview",
       {
         label: "Preview Telegram bot",
+        successMessage: "Telegram bot previewed",
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ botToken: botToken.trim() }),
@@ -58,6 +59,7 @@ export function TelegramPanel({
     try {
       await requestJson("/api/channels/telegram", {
         label: "Save Telegram",
+        successMessage: "Telegram connected",
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ botToken: botToken.trim() }),
@@ -87,6 +89,7 @@ export function TelegramPanel({
     try {
       await runAction("/api/channels/telegram", {
         label: "Disconnect Telegram",
+        successMessage: "Telegram disconnected",
         method: "DELETE",
       });
       setEditing(false);
@@ -106,6 +109,7 @@ export function TelegramPanel({
     try {
       await runAction("/api/channels/telegram/sync-commands", {
         label: "Sync Telegram commands",
+        successMessage: "Telegram commands synced",
         method: "POST",
       });
     } catch (error) {
@@ -229,7 +233,7 @@ export function TelegramPanel({
           </div>
         </div>
       ) : (
-        <div className="channel-wizard">
+        <form className="channel-wizard" onSubmit={(e) => { e.preventDefault(); void handleConnect(); }}>
           <p className="channel-wizard-title">
             {editing ? "Update Bot Token" : "Connect Telegram Bot"}
           </p>
@@ -303,6 +307,7 @@ export function TelegramPanel({
 
           <div className="inline-actions">
             <button
+              type="button"
               className="button secondary"
               disabled={busy || !tg.connectability.canConnect || !botToken.trim()}
               onClick={() => void handlePreview()}
@@ -310,14 +315,15 @@ export function TelegramPanel({
               Preview bot
             </button>
             <button
+              type="submit"
               className="button primary"
               disabled={busy || !tg.connectability.canConnect || !botToken.trim()}
-              onClick={() => void handleConnect()}
             >
               {editing ? "Update" : "Save & Connect"}
             </button>
             {editing && (
               <button
+                type="button"
                 className="button ghost"
                 onClick={() => {
                   setEditing(false);
@@ -336,7 +342,7 @@ export function TelegramPanel({
               Resolve the deployment blockers above before saving the Telegram bot token.
             </p>
           ) : null}
-        </div>
+        </form>
       )}
       <ConfirmDialog {...dialogProps} />
     </section>

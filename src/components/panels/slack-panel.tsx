@@ -53,6 +53,7 @@ export function SlackPanel({
       "/api/channels/slack/test",
       {
         label: "Test Slack token",
+        successMessage: "Slack token verified",
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ botToken: botToken.trim() }),
@@ -70,6 +71,7 @@ export function SlackPanel({
     try {
       await requestJson("/api/channels/slack", {
         label: "Save Slack",
+        successMessage: "Slack connected",
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -91,6 +93,7 @@ export function SlackPanel({
       "/api/channels/slack/manifest",
       {
         label: "Create Slack app",
+        successMessage: "Slack app manifest opened",
         method: "GET",
         refreshAfter: false,
       },
@@ -114,6 +117,7 @@ export function SlackPanel({
     try {
       await runAction("/api/channels/slack", {
         label: "Disconnect Slack",
+        successMessage: "Slack disconnected",
         method: "DELETE",
       });
       clearDrafts();
@@ -205,7 +209,7 @@ export function SlackPanel({
           </div>
         </div>
       ) : (
-        <div className="channel-wizard">
+        <form className="channel-wizard" onSubmit={(e) => { e.preventDefault(); void handleConnect(); }}>
           <p className="channel-wizard-title">
             {editing ? "Update Credentials" : "Connect Slack"}
           </p>
@@ -220,6 +224,7 @@ export function SlackPanel({
                   </span>
                   <div className="inline-actions" style={{ marginTop: 8 }}>
                     <button
+                      type="button"
                       className="button secondary"
                       disabled={busy}
                       onClick={() => void handleCreateApp()}
@@ -266,6 +271,7 @@ export function SlackPanel({
                 data-form-type="other"
               />
               <button
+                type="button"
                 className="button ghost channel-toggle-btn"
                 onClick={() => setShowSecret((v) => !v)}
               >
@@ -296,6 +302,7 @@ export function SlackPanel({
                 data-form-type="other"
               />
               <button
+                type="button"
                 className="button ghost channel-toggle-btn"
                 onClick={() => setShowToken((v) => !v)}
               >
@@ -311,6 +318,7 @@ export function SlackPanel({
 
           {botTokenValid ? (
             <button
+              type="button"
               className="button secondary"
               disabled={busy}
               onClick={() => void handleTestToken()}
@@ -339,6 +347,7 @@ export function SlackPanel({
                   {sl.webhookUrl}
                 </code>
                 <button
+                  type="button"
                   className="button ghost channel-copy-btn"
                   onClick={handleCopyWebhook}
                 >
@@ -350,6 +359,7 @@ export function SlackPanel({
 
           <div className="inline-actions">
             <button
+              type="submit"
               className="button primary"
               disabled={
                 busy ||
@@ -357,12 +367,12 @@ export function SlackPanel({
                 !signingSecret.trim() ||
                 !botToken.trim()
               }
-              onClick={() => void handleConnect()}
             >
               {editing ? "Update Credentials" : "Save Credentials"}
             </button>
             {editing ? (
               <button
+                type="button"
                 className="button ghost"
                 onClick={() => {
                   clearDrafts();
@@ -378,7 +388,7 @@ export function SlackPanel({
               Resolve the deployment blockers above before saving Slack credentials.
             </p>
           ) : null}
-        </div>
+        </form>
       )}
       <ConfirmDialog {...dialogProps} />
     </section>

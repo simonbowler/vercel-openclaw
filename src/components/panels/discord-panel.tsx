@@ -66,6 +66,7 @@ export function DiscordPanel({
 
       await requestJson("/api/channels/discord", {
         label: "Save Discord",
+        successMessage: "Discord connected",
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -95,6 +96,7 @@ export function DiscordPanel({
     try {
       await runAction("/api/channels/discord/register-command", {
         label: "Register Discord command",
+        successMessage: "Discord command registered",
         method: "POST",
       });
     } catch (error) {
@@ -118,6 +120,7 @@ export function DiscordPanel({
     try {
       await runAction("/api/channels/discord", {
         label: "Disconnect Discord",
+        successMessage: "Discord disconnected",
         method: "DELETE",
       });
       clearDrafts();
@@ -293,7 +296,7 @@ export function DiscordPanel({
           </div>
         </div>
       ) : (
-        <div className="channel-wizard">
+        <form className="channel-wizard" onSubmit={(e) => { e.preventDefault(); void handleConnect(); }}>
           <p className="channel-wizard-title">
             {editing ? "Update Bot Token" : "Connect Discord Bot"}
           </p>
@@ -349,6 +352,7 @@ export function DiscordPanel({
                 data-form-type="other"
               />
               <button
+                type="button"
                 className="button ghost channel-toggle-btn"
                 onClick={() => setShowToken((v) => !v)}
               >
@@ -421,14 +425,15 @@ export function DiscordPanel({
 
           <div className="inline-actions">
             <button
+              type="submit"
               className="button primary"
               disabled={pending || !dc.connectability.canConnect || !botToken.trim()}
-              onClick={() => void handleConnect()}
             >
               {pending ? "Connecting..." : "Connect"}
             </button>
             {editing ? (
               <button
+                type="button"
                 className="button ghost"
                 disabled={pending}
                 onClick={() => {
@@ -445,7 +450,7 @@ export function DiscordPanel({
               Resolve the deployment blockers above before saving the Discord bot token.
             </p>
           ) : null}
-        </div>
+        </form>
       )}
       <ConfirmDialog {...dialogProps} />
     </section>

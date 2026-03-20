@@ -1282,7 +1282,7 @@ async function restoreSandboxFromSnapshot(
         snapshotId: current.snapshotId,
       },
       env: restoreEnv,
-      networkPolicy: firewallPolicy,
+      // networkPolicy on snapshot restore returns 400 — apply post-create
     });
     const sandboxCreateMs = Date.now() - sandboxCreateStart;
     logInfo("sandbox.restore.timing", { phase: "sandboxCreate", ms: sandboxCreateMs });
@@ -1345,8 +1345,13 @@ async function restoreSandboxFromSnapshot(
     let startupScriptMs = 0;
     let localReadyMs = 0;
 
-    // Firewall policy is now passed at Sandbox.create({ networkPolicy })
-    // — no separate updateNetworkPolicy call needed.
+    // Firewall policy applied post-create (networkPolicy on snapshot restore
+    // returns 400).  Runs concurrently with the fast-restore script below.
+    const firewallPromise = applyFirewallPolicyToSandbox(sandbox, next).catch((err) => {
+      logWarn("sandbox.restore.firewall_sync_failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
 
     {
       const t0 = Date.now();

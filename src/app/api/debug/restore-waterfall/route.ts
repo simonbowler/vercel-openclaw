@@ -148,7 +148,6 @@ export async function POST(request: Request): Promise<Response> {
         resources: { vcpus },
         source: { type: "snapshot", snapshotId: meta.snapshotId! },
         env: restoreEnv,
-        networkPolicy: firewallPolicy,
       });
     });
 

@@ -198,10 +198,10 @@ export type FirewallReportPayload = {
 
 export type RunAction = (
   action: string,
-  input: RequestInit & { label: string },
+  input: RequestInit & { label: string; successMessage?: string },
 ) => Promise<void>;
 
 export type RequestJson = <T>(
   action: string,
-  input: RequestInit & { label: string; refreshAfter?: boolean },
+  input: RequestInit & { label: string; successMessage?: string; refreshAfter?: boolean },
 ) => Promise<T | null>;

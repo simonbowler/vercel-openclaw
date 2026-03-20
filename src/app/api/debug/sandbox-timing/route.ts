@@ -62,7 +62,12 @@ export async function POST(request: Request): Promise<Response> {
 
     return jsonOk({ snapshotId, vcpus, timings, logs });
   } catch (error) {
-    return jsonError(error);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("sandbox-timing error", error);
+    return Response.json(
+      { error: "SANDBOX_TIMING_ERROR", message, timings, logs },
+      { status: 500 },
+    );
   } finally {
     if (sandbox) {
       try {
