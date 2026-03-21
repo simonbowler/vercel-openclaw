@@ -44,6 +44,7 @@ import {
   OPENCLAW_BUILTIN_IMAGE_GEN_SKILL_PATH,
   OPENCLAW_BUILTIN_IMAGE_GEN_SCRIPT_PATH,
   OPENCLAW_STARTUP_SCRIPT_PATH,
+  OPENCLAW_TELEGRAM_WEBHOOK_PORT,
 } from "@/server/openclaw/config";
 import { buildRestoreAssetManifest } from "@/server/openclaw/restore-assets";
 import {
@@ -1311,6 +1312,62 @@ test("restoreSandboxFromSnapshot passes credentials and config via env to fast-r
         (f) => f.path === OPENCLAW_GATEWAY_TOKEN_PATH || f.path === OPENCLAW_AI_GATEWAY_API_KEY_PATH,
       );
       assert.equal(credentialWrites.length, 0, "Credentials should not be in writtenFiles");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("restoreSandboxFromSnapshot rewrites config when telegram webhookSecret changes", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-restore-telegram-secret";
+      meta.gatewayToken = "test-gw-token";
+      meta.channels.telegram = {
+        botToken: "telegram-bot-token",
+        webhookSecret: "telegram-webhook-secret",
+        webhookUrl: "https://test.example.com/api/channels/telegram/webhook",
+        botUsername: "openclaw_bot",
+      };
+      meta.snapshotConfigHash = createHash("sha256")
+        .update(JSON.stringify({
+          channels: {
+            telegram: {
+              enabled: true,
+              botToken: "telegram-bot-token",
+            },
+          },
+        }))
+        .digest("hex");
+    });
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    try {
+      const { handle } = await triggerRestore(fake, {
+        tokenOverride: "my-gateway-key",
+      });
+
+      const configFile = handle.writtenFiles.find((file) => file.path === OPENCLAW_CONFIG_PATH);
+      assert.ok(configFile, "Restore should rewrite openclaw config when webhookSecret changes");
+
+      const config = JSON.parse(configFile.content.toString("utf8")) as {
+        channels?: {
+          telegram?: {
+            webhookSecret?: string;
+          };
+        };
+      };
+
+      assert.equal(
+        config.channels?.telegram?.webhookSecret,
+        "telegram-webhook-secret",
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -3148,6 +3205,10 @@ test("create flow passes configured sleepAfterMs as timeout to controller.create
       const totalExtended = handle.extendedTimeouts.reduce((a, b) => a + b, 0);
       const initialTimeout = totalTimeout - totalExtended;
       assert.equal(initialTimeout, 300_000, "Create should pass sleepAfterMs=300000 as timeout");
+      assert.ok(
+        Object.prototype.hasOwnProperty.call((await getInitializedMeta()).portUrls ?? {}, String(OPENCLAW_TELEGRAM_WEBHOOK_PORT)),
+        `Create should expose port ${OPENCLAW_TELEGRAM_WEBHOOK_PORT} in portUrls`,
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -3180,6 +3241,11 @@ test("restore flow passes configured sleepAfterMs as timeout to controller.creat
       const totalExtended = handle.extendedTimeouts.reduce((a, b) => a + b, 0);
       const initialTimeout = totalTimeout - totalExtended;
       assert.equal(initialTimeout, 300_000, "Restore should pass sleepAfterMs=300000 as timeout");
+      const meta = await getInitializedMeta();
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(meta.portUrls ?? {}, String(OPENCLAW_TELEGRAM_WEBHOOK_PORT)),
+        `Restore should expose port ${OPENCLAW_TELEGRAM_WEBHOOK_PORT} in portUrls`,
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

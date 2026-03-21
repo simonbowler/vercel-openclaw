@@ -25,6 +25,7 @@ import {
   OPENCLAW_LOG_FILE,
   OPENCLAW_STARTUP_SCRIPT_PATH,
   OPENCLAW_STATE_DIR,
+  OPENCLAW_TELEGRAM_WEBHOOK_PORT,
 } from "@/server/openclaw/config";
 import {
   OPENCLAW_RESTORE_ASSET_MANIFEST_PATH,
@@ -48,7 +49,7 @@ import {
 } from "@/server/store/store";
 
 const OPENCLAW_PORT = 3000;
-const SANDBOX_PORTS = [OPENCLAW_PORT];
+const SANDBOX_PORTS = [OPENCLAW_PORT, OPENCLAW_TELEGRAM_WEBHOOK_PORT];
 const LIFECYCLE_LOCK_KEY = "openclaw-single:lock:lifecycle";
 const START_LOCK_KEY = "openclaw-single:lock:start";
 const TOKEN_REFRESH_LOCK_KEY = "openclaw-single:lock:token-refresh";
@@ -1480,6 +1481,7 @@ async function restoreSandboxFromSnapshot(
       origin,
       latest.channels.telegram?.botToken,
       slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
+      latest.channels.telegram?.webhookSecret,
     );
     const configJsonB64 = Buffer.from(configJson).toString("base64");
 
@@ -1548,6 +1550,7 @@ async function restoreSandboxFromSnapshot(
           proxyOrigin: origin,
           apiKey: freshApiKey,
           telegramBotToken: latest.channels.telegram?.botToken,
+          telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
           slackCredentials: slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
         }),
       );
@@ -1809,6 +1812,7 @@ async function restoreSandboxFromSnapshot(
         origin,
         apiKey: freshApiKey,
         telegramBotToken: latest.channels.telegram?.botToken,
+        telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
         slackCredentials: slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
       }).then(async (result) => {
         await mutateMeta((m) => {
@@ -1902,7 +1906,13 @@ async function restoreSandboxFromSnapshot(
 
 async function syncRestoreAssetsIfNeeded(
   sandbox: SandboxHandle,
-  options: { origin: string; apiKey?: string; telegramBotToken?: string; slackCredentials?: { botToken: string; signingSecret: string } },
+  options: {
+    origin: string;
+    apiKey?: string;
+    telegramBotToken?: string;
+    telegramWebhookSecret?: string;
+    slackCredentials?: { botToken: string; signingSecret: string };
+  },
 ): Promise<{ skippedStaticAssetSync: boolean; assetSha256: string }> {
   const manifest = buildRestoreAssetManifest();
   const existing = await sandbox.readFileToBuffer({
@@ -1922,6 +1932,7 @@ async function syncRestoreAssetsIfNeeded(
     proxyOrigin: options.origin,
     apiKey: options.apiKey,
     telegramBotToken: options.telegramBotToken,
+    telegramWebhookSecret: options.telegramWebhookSecret,
     slackCredentials: options.slackCredentials,
   });
 
@@ -1962,6 +1973,7 @@ function computeGatewayConfigHash(meta: SingleMeta): string {
     "https://__config_hash_placeholder__",
     meta.channels.telegram?.botToken,
     slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
+    meta.channels.telegram?.webhookSecret,
   );
   return createHash("sha256").update(configJson).digest("hex");
 }

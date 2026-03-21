@@ -74,6 +74,7 @@ export function buildDynamicRestoreFiles(options: {
   proxyOrigin: string;
   apiKey?: string;
   telegramBotToken?: string;
+  telegramWebhookSecret?: string;
   slackCredentials?: { botToken: string; signingSecret: string };
 }): { path: string; content: Buffer }[] {
   const files: { path: string; content: Buffer }[] = [
@@ -85,6 +86,7 @@ export function buildDynamicRestoreFiles(options: {
           options.proxyOrigin,
           options.telegramBotToken,
           options.slackCredentials,
+          options.telegramWebhookSecret,
         ),
       ),
     },

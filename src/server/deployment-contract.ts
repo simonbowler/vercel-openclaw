@@ -102,6 +102,12 @@ function checkPublicOrigin(
   }
 }
 
+/**
+ * Diagnostic-only: returns pass or warn, never fail. Preflight computes its
+ * own webhook-bypass check via getWebhookBypassRequirement() for richer
+ * required/configured/reason semantics. Both surfaces agree that a missing
+ * bypass secret is not a deployment blocker.
+ */
 function checkWebhookBypass(): DeploymentRequirement {
   const configured = Boolean(getProtectionBypassSecret());
 

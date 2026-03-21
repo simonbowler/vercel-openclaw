@@ -75,6 +75,30 @@ test("dynamic restore files work without apiKey", () => {
   assert.equal(files[0]!.path, OPENCLAW_CONFIG_PATH);
 });
 
+test("dynamic restore files include telegram webhookSecret in openclaw config", () => {
+  const files = buildDynamicRestoreFiles({
+    proxyOrigin: "https://telegram.test",
+    telegramBotToken: "telegram-bot-token",
+    telegramWebhookSecret: "telegram-webhook-secret",
+  });
+
+  const configFile = files.find((file) => file.path === OPENCLAW_CONFIG_PATH);
+  assert.ok(configFile, "Expected dynamic restore files to include openclaw config");
+
+  const config = JSON.parse(configFile.content.toString("utf8")) as {
+    channels?: {
+      telegram?: {
+        webhookSecret?: string;
+      };
+    };
+  };
+
+  assert.equal(
+    config.channels?.telegram?.webhookSecret,
+    "telegram-webhook-secret",
+  );
+});
+
 // --- manifest path ---
 
 test("manifest path is under the openclaw state directory", () => {

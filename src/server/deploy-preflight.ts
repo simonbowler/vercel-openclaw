@@ -444,10 +444,12 @@ export async function buildDeployPreflight(
       message: contractOriginReq?.message ??
         "Could not resolve a canonical public origin. Set NEXT_PUBLIC_APP_URL, NEXT_PUBLIC_BASE_DOMAIN, or BASE_DOMAIN.",
     },
-    // webhook-bypass — diagnostic-only concern, not a contract requirement.
-    // The contract returns null for webhook-bypass; preflight owns this as a
-    // non-blocking diagnostic check. It always passes because admin-secret
-    // auth handles webhooks without bypass.
+    // webhook-bypass — diagnostic-only in both the contract and preflight.
+    // The contract emits a pass/warn requirement for webhook-bypass (never
+    // fail), but preflight computes its own check from
+    // getWebhookBypassRequirement() because the preflight check needs the
+    // richer required/configured/reason structure that the contract does not
+    // carry. Neither surface treats a missing bypass secret as a hard blocker.
     {
       id: "webhook-bypass",
       status:
