@@ -6,6 +6,12 @@ import {
   buildChannelConnectBlockedResponse,
 } from "@/server/channels/connectability";
 import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
+import { withHarness } from "@/test-utils/harness";
+import {
+  buildAuthPutRequest,
+  callRoute,
+  getTelegramChannelRoute,
+} from "@/test-utils/route-caller";
 
 afterEach(() => {
   _setAiGatewayTokenOverrideForTesting(null);
@@ -62,3 +68,31 @@ test("telegram 409 response body matches expected shape", async () => {
   assert.equal(payload.connectability.canConnect, false);
   assert.ok(payload.connectability.issues.length > 0);
 });
+
+// ---------------------------------------------------------------------------
+// Route-level regression: PUT through the route factory returns 409
+// ---------------------------------------------------------------------------
+
+test("telegram PUT through route factory returns 409 when not connectable", async () => {
+  await withHarness(async () => {
+    _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+    const route = getTelegramChannelRoute();
+    const request = buildAuthPutRequest(
+      "/api/channels/telegram",
+      JSON.stringify({ botToken: "123:abc" }),
+    );
+
+    const result = await callRoute(route.PUT!, request);
+
+    assert.equal(result.status, 409);
+    const body = result.json as {
+      error: { code: string; message: string };
+      connectability: { channel: string; canConnect: boolean };
+    };
+    assert.equal(body.error.code, "CHANNEL_CONNECT_BLOCKED");
+    assert.equal(body.connectability.channel, "telegram");
+    assert.equal(body.connectability.canConnect, false);
+  });
+});
+

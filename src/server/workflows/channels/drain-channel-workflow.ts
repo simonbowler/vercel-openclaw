@@ -1,11 +1,11 @@
 import type { SlackChannelConfig, TelegramChannelConfig, DiscordChannelConfig } from "@/shared/channels";
-import type { ExtractedChannelMessage } from "@/server/channels/core/types";
+import type { BootMessageHandle } from "@/server/channels/core/types";
 import type { ChannelJobOptions, QueuedChannelJob } from "@/server/channels/driver";
 import type { SlackExtractedMessage } from "@/server/channels/slack/adapter";
 import type { TelegramExtractedMessage } from "@/server/channels/telegram/adapter";
 import type { DiscordExtractedMessage } from "@/server/channels/discord/adapter";
 import { extractTelegramChatId } from "@/server/channels/telegram/adapter";
-import { deleteMessage } from "@/server/channels/telegram/bot-api";
+import { deleteMessage, editMessageText } from "@/server/channels/telegram/bot-api";
 import { logWarn } from "@/server/log";
 import { getInitializedMeta } from "@/server/store/store";
 
@@ -64,10 +64,45 @@ export async function processChannelStep(
       const { reconcileDiscordIntegration } = await import("@/server/channels/discord/reconcile");
       await reconcileDiscordIntegration();
     } catch (err) {
-      const { logWarn } = await import("@/server/log");
       logWarn("channels.discord_integration_reconcile_failed", {
         error: err instanceof Error ? err.message : String(err),
       });
+    }
+  }
+
+  // Build a BootMessageHandle for the message already sent from the webhook
+  // route, so runWithBootMessages edits it in-place instead of creating a
+  // second message.
+  let existingBootHandle: BootMessageHandle | undefined;
+  if (bootMessageId && channel === "telegram") {
+    const meta = await getInitializedMeta();
+    const tgConfig = meta.channels.telegram;
+    const chatId = extractTelegramChatId(payload);
+    if (tgConfig && chatId) {
+      const token = tgConfig.botToken;
+      const numChatId = Number(chatId);
+      existingBootHandle = {
+        async update(text: string) {
+          try {
+            await editMessageText(token, numChatId, bootMessageId, text);
+          } catch (error) {
+            logWarn("channels.telegram_boot_message_update_failed", {
+              bootMessageId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
+        async clear() {
+          try {
+            await deleteMessage(token, numChatId, bootMessageId);
+          } catch (error) {
+            logWarn("channels.telegram_boot_message_cleanup_failed", {
+              bootMessageId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
+      };
     }
   }
 
@@ -76,29 +111,9 @@ export async function processChannelStep(
     const job = buildQueuedChannelJob(payload, origin, requestId);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await resolvedDependencies.processChannelJob(options as any, job);
+    await resolvedDependencies.processChannelJob(options as any, job, undefined, existingBootHandle);
   } catch (error) {
     throw toWorkflowProcessingError(channel, error, resolvedDependencies);
-  } finally {
-    // Clean up boot message sent from webhook route
-    if (bootMessageId && channel === "telegram") {
-      try {
-        const meta = await getInitializedMeta();
-        const tgConfig = meta.channels.telegram;
-        if (tgConfig) {
-          const chatId = extractTelegramChatId(payload);
-          if (chatId) {
-            await deleteMessage(tgConfig.botToken, Number(chatId), bootMessageId);
-          }
-        }
-      } catch (cleanupError) {
-        logWarn("channels.telegram_boot_message_cleanup_failed", {
-          channel,
-          bootMessageId,
-          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
-        });
-      }
-    }
   }
 }
 

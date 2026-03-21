@@ -1,4 +1,4 @@
-import type { ChannelConnectability } from "@/shared/channel-connectability";
+import type { PublicChannelState } from "@/shared/channel-admin-state";
 
 export type DomainCategory = "npm" | "curl" | "git" | "dns" | "fetch" | "unknown";
 
@@ -46,49 +46,7 @@ export type StatusPayload = {
     commandsObserved: number;
     wouldBlock: string[];
   };
-  channels: {
-    slack: {
-      configured: boolean;
-      webhookUrl: string;
-      configuredAt: number | null;
-      team: string | null;
-      user: string | null;
-      botId: string | null;
-      hasSigningSecret: boolean;
-      hasBotToken: boolean;
-      lastError: string | null;
-      connectability: ChannelConnectability;
-    };
-    telegram: {
-      configured: boolean;
-      webhookUrl: string | null;
-      botUsername: string | null;
-      configuredAt: number | null;
-      lastError: string | null;
-      status: "connected" | "disconnected" | "error";
-      commandSyncStatus: "synced" | "unsynced" | "error";
-      commandsRegisteredAt: number | null;
-      commandSyncError: string | null;
-      connectability: ChannelConnectability;
-    };
-    discord: {
-      configured: boolean;
-      webhookUrl: string;
-      applicationId: string | null;
-      publicKey: string | null;
-      configuredAt: number | null;
-      appName: string | null;
-      botUsername: string | null;
-      endpointConfigured: boolean;
-      endpointUrl: string | null;
-      endpointError: string | null;
-      commandRegistered: boolean;
-      commandId: string | null;
-      inviteUrl: string | null;
-      isPublicUrl: boolean;
-      connectability: ChannelConnectability;
-    };
-  };
+  channels: PublicChannelState;
   user: {
     sub: string;
     email?: string;

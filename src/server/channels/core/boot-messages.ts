@@ -35,6 +35,8 @@ export type RunWithBootMessagesOptions<
   reason: string;
   timeoutMs: number;
   pollIntervalMs?: number;
+  /** Reuse a boot message already sent (e.g. from the webhook route). */
+  existingBootHandle?: BootMessageHandle;
 };
 
 export type BootMessagesResult = {
@@ -62,27 +64,42 @@ export async function runWithBootMessages<
     reason,
     timeoutMs,
     pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
+    existingBootHandle,
   } = options;
 
   const initialMeta = await getInitializedMeta();
 
   if (initialMeta.status === "running" && initialMeta.sandboxId) {
+    // Sandbox already running — clean up any pre-sent boot message immediately
+    if (existingBootHandle) {
+      existingBootHandle.clear().catch((error) => {
+        logWarn("channels.boot_message_cleanup_failed", {
+          channel,
+          phase: "already-running",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
     return { meta: initialMeta, bootMessageSent: false };
   }
 
-  if (!adapter.sendBootMessage) {
+  if (!existingBootHandle && !adapter.sendBootMessage) {
     return { meta: initialMeta, bootMessageSent: false };
   }
 
   let handle: BootMessageHandle;
-  try {
-    handle = await adapter.sendBootMessage(message, BOOT_MESSAGE_INITIAL);
-  } catch (error) {
-    logWarn("channels.boot_message_send_failed", {
-      channel,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return { meta: initialMeta, bootMessageSent: false };
+  if (existingBootHandle) {
+    handle = existingBootHandle;
+  } else {
+    try {
+      handle = await adapter.sendBootMessage!(message, BOOT_MESSAGE_INITIAL);
+    } catch (error) {
+      logWarn("channels.boot_message_send_failed", {
+        channel,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { meta: initialMeta, bootMessageSent: false };
+    }
   }
 
   logInfo("channels.boot_message_sent", { channel });
@@ -143,8 +160,12 @@ export async function runWithBootMessages<
     try {
       await sleep(BOOT_MESSAGE_CLEAR_DELAY_MS);
       await handle.clear();
-    } catch {
-      // Non-fatal — cleanup is best-effort
+    } catch (error) {
+      logWarn("channels.boot_message_cleanup_failed", {
+        channel,
+        phase: "finalize",
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 }

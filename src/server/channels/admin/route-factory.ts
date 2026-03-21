@@ -1,5 +1,5 @@
 import type { ChannelName } from "@/shared/channels";
-import type { PublicChannelState } from "@/server/channels/state";
+import type { PublicChannelState } from "@/shared/channel-admin-state";
 import type { SingleMeta } from "@/shared/types";
 import { authJsonError, authJsonOk, requireJsonRouteAuth } from "@/server/auth/route-auth";
 import {
@@ -72,12 +72,12 @@ export function createChannelAdminRouteHandlers<TState>(
         return auth;
       }
 
-      const connectability = await buildChannelConnectability(spec.channel, request);
-      if (!connectability.canConnect) {
-        return buildChannelConnectBlockedResponse(auth, connectability);
-      }
-
       try {
+        const connectability = await buildChannelConnectability(spec.channel, request);
+        if (!connectability.canConnect) {
+          return buildChannelConnectBlockedResponse(auth, connectability);
+        }
+
         const meta = await getInitializedMeta();
         const result = await spec.put({
           request,

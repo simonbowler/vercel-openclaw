@@ -3,8 +3,15 @@ import { afterEach, test } from "node:test";
 
 import {
   buildChannelConnectability,
+  buildChannelConnectabilityMap,
+  buildChannelConnectabilityReport,
   buildChannelPrerequisite,
+  buildChannelPrerequisiteReport,
 } from "@/server/channels/connectability";
+import {
+  buildChannelDisplayWebhookUrl,
+  buildChannelWebhookUrl,
+} from "@/server/channels/webhook-urls";
 import { buildDeploymentContract } from "@/server/deployment-contract";
 import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
 
@@ -456,4 +463,95 @@ for (const { name, env, oidc } of PARITY_MATRIX) {
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// buildChannelConnectabilityMap — shared map builder
+// ---------------------------------------------------------------------------
+
+test("buildChannelConnectabilityMap returns all three channels", async () => {
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+  process.env.UPSTASH_REDIS_REST_URL = "https://upstash.example";
+  process.env.UPSTASH_REDIS_REST_TOKEN = "token";
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+  const request = makeRequest(PUBLIC_ORIGIN);
+  const map = await buildChannelConnectabilityMap(request);
+
+  assert.ok(map.slack, "map must include slack");
+  assert.ok(map.telegram, "map must include telegram");
+  assert.ok(map.discord, "map must include discord");
+  assert.equal(map.slack.channel, "slack");
+  assert.equal(map.telegram.channel, "telegram");
+  assert.equal(map.discord.channel, "discord");
+});
+
+test("buildChannelConnectabilityMap reuses shared contract", async () => {
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+  const request = makeRequest(PUBLIC_ORIGIN);
+  const contract = await buildDeploymentContract({ request });
+  const map = await buildChannelConnectabilityMap(request, {
+    shared: { contract },
+  });
+
+  // All channels should reference the same contract-derived issues
+  for (const channel of ["slack", "telegram", "discord"] as const) {
+    assert.equal(map[channel].channel, channel);
+    assert.ok(typeof map[channel].canConnect === "boolean");
+  }
+});
+
+test("telegram webhook URL stays on the display URL path", () => {
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+
+  const request = makeRequest(PUBLIC_ORIGIN);
+
+  assert.equal(
+    buildChannelDisplayWebhookUrl("telegram", request),
+    `${PUBLIC_ORIGIN}/api/channels/telegram/webhook`,
+  );
+  assert.equal(
+    buildChannelWebhookUrl("telegram", request),
+    `${PUBLIC_ORIGIN}/api/channels/telegram/webhook`,
+  );
+});
+
+test("prerequisite and connectability report wrappers are behaviorally identical", async () => {
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+  process.env.UPSTASH_REDIS_REST_URL = "https://upstash.example";
+  process.env.UPSTASH_REDIS_REST_TOKEN = "token";
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+  const request = makeRequest(PUBLIC_ORIGIN);
+  const contract = await buildDeploymentContract({ request });
+  const shared = { contract };
+
+  const prerequisite = await buildChannelPrerequisiteReport(request, shared);
+  const connectability = await buildChannelConnectabilityReport(request, shared);
+
+  assert.deepEqual(connectability, prerequisite);
+  assert.equal(
+    connectability.discord.webhookUrl,
+    `${PUBLIC_ORIGIN}/api/channels/discord/webhook`,
+  );
+});
+
+test("buildChannelConnectabilityMap respects webhookUrlOverrides", async () => {
+  process.env.NEXT_PUBLIC_APP_URL = PUBLIC_ORIGIN;
+  _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+  const request = makeRequest(PUBLIC_ORIGIN);
+  const overrideUrl = "https://custom.example.com/api/channels/slack/webhook";
+  const map = await buildChannelConnectabilityMap(request, {
+    webhookUrlOverrides: { slack: overrideUrl },
+  });
+
+  assert.equal(map.slack.webhookUrl, overrideUrl);
+  // Telegram and discord should still use the default display URLs
+  assert.equal(
+    map.telegram.webhookUrl,
+    `${PUBLIC_ORIGIN}/api/channels/telegram/webhook`,
+  );
+});
 

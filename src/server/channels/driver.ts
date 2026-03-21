@@ -108,6 +108,7 @@ export async function processChannelJob<
   options: ChannelJobOptions<TConfig, TPayload, TMessage>,
   job: QueuedChannelJob<TPayload>,
   externalOp?: OperationContext,
+  existingBootHandle?: import("@/server/channels/core/types").BootMessageHandle,
 ): Promise<void> {
   // Build or adopt an operation context for end-to-end correlation.
   const op = externalOp ?? createOperationContext({
@@ -168,7 +169,7 @@ export async function processChannelJob<
   let bootMessageSent = false;
 
   try {
-    if (adapter.sendBootMessage) {
+    if (existingBootHandle || adapter.sendBootMessage) {
       const bootResult = await runWithBootMessages({
         channel: options.channel,
         adapter: adapter as PlatformAdapter<unknown, TMessage>,
@@ -176,6 +177,7 @@ export async function processChannelJob<
         origin: resolveAppOrigin(job.origin),
         reason: `channel:${options.channel}`,
         timeoutMs: sandboxReadyTimeoutMs,
+        existingBootHandle,
       });
       readyMeta = bootResult.meta;
       bootMessageSent = bootResult.bootMessageSent;

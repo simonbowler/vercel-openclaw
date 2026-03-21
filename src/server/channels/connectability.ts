@@ -10,13 +10,9 @@ import {
   type DeploymentRequirement,
 } from "@/server/deployment-contract";
 import { logInfo } from "@/server/log";
-import { buildPublicDisplayUrl } from "@/server/public-url";
+import { buildChannelDisplayWebhookUrl } from "@/server/channels/webhook-urls";
 
-const WEBHOOK_PATHS: Record<ChannelName, string> = {
-  slack: "/api/channels/slack/webhook",
-  telegram: "/api/channels/telegram/webhook",
-  discord: "/api/channels/discord/webhook",
-};
+const ALL_CHANNELS: ChannelName[] = ["slack", "telegram", "discord"];
 
 const CHANNEL_LABELS: Record<ChannelName, string> = {
   slack: "Slack",
@@ -165,7 +161,7 @@ export async function buildChannelPrerequisite(
 
   if (!webhookUrl) {
     try {
-      webhookUrl = buildPublicDisplayUrl(WEBHOOK_PATHS[channel], request);
+      webhookUrl = buildChannelDisplayWebhookUrl(channel, request);
     } catch {
       if (!hasIssue("public-origin")) {
         addIssue(issues, {
@@ -208,6 +204,55 @@ export async function buildChannelPrerequisite(
 }
 
 /**
+ * Shared connectability map builder — single implementation consumed by both
+ * `buildChannelPrerequisiteReport` and `buildChannelConnectabilityReport`.
+ *
+ * Resolves the deployment contract once and threads it through all three
+ * channel prerequisite checks. Accepts optional webhook URL overrides for
+ * callers that have already resolved display URLs.
+ */
+export async function buildChannelConnectabilityMap(
+  request: Request,
+  options: {
+    webhookUrlOverrides?: Partial<Record<ChannelName, string>>;
+    shared?: SharedConnectabilityInputs;
+  } = {},
+): Promise<Record<ChannelName, ChannelConnectability>> {
+  const contractSource = options.shared?.contract ? "shared" : "fresh";
+  const contract =
+    options.shared?.contract ?? (await buildDeploymentContract({ request }));
+  const nextShared: SharedConnectabilityInputs = {
+    ...options.shared,
+    contract,
+  };
+
+  const results = await Promise.all(
+    ALL_CHANNELS.map((channel) =>
+      buildChannelPrerequisite(
+        channel,
+        request,
+        options.webhookUrlOverrides?.[channel] ??
+          buildChannelDisplayWebhookUrl(channel, request),
+        nextShared,
+      ),
+    ),
+  );
+
+  const map: Record<ChannelName, ChannelConnectability> = {
+    slack: results[0],
+    telegram: results[1],
+    discord: results[2],
+  };
+
+  logInfo("channel_connectability_map.built", {
+    contractSource,
+    channels: ALL_CHANNELS.map((ch) => `${ch}:${map[ch].status}`),
+  });
+
+  return map;
+}
+
+/**
  * Config-only prerequisite report for all channels.
  * Used by buildDeployPreflight() — does NOT include launch-verification checks.
  */
@@ -215,16 +260,7 @@ export async function buildChannelPrerequisiteReport(
   request: Request,
   shared: SharedConnectabilityInputs = {},
 ): Promise<Record<ChannelName, ChannelConnectability>> {
-  const contract = shared.contract ?? await buildDeploymentContract({ request });
-  const nextShared = { ...shared, contract };
-
-  const [slack, telegram, discord] = await Promise.all([
-    buildChannelPrerequisite("slack", request, undefined, nextShared),
-    buildChannelPrerequisite("telegram", request, undefined, nextShared),
-    buildChannelPrerequisite("discord", request, undefined, nextShared),
-  ]);
-
-  return { slack, telegram, discord };
+  return buildChannelConnectabilityMap(request, { shared });
 }
 
 /**
@@ -241,20 +277,15 @@ export async function buildChannelConnectability(
   return buildChannelPrerequisite(channel, request, webhookUrlOverride, shared);
 }
 
+/**
+ * Full connectability report for all channels.
+ * Delegates to the shared map builder.
+ */
 export async function buildChannelConnectabilityReport(
   request: Request,
   shared: SharedConnectabilityInputs = {},
 ): Promise<Record<ChannelName, ChannelConnectability>> {
-  const contract = shared.contract ?? await buildDeploymentContract({ request });
-  const nextShared = { ...shared, contract };
-
-  const [slack, telegram, discord] = await Promise.all([
-    buildChannelConnectability("slack", request, undefined, nextShared),
-    buildChannelConnectability("telegram", request, undefined, nextShared),
-    buildChannelConnectability("discord", request, undefined, nextShared),
-  ]);
-
-  return { slack, telegram, discord };
+  return buildChannelConnectabilityMap(request, { shared });
 }
 
 export function buildChannelConnectBlockedResponse(

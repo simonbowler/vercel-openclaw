@@ -7,76 +7,44 @@ import type {
 } from "@/shared/channels";
 import type { ChannelConnectability } from "@/shared/channel-connectability";
 import type { SingleMeta } from "@/shared/types";
-import { buildChannelConnectability } from "@/server/channels/connectability";
+import {
+  buildChannelConnectabilityMap,
+} from "@/server/channels/connectability";
 import {
   isPublicUrl,
 } from "@/server/channels/discord/application";
-import { buildPublicUrl, buildPublicDisplayUrl } from "@/server/public-url";
+import {
+  buildChannelDisplayWebhookUrl,
+  buildChannelWebhookUrl,
+} from "@/server/channels/webhook-urls";
+import { buildDeploymentContract } from "@/server/deployment-contract";
+import { logInfo } from "@/server/log";
 import { getInitializedMeta, mutateMeta } from "@/server/store/store";
 
-export type PublicSlackState = {
-  configured: boolean;
-  webhookUrl: string;
-  configuredAt: number | null;
-  team: string | null;
-  user: string | null;
-  botId: string | null;
-  hasSigningSecret: boolean;
-  hasBotToken: boolean;
-  lastError: string | null;
-  connectability: ChannelConnectability;
-};
+export type {
+  PublicSlackState,
+  PublicTelegramState,
+  PublicDiscordState,
+  PublicChannelState,
+} from "@/shared/channel-admin-state";
 
-export type PublicTelegramState = {
-  configured: boolean;
-  webhookUrl: string | null;
-  botUsername: string | null;
-  configuredAt: number | null;
-  lastError: string | null;
-  status: "connected" | "disconnected" | "error";
-  commandSyncStatus: "synced" | "unsynced" | "error";
-  commandsRegisteredAt: number | null;
-  commandSyncError: string | null;
-  connectability: ChannelConnectability;
-};
-
-export type PublicDiscordState = {
-  configured: boolean;
-  webhookUrl: string;
-  applicationId: string | null;
-  publicKey: string | null;
-  configuredAt: number | null;
-  appName: string | null;
-  botUsername: string | null;
-  endpointConfigured: boolean;
-  endpointUrl: string | null;
-  endpointError: string | null;
-  commandRegistered: boolean;
-  commandId: string | null;
-  inviteUrl: string | null;
-  isPublicUrl: boolean;
-  connectability: ChannelConnectability;
-};
-
-export type PublicChannelState = {
-  slack: PublicSlackState;
-  telegram: PublicTelegramState;
-  discord: PublicDiscordState;
-};
+import type {
+  PublicSlackState,
+  PublicTelegramState,
+  PublicDiscordState,
+  PublicChannelState,
+} from "@/shared/channel-admin-state";
 
 export function buildSlackWebhookUrl(request?: Request): string {
-  return buildPublicUrl("/api/channels/slack/webhook", request);
+  return buildChannelWebhookUrl("slack", request);
 }
 
 export function buildTelegramWebhookUrl(request?: Request): string {
-  // Telegram validates webhooks via the x-telegram-bot-api-secret-token
-  // header, not URL query params.  Including the bypass secret in the URL
-  // causes Telegram's setWebhook to silently drop the registration.
-  return buildPublicDisplayUrl("/api/channels/telegram/webhook", request);
+  return buildChannelWebhookUrl("telegram", request);
 }
 
 export function buildDiscordPublicWebhookUrl(request?: Request): string {
-  return buildPublicUrl("/api/channels/discord/webhook", request);
+  return buildChannelWebhookUrl("discord", request);
 }
 
 export function createTelegramWebhookSecret(): string {
@@ -89,36 +57,46 @@ export async function getPublicChannelState(
 ): Promise<PublicChannelState> {
   const resolvedMeta = meta ?? (await getInitializedMeta());
 
-  // Display URLs (without bypass secret) — safe for admin-visible state
-  const slackDisplayUrl = buildPublicDisplayUrl("/api/channels/slack/webhook", request);
-  const telegramDisplayUrl = buildPublicDisplayUrl("/api/channels/telegram/webhook", request);
-  const discordDisplayUrl = buildPublicDisplayUrl("/api/channels/discord/webhook", request);
+  // Display URLs (without bypass secret) — safe for admin-visible state.
+  // Resolved once and threaded through to both public state and connectability.
+  const slackDisplayUrl = buildChannelDisplayWebhookUrl("slack", request);
+  const telegramDisplayUrl = buildChannelDisplayWebhookUrl("telegram", request);
+  const discordDisplayUrl = buildChannelDisplayWebhookUrl("discord", request);
 
-  const discordPublic = isPublicUrl(discordDisplayUrl);
+  // Single contract + single connectability map — no redundant builds.
+  const contract = await buildDeploymentContract({ request });
+  const connectability = await buildChannelConnectabilityMap(request, {
+    shared: { contract },
+    webhookUrlOverrides: {
+      slack: slackDisplayUrl,
+      telegram: telegramDisplayUrl,
+      discord: discordDisplayUrl,
+    },
+  });
 
-  const [slackConnectability, telegramConnectability, discordConnectability] =
-    await Promise.all([
-      buildChannelConnectability("slack", request, slackDisplayUrl),
-      buildChannelConnectability("telegram", request, telegramDisplayUrl),
-      buildChannelConnectability("discord", request, discordDisplayUrl),
-    ]);
+  logInfo("public_channel_state.built", {
+    contractSource: "fresh",
+    channels: (["slack", "telegram", "discord"] as const).map(
+      (ch) => `${ch}:${connectability[ch].status}`,
+    ),
+  });
 
   return {
     slack: toPublicSlackState(
       resolvedMeta.channels.slack,
       slackDisplayUrl,
-      slackConnectability,
+      connectability.slack,
     ),
     telegram: toPublicTelegramState(
       resolvedMeta.channels.telegram,
       telegramDisplayUrl,
-      telegramConnectability,
+      connectability.telegram,
     ),
     discord: toPublicDiscordState(
       resolvedMeta.channels.discord,
       discordDisplayUrl,
-      discordPublic,
-      discordConnectability,
+      isPublicUrl(discordDisplayUrl),
+      connectability.discord,
     ),
   };
 }
