@@ -15,6 +15,9 @@ export const OPENCLAW_AI_GATEWAY_API_KEY_PATH = `${OPENCLAW_STATE_DIR}/.ai-gatew
 export const OPENCLAW_FORCE_PAIR_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/.force-pair.mjs`;
 export const OPENCLAW_TELEGRAM_BOT_TOKEN_PATH = `${OPENCLAW_STATE_DIR}/.telegram-bot-token`;
 export const OPENCLAW_TELEGRAM_WEBHOOK_PORT = 8787;
+export const OPENCLAW_TELEGRAM_WEBHOOK_HOST = "127.0.0.1";
+export const OPENCLAW_TELEGRAM_INTERNAL_WEBHOOK_PATH = "/telegram-webhook";
+export const TELEGRAM_PUBLIC_WEBHOOK_PATH = "/api/channels/telegram/webhook";
 export const OPENCLAW_IMAGE_GEN_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/openai-image-gen/SKILL.md`;
 export const OPENCLAW_IMAGE_GEN_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/skills/openai-image-gen/scripts/gen.mjs`;
 export const OPENCLAW_WEB_SEARCH_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/web-search/SKILL.md`;
@@ -58,6 +61,7 @@ export function buildGatewayConfig(
   proxyOrigin?: string,
   telegramBotToken?: string,
   slackCredentials?: { botToken: string; signingSecret: string },
+  telegramWebhookSecret?: string,
 ): string {
   const controlUi: Record<string, unknown> = {
     allowInsecureAuth: readBooleanEnv("OPENCLAW_ALLOW_INSECURE_AUTH", false),
@@ -162,23 +166,29 @@ export function buildGatewayConfig(
     },
   };
 
-  // OpenClaw reads the bot token from its config file on the sandbox filesystem.
-  // The token is also written to a separate file (OPENCLAW_TELEGRAM_BOT_TOKEN_PATH)
-  // so the sandbox has access to it for native Telegram handling.  Neither file
-  // is logged or exposed via any API — they live only on the sandbox's restricted
-  // filesystem, consistent with how the gateway token and AI Gateway key are stored.
+  // Telegram webhook delivery remains app-owned at the public route, but
+  // OpenClaw still needs its native Telegram config so boot-time setWebhook
+  // registers the app URL instead of the sandbox-local listener.
   if (telegramBotToken) {
-    config.channels = {
-      telegram: {
-        enabled: true,
-        botToken: telegramBotToken,
-        // "open" allows any Telegram user to DM the bot.  This matches the
-        // old project's behavior and the admin-controlled webhook setup.
-        dmPolicy: "open",
-        allowFrom: ["*"],
-        webhookPort: OPENCLAW_TELEGRAM_WEBHOOK_PORT,
-      },
+    const channels = (config.channels as Record<string, unknown>) ?? {};
+    const origin = proxyOrigin?.replace(/\/+$/, "");
+    const telegramConfig: Record<string, unknown> = {
+      enabled: true,
+      botToken: telegramBotToken,
+      dmPolicy: "open",
+      allowFrom: ["*"],
+      webhookPort: OPENCLAW_TELEGRAM_WEBHOOK_PORT,
+      webhookHost: OPENCLAW_TELEGRAM_WEBHOOK_HOST,
+      webhookPath: OPENCLAW_TELEGRAM_INTERNAL_WEBHOOK_PATH,
     };
+    if (origin) {
+      telegramConfig.webhookUrl = `${origin}${TELEGRAM_PUBLIC_WEBHOOK_PATH}`;
+    }
+    if (telegramWebhookSecret) {
+      telegramConfig.webhookSecret = telegramWebhookSecret;
+    }
+    channels.telegram = telegramConfig;
+    config.channels = channels;
   }
 
   // Slack HTTP mode: OpenClaw validates signatures and handles replies natively

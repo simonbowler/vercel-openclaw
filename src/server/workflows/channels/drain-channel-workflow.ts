@@ -59,19 +59,6 @@ export async function processChannelStep(
   const resolvedDependencies =
     dependencies ?? (await loadDrainChannelWorkflowDependencies());
 
-  // Channel-specific reconciliation (mirrors old queue consumer behavior)
-  if (channel === "telegram") {
-    try {
-      const { reconcileTelegramIntegration } = await import("@/server/channels/telegram/reconcile");
-      await reconcileTelegramIntegration();
-    } catch (err) {
-      const { logWarn } = await import("@/server/log");
-      logWarn("channels.telegram_integration_reconcile_failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
   if (channel === "discord") {
     try {
       const { reconcileDiscordIntegration } = await import("@/server/channels/discord/reconcile");
