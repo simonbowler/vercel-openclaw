@@ -537,6 +537,19 @@ export async function touchRunningSandbox(): Promise<SingleMeta> {
     }
   }
 
+  // Piggyback on the heartbeat to keep the cron wake time fresh in the
+  // store.  When the sandbox naturally sleeps (platform timeout),
+  // stopSandbox() never runs, so this is the only path that persists the
+  // next wake time before the sandbox disappears.
+  try {
+    const cronNextWakeMs = await readCronNextWakeFromSandbox(sandbox);
+    if (cronNextWakeMs) {
+      await getStore().setValue(CRON_NEXT_WAKE_KEY, cronNextWakeMs);
+    }
+  } catch {
+    // Non-critical — don't let cron-wake bookkeeping break the heartbeat.
+  }
+
   return mutateMeta((next) => {
     next.lastAccessedAt = now;
   });
