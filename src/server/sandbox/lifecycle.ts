@@ -499,6 +499,58 @@ export async function getSandboxDomain(port = OPENCLAW_PORT): Promise<string> {
   return domain;
 }
 
+/**
+ * Write an updated openclaw.json into the running sandbox so that OpenClaw's
+ * built-in chokidar file watcher detects the change and hot-reloads the
+ * affected channel (no gateway restart required).
+ *
+ * Called after channel credentials are saved or removed in the admin UI.
+ * No-op when the sandbox is not running.
+ */
+export async function syncGatewayConfigToSandbox(): Promise<{ synced: boolean; reason: string }> {
+  const meta = await getInitializedMeta();
+  if (meta.status !== "running" || !meta.sandboxId) {
+    logInfo("sandbox.config_sync_skipped", {
+      reason: "sandbox_not_running",
+      status: meta.status,
+      sandboxId: meta.sandboxId,
+    });
+    return { synced: false, reason: "sandbox_not_running" };
+  }
+
+  const { getPublicOrigin } = await import("@/server/public-url");
+  const apiKey = await getAiGatewayBearerTokenOptional();
+  const proxyOrigin = getPublicOrigin();
+
+  const slackConfig = meta.channels.slack;
+  const files = buildDynamicRestoreFiles({
+    proxyOrigin,
+    apiKey,
+    telegramBotToken: meta.channels.telegram?.botToken,
+    telegramWebhookSecret: meta.channels.telegram?.webhookSecret,
+    slackCredentials: slackConfig
+      ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret }
+      : undefined,
+  });
+
+  try {
+    const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
+    await sandbox.writeFiles(files);
+    logInfo("sandbox.config_sync_written", {
+      sandboxId: meta.sandboxId,
+      fileCount: files.length,
+      filePaths: files.map((f) => f.path),
+    });
+    return { synced: true, reason: "config_written" };
+  } catch (error) {
+    logWarn("sandbox.config_sync_failed", {
+      sandboxId: meta.sandboxId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return { synced: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export async function touchRunningSandbox(): Promise<SingleMeta> {
   const meta = await getInitializedMeta();
   if (!meta.sandboxId || meta.status !== "running") {

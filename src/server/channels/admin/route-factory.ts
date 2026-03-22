@@ -7,6 +7,8 @@ import {
   buildChannelConnectBlockedResponse,
 } from "@/server/channels/connectability";
 import { getPublicChannelState } from "@/server/channels/state";
+import { logInfo, logWarn } from "@/server/log";
+import { syncGatewayConfigToSandbox } from "@/server/sandbox/lifecycle";
 import { getInitializedMeta } from "@/server/store/store";
 
 type RouteAuth = Exclude<Awaited<ReturnType<typeof requireJsonRouteAuth>>, Response>;
@@ -89,6 +91,23 @@ export function createChannelAdminRouteHandlers<TState>(
           return result;
         }
 
+        // Sync updated config to the running sandbox so OpenClaw's file
+        // watcher hot-reloads the channel without a gateway restart.
+        try {
+          const syncResult = await syncGatewayConfigToSandbox();
+          logInfo("channels.admin_config_synced", {
+            channel: spec.channel,
+            operation: "put",
+            ...syncResult,
+          });
+        } catch (syncError) {
+          logWarn("channels.admin_config_sync_failed", {
+            channel: spec.channel,
+            operation: "put",
+            error: syncError instanceof Error ? syncError.message : String(syncError),
+          });
+        }
+
         const nextState = spec.selectState(await getPublicChannelState(request));
         return authJsonOk(nextState, auth);
       } catch (error) {
@@ -112,6 +131,23 @@ export function createChannelAdminRouteHandlers<TState>(
         });
         if (result instanceof Response) {
           return result;
+        }
+
+        // Sync updated config to the running sandbox so OpenClaw's file
+        // watcher removes the channel without a gateway restart.
+        try {
+          const syncResult = await syncGatewayConfigToSandbox();
+          logInfo("channels.admin_config_synced", {
+            channel: spec.channel,
+            operation: "delete",
+            ...syncResult,
+          });
+        } catch (syncError) {
+          logWarn("channels.admin_config_sync_failed", {
+            channel: spec.channel,
+            operation: "delete",
+            error: syncError instanceof Error ? syncError.message : String(syncError),
+          });
         }
 
         const nextState = spec.selectState(await getPublicChannelState(request));
