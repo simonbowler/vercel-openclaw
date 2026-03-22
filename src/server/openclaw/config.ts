@@ -28,6 +28,7 @@ export const OPENCLAW_TTS_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/tts/SKILL.m
 export const OPENCLAW_TTS_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/skills/tts/scripts/speak.mjs`;
 export const OPENCLAW_STRUCTURED_EXTRACT_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/structured-extract/SKILL.md`;
 export const OPENCLAW_STRUCTURED_EXTRACT_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/skills/structured-extract/scripts/extract.mjs`;
+export const OPENCLAW_CRON_SKILL_PATH = `${OPENCLAW_STATE_DIR}/skills/host-scheduler/SKILL.md`;
 
 // The built-in skill shipped with the openclaw npm package uses a Python
 // gen.py script that requires a direct sk-* OPENAI_API_KEY.  We overwrite
@@ -1194,6 +1195,80 @@ try {
   console.error("Structured extract response was not valid JSON: " + reason);
   process.exit(1);
 }
+`;
+}
+
+export function buildCronSkill(): string {
+  return `---
+name: cron
+description: Schedule recurring tasks, reminders, and messages using OpenClaw cron
+user-invocable: true
+metadata:
+  openclaw:
+    emoji: "⏰"
+---
+
+# Cron Scheduling
+
+Schedule tasks using the \\\`openclaw cron\\\` CLI. This is the primary way to create
+recurring jobs that survive sandbox restarts.
+
+## Quick examples
+
+### Send a message every 30 minutes
+\\\`\\\`\\\`bash
+openclaw cron add --name "avatar-quote" --every 30m --message "Pick a random Avatar quote and share it." --announce --channel telegram --session isolated
+\\\`\\\`\\\`
+
+### Send a daily reminder at 9am UTC
+\\\`\\\`\\\`bash
+openclaw cron add --name "daily-standup" --cron "0 9 * * *" --message "Good morning! What are your priorities today?" --announce --channel telegram --session isolated
+\\\`\\\`\\\`
+
+### One-shot reminder
+\\\`\\\`\\\`bash
+openclaw cron add --name "deploy-check" --at "+20m" --message "Check the deploy status." --announce --channel telegram --session isolated
+\\\`\\\`\\\`
+
+### Every 5 minutes
+\\\`\\\`\\\`bash
+openclaw cron add --name "heartbeat" --every 5m --message "Quick status check." --announce --channel telegram --session isolated
+\\\`\\\`\\\`
+
+## Key flags
+
+| Flag | Description |
+|------|-------------|
+| \\\`--name <name>\\\` | Job name (required) |
+| \\\`--every <duration>\\\` | Recurring interval (e.g. \\\`5m\\\`, \\\`1h\\\`, \\\`30m\\\`) |
+| \\\`--cron <expr>\\\` | Cron expression (e.g. \\\`0 9 * * 1-5\\\`) |
+| \\\`--at <when>\\\` | One-shot at ISO time or \\\`+duration\\\` (e.g. \\\`+20m\\\`) |
+| \\\`--message <text>\\\` | What the agent should do when the job fires |
+| \\\`--announce\\\` | Deliver the result to a chat channel |
+| \\\`--channel <ch>\\\` | Which channel to deliver to (\\\`telegram\\\`, \\\`slack\\\`, \\\`discord\\\`) |
+| \\\`--session isolated\\\` | Run in an isolated session (recommended) |
+| \\\`--json\\\` | Output result as JSON |
+
+## Managing jobs
+
+\\\`\\\`\\\`bash
+openclaw cron list                    # List all jobs
+openclaw cron list --json             # List as JSON
+openclaw cron run <jobId>             # Trigger a job now
+openclaw cron runs <jobId>            # Show run history
+openclaw cron disable <jobId>         # Disable a job
+openclaw cron enable <jobId>          # Enable a job
+openclaw cron rm <jobId>              # Delete a job
+openclaw cron status                  # Scheduler status
+\\\`\\\`\\\`
+
+## Important notes
+
+- The \\\`--announce\\\` flag is required for the job to deliver results to a chat.
+- Without \\\`--channel\\\`, delivery goes to the last active channel.
+- Jobs survive sandbox restarts via snapshot persistence.
+- The host watchdog checks every 5 minutes and wakes the sandbox if a job is due.
+- Minimum interval for \\\`--every\\\` is 1 minute.
 `;
 }
 
