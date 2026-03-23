@@ -9,7 +9,7 @@
   /* Text */
   --foreground: #ededed;
   --foreground-muted: #888;
-  --foreground-subtle: #666;
+  --foreground-subtle: #888;
 
   /* Card / Popover */
   --card: #111;
@@ -44,6 +44,7 @@
   --success-surface: rgba(69, 165, 87, 0.1);
   --warning: #f5a623;
   --warning-surface: rgba(245, 166, 35, 0.1);
+  --error: #e5484d;
   --danger: #e5484d;
   --danger-surface: rgba(229, 72, 77, 0.1);
   --info: #0070f3;
@@ -55,6 +56,8 @@
   --slack: #611f69;
 
   /* Elevation */
+  --card-border: #222;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
   --radius: 8px;
   --shadow: 0 0 0 1px var(--border);
 }
@@ -2289,16 +2292,6 @@ a[href]:focus-visible {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
-}
-
-.button.danger {
-  border-color: rgba(229, 72, 77, 0.4);
-  background: var(--danger-surface);
-  color: #f9a8ab;
-}
-
-.button.danger:hover:not(:disabled) {
-  background: rgba(229, 72, 77, 0.18);
 }
 
 /* ────── Login form ────── */
