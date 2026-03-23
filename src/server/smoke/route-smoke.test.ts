@@ -17,6 +17,7 @@
  */
 
 import assert from "node:assert/strict";
+import { mock } from "node:test";
 import test from "node:test";
 
 import {
@@ -541,6 +542,8 @@ test("route-smoke: POST /api/firewall/promote without CSRF returns 403", async (
 test("route-smoke: Slack webhook with valid signature enqueues job", async (t) => {
   const h = createScenarioHarness();
   h.installDefaultGatewayHandlers();
+  const { slackWebhookWorkflowRuntime } = await import("@/app/api/channels/slack/webhook/route");
+  const startMock = mock.method(slackWebhookWorkflowRuntime, "start", async () => {});
   try {
     const secrets = h.configureAllChannels();
     // Await getMeta to ensure async mutateMeta has flushed
@@ -555,6 +558,7 @@ test("route-smoke: Slack webhook with valid signature enqueues job", async (t) =
     await dumpDiagnostics(t, h);
     throw err;
   } finally {
+    startMock.mock.restore();
     resetAfterCallbacks();
     h.teardown();
   }
@@ -616,6 +620,8 @@ test("route-smoke: Slack webhook without channel config returns 404", async (t) 
 test("route-smoke: Telegram webhook with valid secret enqueues job", async (t) => {
   const h = createScenarioHarness();
   h.installDefaultGatewayHandlers();
+  const { telegramWebhookWorkflowRuntime } = await import("@/app/api/channels/telegram/webhook/route");
+  const startMock = mock.method(telegramWebhookWorkflowRuntime, "start", async () => {});
   try {
     const secrets = h.configureAllChannels();
     await h.getMeta();
@@ -629,6 +635,7 @@ test("route-smoke: Telegram webhook with valid secret enqueues job", async (t) =
     await dumpDiagnostics(t, h);
     throw err;
   } finally {
+    startMock.mock.restore();
     resetAfterCallbacks();
     h.teardown();
   }
@@ -694,6 +701,8 @@ test("route-smoke: Discord PING interaction returns type 1 ack", async (t) => {
 test("route-smoke: Discord command interaction returns deferred response", async (t) => {
   const h = createScenarioHarness();
   h.installDefaultGatewayHandlers();
+  const { discordWebhookWorkflowRuntime } = await import("@/app/api/channels/discord/webhook/route");
+  const startMock = mock.method(discordWebhookWorkflowRuntime, "start", async () => {});
   try {
     const secrets = h.configureAllChannels();
     await h.getMeta();
@@ -711,6 +720,7 @@ test("route-smoke: Discord command interaction returns deferred response", async
     await dumpDiagnostics(t, h);
     throw err;
   } finally {
+    startMock.mock.restore();
     resetAfterCallbacks();
     h.teardown();
   }
