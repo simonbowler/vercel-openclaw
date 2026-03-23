@@ -444,10 +444,18 @@ export async function stopSandbox(): Promise<SingleMeta> {
       // Persist full cron jobs JSON as a safety net for snapshot restores.
       // Edge cases (partial writes, config re-init) can cause job loss;
       // the store copy ensures we can always recover.
+      //
+      // The stop path is authoritative — if there are 0 jobs, the user
+      // intentionally deleted them.  Clear the store so a future restore
+      // does not resurrect old jobs.  (The heartbeat path does NOT clear
+      // on empty reads because those can be transient.)
       const rawJobs = cronWakeRead.status !== "error" ? cronWakeRead.rawJobsJson : undefined;
       if (rawJobs) {
         await getStore().setValue(CRON_JOBS_KEY, rawJobs);
         logInfo("sandbox.cron_jobs_persisted", { bytes: rawJobs.length });
+      } else if (cronWakeRead.status === "no-jobs") {
+        await getStore().deleteValue(CRON_JOBS_KEY);
+        logInfo("sandbox.cron_jobs_cleared", { reason: "no-jobs-on-stop" });
       }
 
       return mutateMeta((next) => {

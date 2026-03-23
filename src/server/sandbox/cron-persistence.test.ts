@@ -473,3 +473,90 @@ test("cron-persistence: cron restore failure does not block sandbox restore", as
     h.teardown();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Phase 7: Resurrection prevention — deleted jobs must stay deleted
+// ---------------------------------------------------------------------------
+
+test("cron-persistence: deleted jobs are not resurrected after restore", async (t) => {
+  const h = createScenarioHarness();
+
+  try {
+    // Phase 1: Create sandbox, add cron jobs, stop (persists to store).
+    await h.driveToRunning();
+    const handle1 = h.controller.lastCreated()!;
+    const cronJobsJson = buildTestCronJobs(Date.now() + 600_000);
+    await handle1.writeFiles([{
+      path: CRON_JOBS_PATH,
+      content: Buffer.from(cronJobsJson),
+    }]);
+    await h.stopToSnapshot();
+
+    // Verify jobs are in the store.
+    const storedAfterFirstStop = await getStore().getValue<string>(CRON_JOBS_KEY);
+    assert.ok(storedAfterFirstStop, "Store should have jobs after first stop");
+
+    // Phase 2: Restore, then "user deletes all jobs" (empty jobs.json), stop again.
+    h.fakeFetch.onGet(/fake\.vercel\.run/, () => gatewayReadyResponse());
+    h.controller.defaultResponders.push((cmd, args) => {
+      if (cmd === "bash" && args?.some((a) => typeof a === "string" && a.includes("openclaw-app"))) {
+        return { exitCode: 0, output: async () => "ok" };
+      }
+      return undefined;
+    });
+
+    let cb: (() => Promise<void> | void) | null = null;
+    await ensureSandboxRunning({
+      origin: "https://test.example.com",
+      reason: "resurrection-test-restore",
+      schedule(fn) { cb = fn; },
+    });
+    assert.ok(cb, "Background work should be scheduled");
+    await (cb as unknown as () => Promise<void>)();
+
+    // Simulate user deleting all cron jobs via the agent.
+    const handle2 = h.controller.lastCreated()!;
+    await handle2.writeFiles([{
+      path: CRON_JOBS_PATH,
+      content: Buffer.from(JSON.stringify({ version: 1, jobs: [] })),
+    }]);
+
+    // Stop again — this is the authoritative "0 jobs" signal.
+    const { stopSandbox } = await import("@/server/sandbox/lifecycle");
+    await stopSandbox();
+
+    // Verify store was CLEARED (not still holding old jobs).
+    const storedAfterSecondStop = await getStore().getValue<string>(CRON_JOBS_KEY);
+    assert.equal(storedAfterSecondStop, null, "Store should be cleared when stop reads 0 jobs");
+
+    // Phase 3: Restore again — should NOT resurrect the deleted jobs.
+    let cb2: (() => Promise<void> | void) | null = null;
+    await ensureSandboxRunning({
+      origin: "https://test.example.com",
+      reason: "resurrection-test-verify",
+      schedule(fn) { cb2 = fn; },
+    });
+    assert.ok(cb2, "Background work should be scheduled");
+    await (cb2 as unknown as () => Promise<void>)();
+
+    const meta = await getInitializedMeta();
+    assert.equal(meta.status, "running");
+    assert.equal(
+      meta.lastRestoreMetrics?.cronRestoreOutcome,
+      "no-store-jobs",
+      "Should not attempt cron restore when store was intentionally cleared",
+    );
+
+    // Verify no cron jobs were written to the sandbox.
+    const handle3 = h.controller.lastCreated()!;
+    const cronWrite = handle3.writtenFiles.find(
+      (f) => f.path === CRON_JOBS_PATH,
+    );
+    assert.ok(!cronWrite, "Deleted jobs must not be resurrected");
+  } catch (err) {
+    await dumpDiagnostics(t, h);
+    throw err;
+  } finally {
+    h.teardown();
+  }
+});
