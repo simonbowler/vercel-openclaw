@@ -52,6 +52,17 @@ By default the app uses a simple admin secret. If you'd prefer OAuth login throu
 
 Set the OAuth callback URL to `https://<your-domain>/api/auth/callback`.
 
+## Required on Vercel
+
+These variables must be set for deployed Vercel environments:
+
+| Variable | Purpose |
+| -------- | ------- |
+| `ADMIN_SECRET` | Secret used to log in with the default `admin-secret` auth mode. Use a strong, random value. |
+| `CRON_SECRET` | Authenticates the watchdog cron (`/api/cron/watchdog`, every 5 min). Generate with `openssl rand -hex 32`. Without this, the watchdog silently returns 401 and never fires. Missing on Vercel is a hard failure in the deployment contract. |
+
+AI Gateway auth uses Vercel OIDC automatically on deployed Vercel environments — no API keys needed. If OIDC is unavailable (e.g. local dev without `vercel env pull`), set `AI_GATEWAY_API_KEY` as an optional fallback.
+
 ## Optional: pin the OpenClaw version
 
 By default the app installs `openclaw@latest`, which is non-deterministic across deploys. On Vercel deployments, the deployment contract **warns** — it does not fail — when `OPENCLAW_PACKAGE_SPEC` is unset or unpinned (e.g. `openclaw@latest`). The runtime still falls back to `openclaw@latest`, but restores are non-deterministic. Pin to an exact version like `openclaw@1.2.3`.
@@ -61,7 +72,14 @@ By default the app installs `openclaw@latest`, which is non-deterministic across
 | `OPENCLAW_PACKAGE_SPEC` | Pin to an exact version like `openclaw@1.2.3` for deterministic sandbox restores and comparable benchmarks. When unset, the runtime falls back to `openclaw@latest` and the deployment contract warns on Vercel. |
 | `OPENCLAW_SANDBOX_VCPUS` | vCPU count for sandbox create/restore (1, 2, 4, or 8; default: 1). Keep fixed during benchmarks. |
 | `OPENCLAW_SANDBOX_SLEEP_AFTER_MS` | How long the sandbox stays alive after last activity, in milliseconds (60000–2700000; default: 1800000 = 30 min). Heartbeat and touch-throttle intervals are derived proportionally. Existing running sandboxes cannot be shortened in place. If you increase this value, the next touch/heartbeat can top the sandbox timeout up to the new target. If you decrease it, the lower value becomes exact on the next create or restore. |
-| `CRON_SECRET` | Required on Vercel for the watchdog cron (`/api/cron/watchdog`, every 5 min) to authenticate. Generate with `openssl rand -hex 32`. Without this, the watchdog silently returns 401 and never fires. Missing on Vercel is a hard failure in the deployment contract. |
+
+## Optional: Deployment Protection and webhooks
+
+If Vercel Deployment Protection is enabled, channel webhooks (Slack, Telegram, Discord) will be blocked unless you set a bypass secret:
+
+| Variable | Purpose |
+| -------- | ------- |
+| `VERCEL_AUTOMATION_BYPASS_SECRET` | Appended to webhook URLs so they pass Deployment Protection. Set this in Vercel project settings under Deployment Protection → Automation Bypass. |
 
 ## Optional: override the public origin
 
@@ -72,7 +90,6 @@ The app resolves its canonical public URL from Vercel system variables automatic
 | `NEXT_PUBLIC_APP_URL` | Full origin override, e.g. `https://my-app.example.com` |
 | `NEXT_PUBLIC_BASE_DOMAIN` | Preferred external host for webhook URLs |
 | `BASE_DOMAIN` | Legacy alias for `NEXT_PUBLIC_BASE_DOMAIN` |
-| `VERCEL_AUTOMATION_BYPASS_SECRET` | Appended to webhook URLs to pass Deployment Protection |
 
 ## Local development
 

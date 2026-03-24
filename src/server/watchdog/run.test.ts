@@ -16,8 +16,8 @@ const PREVIOUS: WatchdogReport = {
   checks: [],
 };
 
-function findCheck(report: WatchdogReport, id: string) {
-  return report.checks.find((check) => (check.id as string) === id);
+function findCheck(report: WatchdogReport, id: WatchdogReport["checks"][number]["id"]) {
+  return report.checks.find((check) => check.id === id);
 }
 
 function makeDeps(overrides: Partial<Parameters<typeof runSandboxWatchdog>[1]> = {}) {
@@ -244,6 +244,34 @@ test("cron wake retains wake key when store has jobs but cron restore failed", a
   assert.equal(cronCleared, false, "Wake key must be retained when cron restore fails");
   assert.equal(findCheck(report, "cron.wake")?.status, "pass");
   assert.ok(findCheck(report, "cron.wake")?.message?.includes("restore-failed"));
+  assert.ok(findCheck(report, "cron.wake")?.message?.includes("wake key retained"));
+  assert.equal(report.triggeredRepair, true);
+});
+
+test("cron wake retains wake key when cron restore is unverified", async () => {
+  let cronCleared = false;
+
+  const report = await runSandboxWatchdog(
+    { request: new Request("https://app.test/api/cron/watchdog") },
+    makeDeps({
+      getMeta: async () =>
+        ({ status: "stopped", sandboxId: null, snapshotId: "snap_123" }) as SingleMeta,
+      getCronNextWakeMs: async () => 1, // in the past
+      ensureReady: async () => ({
+        status: "running",
+        lastRestoreMetrics: {
+          cronRestoreOutcome: "restore-unverified",
+        },
+      }) as SingleMeta,
+      clearCronNextWake: async () => {
+        cronCleared = true;
+      },
+    }),
+  );
+
+  assert.equal(cronCleared, false, "Wake key must be retained when cron restore is unverified");
+  assert.equal(findCheck(report, "cron.wake")?.status, "pass");
+  assert.ok(findCheck(report, "cron.wake")?.message?.includes("restore-unverified"));
   assert.ok(findCheck(report, "cron.wake")?.message?.includes("wake key retained"));
   assert.equal(report.triggeredRepair, true);
 });

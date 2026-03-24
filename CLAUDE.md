@@ -72,7 +72,7 @@ Channel phases (`channelRoundTrip`, `channelWakeFromSleep`) call `POST /api/admi
 
 | Route | Purpose |
 | ----- | ------- |
-| `/api/admin/preflight` | Deploy-readiness report: public origin, webhook bypass, durable state, AI Gateway OIDC probe |
+| `/api/admin/preflight` | Deploy-readiness report: public origin, webhook bypass, durable state, AI Gateway auth detection |
 | `/api/admin/launch-verify` | Full launch verification: preflight + queue delivery probe + sandbox ensure + chat completions + wake from sleep (destructive) |
 | `/api/queues/launch-verify` | Private Vercel Queues consumer for launch verification probes (not publicly reachable on Vercel) |
 | `/api/admin/ensure` | Trigger sandbox create or restore |
@@ -90,9 +90,9 @@ OpenClaw has a built-in cron scheduler (`croner` library) that persists jobs to 
 
 1. **Before snapshot** (`stopSandbox()`): reads `jobs.json` from the sandbox, extracts the earliest `nextRunAtMs` across all enabled jobs, and saves it to the host store as `openclaw-single:cron-next-wake-ms`. Also persists the full `jobs.json` content to `openclaw-single:cron-jobs-json`.
 2. **On heartbeat** (`touchRunningSandbox()`): keeps both the wake time and jobs JSON fresh in the store, so they survive even when the sandbox times out naturally without an explicit stop.
-3. **Every 5 minutes** (`/api/cron/watchdog`): if the sandbox is stopped and the saved wake time has passed, calls `ensureSandboxReady()` to restore the sandbox. OpenClaw's native cron handles everything from there.
+3. **Every 5 minutes** (`/api/cron/watchdog`): if the sandbox is stopped (or in a recoverable error state with a snapshot) and the saved wake time has passed, calls `ensureSandboxReady()` to restore the sandbox. OpenClaw's native cron handles everything from there.
 4. **After restore**: checks if `jobs.json` is empty on the restored sandbox. If jobs were lost but the store has a copy, writes the stored jobs back and restarts the gateway so the cron module loads them.
-5. **After wake**: the wake time is cleared. OpenClaw reschedules the next run internally, and the next heartbeat/snapshot will persist the updated time.
+5. **After wake**: the wake key is cleared only when the cron restore outcome is `no-store-jobs`, `already-present`, or `restored-verified`. If restore fails or is unverified, the key is retained so the next watchdog run can retry. OpenClaw reschedules the next run internally, and the next heartbeat/snapshot will persist the updated time.
 
 The watchdog never runs chat completions, delivers messages, or interacts with Telegram/Slack/Discord. It only wakes the sandbox — OpenClaw handles the rest.
 
@@ -125,6 +125,8 @@ Responsibilities:
 - append `x-vercel-protection-bypass=<VERCEL_AUTOMATION_BYPASS_SECRET>` when the bypass secret is available (regardless of auth mode)
 
 All channel webhook URL builders (`buildSlackWebhookUrl`, `buildTelegramWebhookUrl`, `buildDiscordPublicWebhookUrl` in `src/server/channels/state.ts`) delegate to `buildPublicUrl`. This guarantees Slack, Telegram, and Discord webhook URLs include the protection bypass query parameter when the secret is configured.
+
+Admin-visible surfaces (preflight payload, status responses, UI) must use `buildPublicDisplayUrl()` instead of `buildPublicUrl()`. The display variant omits the `x-vercel-protection-bypass` query parameter so secrets are never leaked to the browser or API consumers.
 
 ### `src/server/deploy-preflight.ts`
 
@@ -482,7 +484,7 @@ node scripts/verify.mjs --steps=test,typecheck
 
 - `getAiGatewayBearerTokenOptional(): Promise<string | undefined>` — resolves an OIDC token via `@vercel/oidc`. Returns `undefined` when OIDC is unavailable. For local dev, run `vercel link && vercel env pull` to get OIDC credentials. Use `_setAiGatewayTokenOverrideForTesting()` in tests instead of mocking `@vercel/oidc`.
 
-- `getAiGatewayAuthMode(): Promise<"oidc" | "unavailable">` — returns `"oidc"` when the OIDC token resolves, `"unavailable"` otherwise. Used by preflight and channel connectability.
+- `getAiGatewayAuthMode(): Promise<"oidc" | "api-key" | "unavailable">` — returns `"oidc"` when OIDC resolves, `"api-key"` when `AI_GATEWAY_API_KEY` is set, or `"unavailable"` otherwise. Used by preflight and channel connectability.
 
 ## Environment variables relevant to deployment contract
 

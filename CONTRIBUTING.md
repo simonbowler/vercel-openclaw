@@ -27,6 +27,13 @@ Run a subset:
 node scripts/verify.mjs --steps=test,typecheck
 ```
 
+Additional verification commands:
+
+```bash
+npm run verify:observability-pass   # preflight + launch-verify + deploy-requirements + lifecycle tests
+npm run check:deploy-readiness      # machine-checkable deployment readiness report
+```
+
 ### Remote smoke testing
 
 ```bash
@@ -105,17 +112,19 @@ Full reference:
 
 | Variable | Required | Purpose |
 | -------- | -------- | ------- |
-| `UPSTASH_REDIS_REST_URL` | Yes | Persistent store endpoint |
-| `UPSTASH_REDIS_REST_TOKEN` | Yes | Persistent store token |
+| `UPSTASH_REDIS_REST_URL` | Required on Vercel | Persistent store endpoint. Local dev uses the in-memory store. |
+| `UPSTASH_REDIS_REST_TOKEN` | Required on Vercel | Persistent store token. Paired with the URL above. |
+| `ADMIN_SECRET` | Required (`admin-secret` mode) | Secret exchanged for an encrypted session cookie via `/api/auth/login`. Auto-generated locally if unset. |
+| `CRON_SECRET` | Required on Vercel | Authenticates `/api/cron/watchdog` (every 5 min, wakes stopped sandboxes for cron jobs) and the optional `/api/cron/drain-channels` diagnostic backstop. Missing on Vercel is a hard failure in the deployment contract. |
 | `VERCEL_AUTH_MODE` | No | `admin-secret` (default) or `sign-in-with-vercel` |
 | `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID` | Sign-in mode | OAuth client ID |
 | `VERCEL_APP_CLIENT_SECRET` | Sign-in mode | OAuth client secret |
-| `SESSION_SECRET` | Sign-in mode | Cookie encryption secret |
+| `SESSION_SECRET` | Required on Vercel (`sign-in-with-vercel` mode) | Cookie encryption secret. Must be explicitly set on deployed Vercel environments. |
+| `AI_GATEWAY_API_KEY` | No | Optional fallback when Vercel OIDC is unavailable (e.g. local dev without `vercel env pull`). OIDC is the default on deployed Vercel. |
 | `OPENCLAW_PACKAGE_SPEC` | No | OpenClaw version to install (defaults to `openclaw@latest`). On Vercel deployments, the deployment contract **warns** — it does not fail — when unset or unpinned (e.g. `openclaw@latest`). The runtime still falls back to `openclaw@latest`, but restores are non-deterministic. Pin to an exact version like `openclaw@1.2.3`. |
 | `OPENCLAW_SANDBOX_VCPUS` | No | vCPU count for sandbox create and snapshot restore (valid: 1, 2, 4, 8; default: 1). Keep fixed during benchmarks. |
 | `OPENCLAW_SANDBOX_SLEEP_AFTER_MS` | No | How long the sandbox stays alive after last activity, in milliseconds (60000–2700000; default: 1800000 = 30 min). Heartbeat and touch-throttle intervals are derived proportionally. Existing running sandboxes cannot be shortened in place. If you increase this value, the next touch/heartbeat can top the sandbox timeout up to the new target. If you decrease it, the lower value becomes exact on the next create or restore. |
 | `VERCEL_AUTOMATION_BYPASS_SECRET` | No | Appended to webhook URLs to pass Deployment Protection |
-| `CRON_SECRET` | Required on Vercel | Authenticates `/api/cron/watchdog` (every 5 min, wakes stopped sandboxes for cron jobs) and the optional `/api/cron/drain-channels` diagnostic backstop. Missing on Vercel is a hard failure in the deployment contract. |
 | `NEXT_PUBLIC_APP_URL` | No | Base origin override |
 | `NEXT_PUBLIC_BASE_DOMAIN` | No | Preferred external host for webhook URLs |
 | `BASE_DOMAIN` | No | Legacy alias for `NEXT_PUBLIC_BASE_DOMAIN` |

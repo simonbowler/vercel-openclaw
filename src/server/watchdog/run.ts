@@ -56,7 +56,7 @@ export type WatchdogDeps = {
   now: () => number;
 };
 
-const WATCHDOG_CRON_WAKE_CHECK_ID = "cron.wake" as never;
+const WATCHDOG_CRON_WAKE_CHECK_ID = "cron.wake" as const;
 const WATCHDOG_CRON_WAKE_CLEAR_OUTCOMES = new Set<CronRestoreOutcome>([
   "no-store-jobs",
   "already-present",

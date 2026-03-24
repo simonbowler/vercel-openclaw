@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildDeployPreflight, getLaunchVerifyBlocking } from "@/server/deploy-preflight";
-import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
+import { _setAiGatewayTokenOverrideForTesting, _setAiGatewayCredentialOverrideForTesting } from "@/server/env";
 import { _resetStoreForTesting } from "@/server/store/store";
 
 function withEnv<T>(
@@ -31,6 +31,7 @@ function withEnv<T>(
       }
     }
     _setAiGatewayTokenOverrideForTesting(null);
+    _setAiGatewayCredentialOverrideForTesting(null);
     _resetStoreForTesting();
   };
 
@@ -1449,6 +1450,44 @@ test("preflight does not hard-fail on cron-secret outside Vercel", async () => {
 
       const result = getLaunchVerifyBlocking(payload);
       assert.equal(result.blocking, false, "should not block outside Vercel without CRON_SECRET");
+    },
+  );
+});
+
+// ===========================================================================
+// aiGatewayAuth: "api-key" static key path
+// ===========================================================================
+
+test("preflight reports api-key when AI_GATEWAY_API_KEY is used without OIDC", async () => {
+  await withEnv(
+    {
+      VERCEL_AUTH_MODE: "admin-secret",
+      NEXT_PUBLIC_APP_URL: "https://app.example.com",
+      VERCEL_AUTOMATION_BYPASS_SECRET: "bypass-secret",
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token",
+      CRON_SECRET: "cron-secret",
+      AI_GATEWAY_API_KEY: "static-api-key",
+    },
+    async () => {
+      // No OIDC token — only the static API key is available
+      _setAiGatewayTokenOverrideForTesting(undefined);
+      _setAiGatewayCredentialOverrideForTesting({
+        token: "static-api-key",
+        source: "api-key",
+        expiresAt: null,
+      });
+
+      const payload = await buildDeployPreflight(
+        new Request("https://app.example.com/api/admin/preflight"),
+      );
+
+      assert.equal(payload.aiGatewayAuth, "api-key", "should report api-key when static key is the credential source");
+      assert.equal(payload.ok, true, "api-key auth should satisfy preflight");
+
+      const gwCheck = payload.checks.find((c) => c.id === "ai-gateway");
+      assert.ok(gwCheck, "expected ai-gateway check");
+      assert.equal(gwCheck.status, "pass", "ai-gateway check should pass with api-key");
     },
   );
 });

@@ -229,6 +229,84 @@ test("launch-verify POST: preflight failure skips subsequent phases", async () =
   });
 });
 
+test("launch-verify POST (NDJSON): preflight failure skips subsequent phases", async () => {
+  await withHarness(async () => {
+    makePreflightFail();
+
+    const route = getAdminLaunchVerifyRoute();
+    const req = buildAuthPostRequest("/api/admin/launch-verify", "{}", {
+      accept: "application/x-ndjson",
+    });
+    const result = await callRoute(route.POST, req);
+
+    // Parse NDJSON lines
+    const events = result.text
+      .split("\n")
+      .filter((line: string) => line.trim().length > 0)
+      .map((line: string) => JSON.parse(line) as
+        | { type: "phase"; phase: LaunchVerificationPayload["phases"][number]; seq: number; final: boolean }
+        | { type: "summary"; payload: NonNullable<LaunchVerificationPayload["diagnostics"]> }
+        | { type: "result"; payload: LaunchVerificationPayload });
+
+    // Extract final phase events (last emission per phase ID)
+    const finalPhases = new Map<string, LaunchVerificationPayload["phases"][number]>();
+    for (const event of events) {
+      if (event.type === "phase") {
+        finalPhases.set(event.phase.id, event.phase);
+      }
+    }
+
+    // Preflight should fail
+    const preflightPhase = finalPhases.get("preflight");
+    assert.ok(preflightPhase, "expected preflight phase event");
+    assert.equal(preflightPhase.status, "fail", "preflight should fail");
+
+    // All runtime phases should be skipped
+    const skippedPhaseIds = ["queuePing", "ensureRunning", "chatCompletions", "wakeFromSleep"] as const;
+    for (const id of skippedPhaseIds) {
+      const phase = finalPhases.get(id);
+      assert.ok(phase, `expected ${id} phase event`);
+      assert.equal(phase.status, "skip", `${id} should be skipped when preflight fails`);
+    }
+
+    // Summary event should show blocking
+    const summaryEvent = events.find(
+      (event): event is { type: "summary"; payload: NonNullable<LaunchVerificationPayload["diagnostics"]> } =>
+        event.type === "summary",
+    );
+    assert.ok(summaryEvent, "expected summary event");
+    assert.equal(summaryEvent.payload.blocking, true, "diagnostics should show blocking");
+
+    // Result event should show ok=false
+    const resultEvent = events.find(
+      (event): event is { type: "result"; payload: LaunchVerificationPayload } =>
+        event.type === "result",
+    );
+    assert.ok(resultEvent, "expected result event");
+    assert.equal(resultEvent.payload.ok, false, "result should be not ok");
+
+    // Result phases should match: preflight=fail, rest=skip
+    const resultPhaseIds = resultEvent.payload.phases.map((p) => p.id);
+    assert.deepEqual(resultPhaseIds, [
+      "preflight",
+      "queuePing",
+      "ensureRunning",
+      "chatCompletions",
+      "wakeFromSleep",
+    ]);
+    assert.equal(resultEvent.payload.phases[0].status, "fail");
+    for (let i = 1; i < resultEvent.payload.phases.length; i++) {
+      assert.equal(
+        resultEvent.payload.phases[i].status,
+        "skip",
+        `result phase ${resultEvent.payload.phases[i].id} should be skipped`,
+      );
+    }
+
+    await drainAfterCallbacks();
+  });
+});
+
 // ===========================================================================
 // GET readiness endpoint
 // ===========================================================================
