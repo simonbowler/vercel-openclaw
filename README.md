@@ -39,14 +39,14 @@ AI Gateway auth is handled automatically via OIDC on deployed Vercel environment
 
 - **Use OpenClaw** — the full OpenClaw UI is proxied at `/gateway`.
 - **Stop & restore** — save a snapshot of your sandbox and restore it later. Useful if you want to roll back after experimenting.
-- **Connect channels** — wire up Slack, Telegram, or Discord so people can talk to your OpenClaw instance from chat. Configure each one from the admin panel. Normal channel delivery uses Workflow DevKit. Deployment verification is triggered via `POST /api/admin/launch-verify`, which internally probes the private `/api/queues/launch-verify` consumer.
+- **Connect channels** — wire up Slack, Telegram, or Discord so people can talk to your OpenClaw instance from chat. Configure each one from the admin panel. Normal channel delivery uses Workflow DevKit. Deployment verification is triggered via `POST /api/admin/launch-verify`, which internally probes the private `/api/queues/launch-verify` consumer. Smoke testing via `/api/admin/channel-secrets` dispatches server-signed synthetic webhooks — these use bypass-enabled URLs for all channels including Telegram, unlike provider-facing Telegram registration which intentionally omits the bypass parameter.
 - **Firewall** — the app can learn which domains your agent talks to, then lock egress down to only those domains.
 
 ## Required on Vercel
 
 | Variable | When required | Purpose |
 | -------- | ------------- | ------- |
-| `CRON_SECRET` | Always | Authenticates `/api/cron/watchdog` and the optional `/api/cron/drain-channels` diagnostic backstop. Missing on Vercel is a hard failure in the deployment contract. |
+| `CRON_SECRET` | Always | Authenticates `/api/cron/watchdog`. Missing on Vercel is a hard failure in the deployment contract. |
 | `ADMIN_SECRET` | `admin-secret` mode (default) | Secret exchanged for an encrypted session cookie via `/api/auth/login`. |
 | `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID` | `sign-in-with-vercel` mode | OAuth client ID. |
 | `VERCEL_APP_CLIENT_SECRET` | `sign-in-with-vercel` mode | OAuth client secret. |

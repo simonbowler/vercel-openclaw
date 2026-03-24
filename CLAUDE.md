@@ -79,8 +79,7 @@ Channel phases (`channelRoundTrip`, `channelWakeFromSleep`) call `POST /api/admi
 | `/api/admin/stop` | Snapshot and stop the sandbox |
 | `/api/admin/snapshot` | Snapshot and stop (same as stop for now) |
 | `/api/admin/snapshots/delete` | Delete a past snapshot from Vercel and local history (cannot delete current restore target) |
-| `/api/admin/channel-secrets` | Configure smoke credentials and dispatch server-signed synthetic Slack/Telegram/Discord webhooks. Raw secrets are never returned. |
-| `/api/cron/drain-channels` | Optional diagnostic backstop — replays queued channel work when `CRON_SECRET` is configured. Workflow delivery is primary; this is not the normal path. |
+| `/api/admin/channel-secrets` | Configure smoke credentials and dispatch server-signed synthetic Slack/Telegram/Discord webhooks. Raw secrets are never returned. Smoke dispatch URLs use `buildPublicUrl()` (bypass included when configured) for all channels, including Telegram — this is intentionally different from provider-facing Telegram webhook registration, which omits the bypass parameter. |
 | `/api/cron/watchdog` | Runs every 5 minutes via Vercel Cron. Health-checks running sandboxes, repairs stuck states, and **wakes stopped sandboxes when OpenClaw cron jobs are due**. |
 | `/api/admin/watchdog` | GET reads cached watchdog report; POST runs a fresh check |
 
@@ -541,6 +540,7 @@ These variables are checked by `buildDeploymentContract()` in `src/server/deploy
 
 | Variable | Context | Policy |
 | -------- | ------- | ------ |
+| `CRON_SECRET` | Required on Vercel | Authenticates `/api/cron/watchdog`. Missing on Vercel is a hard failure in the deployment contract. |
 | `UPSTASH_REDIS_REST_URL` | All deployments | Required for persistent state. Provision via Vercel Marketplace. |
 | `UPSTASH_REDIS_REST_TOKEN` | All deployments | Required for persistent state. Paired with the URL above. |
 | `OPENCLAW_PACKAGE_SPEC` | All environments | Optional locally, recommended on Vercel. Defaults to `openclaw@latest` when unset in local dev. On Vercel deployments, the deployment contract **warns** — it does not fail — when unset or unpinned (e.g. `openclaw@latest`). The runtime still falls back to `openclaw@latest`, but restores are non-deterministic. Pin to an exact version like `openclaw@1.2.3` for deterministic sandbox restores. |

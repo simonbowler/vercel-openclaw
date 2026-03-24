@@ -164,7 +164,6 @@ test("boot-messages: sends boot message and clears on running", async () => {
     });
 
     const { adapter, log } = createTrackingAdapter();
-    let pollCount = 0;
 
     // Override ensureSandboxRunning behavior by mutating meta on poll
     const originalFetch = globalThis.fetch;

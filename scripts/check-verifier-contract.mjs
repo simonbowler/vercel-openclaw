@@ -288,7 +288,6 @@ const routeDocRequirements = [
       "/api/admin/snapshot",
       "/api/admin/snapshots/delete",
       "/api/admin/channel-secrets",
-      "/api/cron/drain-channels",
       "/api/cron/watchdog",
       "/api/admin/watchdog",
     ],

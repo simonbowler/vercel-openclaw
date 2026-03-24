@@ -138,7 +138,7 @@ Full reference:
 | `UPSTASH_REDIS_REST_URL` | Required on Vercel | Persistent store endpoint. Local dev uses the in-memory store. |
 | `UPSTASH_REDIS_REST_TOKEN` | Required on Vercel | Persistent store token. Paired with the URL above. |
 | `ADMIN_SECRET` | Required (`admin-secret` mode) | Secret exchanged for an encrypted session cookie via `/api/auth/login`. Auto-generated locally if unset. |
-| `CRON_SECRET` | Required on Vercel | Authenticates `/api/cron/watchdog` (every 5 min, wakes stopped sandboxes for cron jobs) and the optional `/api/cron/drain-channels` diagnostic backstop. Missing on Vercel is a hard failure in the deployment contract. |
+| `CRON_SECRET` | Required on Vercel | Authenticates `/api/cron/watchdog` (every 5 min, wakes stopped sandboxes for cron jobs). Missing on Vercel is a hard failure in the deployment contract. |
 | `VERCEL_AUTH_MODE` | No | `admin-secret` (default) or `sign-in-with-vercel` |
 | `NEXT_PUBLIC_VERCEL_APP_CLIENT_ID` | Sign-in mode | OAuth client ID |
 | `VERCEL_APP_CLIENT_SECRET` | Sign-in mode | OAuth client secret |
@@ -168,8 +168,7 @@ Full reference:
 | `/api/admin/stop` | Snapshot and stop |
 | `/api/admin/snapshot` | Snapshot and stop (same as stop for now) |
 | `/api/admin/snapshots/delete` | Delete a past snapshot from Vercel and local history |
-| `/api/admin/channel-secrets` | Configure smoke credentials and dispatch signed synthetic Slack/Telegram/Discord webhooks |
-| `/api/cron/drain-channels` | Optional diagnostic backstop for queued channel work |
+| `/api/admin/channel-secrets` | Configure smoke credentials and dispatch signed synthetic Slack/Telegram/Discord webhooks. Smoke dispatch uses `buildPublicUrl()` (bypass included) for all channels including Telegram — distinct from provider-facing registration which omits bypass for Telegram. |
 | `/api/cron/watchdog` | Cron watchdog for health repair and scheduled OpenClaw cron wake |
 | `/api/admin/watchdog` | Read cached watchdog report or run a fresh one |
 | `/api/channels/slack/webhook` | Public Slack webhook |
