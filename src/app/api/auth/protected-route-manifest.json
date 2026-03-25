@@ -1,12 +1,12 @@
 {
   "version": 3,
-  "generatedAt": "2026-03-20T07:03:01.490Z",
+  "generatedAt": "2026-03-25T02:48:53.006Z",
   "roots": [
     "src/app/api/admin",
     "src/app/api/firewall",
     "src/app/api/debug"
   ],
-  "discoveredRouteCount": 37,
+  "discoveredRouteCount": 38,
   "unauthenticatedRouteCount": 0,
   "violationCount": 0,
   "routes": [
@@ -77,6 +77,10 @@
     {
       "method": "POST",
       "path": "/api/admin/launch-verify"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/reset"
     },
     {
       "method": "POST",
