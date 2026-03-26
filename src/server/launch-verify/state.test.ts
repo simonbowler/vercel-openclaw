@@ -42,6 +42,7 @@ function makeAllPassPhases(): LaunchVerificationPhase[] {
     { id: "ensureRunning", status: "pass", durationMs: 10, message: "ok" },
     { id: "chatCompletions", status: "pass", durationMs: 10, message: "ok" },
     { id: "wakeFromSleep", status: "pass", durationMs: 10, message: "ok" },
+    { id: "restorePrepared", status: "pass", durationMs: 10, message: "ok" },
   ];
 }
 
@@ -90,7 +91,7 @@ test("writeChannelReadiness stores and readChannelReadiness retrieves correct Ch
   assert.equal(written.mode, "destructive");
   assert.equal(written.wakeFromSleepPassed, true);
   assert.equal(written.failingPhaseId, null);
-  assert.equal(written.phases.length, 5);
+  assert.equal(written.phases.length, 6);
   assert.ok(written.verifiedAt);
 
   const read = await readChannelReadiness();
@@ -147,7 +148,15 @@ test("isChannelReady returns false for safe mode even if all phases pass", () =>
 // isChannelReady — success case
 // ---------------------------------------------------------------------------
 
-test("isChannelReady returns true only for destructive mode with all 5 required phases passing", () => {
+test("isChannelReady returns false when restorePrepared phase fails", () => {
+  const phases = makeAllPassPhases();
+  phases[5] = { id: "restorePrepared", status: "fail", durationMs: 10, message: "restore target stale", error: "not reusable" };
+
+  const payload = makeDestructivePayload({ phases, ok: false });
+  assert.equal(isChannelReady(payload), false);
+});
+
+test("isChannelReady returns true only for destructive mode with all 6 required phases passing", () => {
   const payload = makeDestructivePayload();
   assert.equal(isChannelReady(payload), true);
 });

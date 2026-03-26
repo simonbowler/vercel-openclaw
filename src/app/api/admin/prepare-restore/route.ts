@@ -1,97 +1,143 @@
-import { jsonError } from "@/shared/http";
-import { requireMutationAuth, requireJsonRouteAuth } from "@/server/auth/route-auth";
-import { logInfo } from "@/server/log";
-import { getInitializedMeta } from "@/server/store/store";
-import { getPublicOrigin } from "@/server/public-url";
 import {
-  prepareRestoreTarget,
-  type PrepareRestoreResult,
-} from "@/server/sandbox/lifecycle";
+  authJsonOk,
+  requireJsonRouteAuth,
+  requireMutationAuth,
+} from "@/server/auth/route-auth";
+import { jsonError } from "@/shared/http";
+import { getPublicOrigin } from "@/server/public-url";
+import { extractRequestId, logError, logInfo } from "@/server/log";
+import { getInitializedMeta } from "@/server/store/store";
+import { prepareRestoreTarget } from "@/server/sandbox/lifecycle";
+import {
+  buildRestoreTargetAttestation,
+  buildRestoreTargetPlan,
+} from "@/server/sandbox/restore-attestation";
+import type { RestoreTargetInspectionPayload } from "@/shared/launch-verification";
 
 /**
- * GET  — returns current restore-target state (read-only).
- * POST — prepares a verified restore target.
+ * Authoritative restore-readiness contract.
  *
- * Request body (POST):
- * ```json
- * { "destructive": true }
- * ```
+ * GET  — inspect current restore-target state (read-only).
+ * POST — prepare a verified restore target (honors `destructive` flag).
+ *
+ * Both verbs return a `RestoreTargetInspectionPayload` with
+ * `attestation`, `preview`, and `plan`.
  */
+
+async function buildInspectionPayload(
+  request: Request,
+  destructive: boolean,
+): Promise<RestoreTargetInspectionPayload> {
+  const origin = getPublicOrigin(request);
+
+  const preview = await prepareRestoreTarget({
+    origin,
+    reason: destructive
+      ? "admin.prepare-restore.prepare"
+      : "admin.prepare-restore.inspect",
+    destructive,
+  });
+
+  const meta = await getInitializedMeta();
+  const attestation = buildRestoreTargetAttestation(meta);
+  const plan = buildRestoreTargetPlan({
+    attestation,
+    status: meta.status,
+    sandboxId: meta.sandboxId,
+  });
+
+  return {
+    ok: attestation.reusable,
+    generatedAt: new Date().toISOString(),
+    attestation,
+    preview: {
+      ok: preview.ok,
+      destructive: preview.destructive,
+      state: preview.state,
+      reason: preview.reason ?? null,
+      snapshotId: preview.snapshotId,
+      snapshotDynamicConfigHash: preview.snapshotDynamicConfigHash,
+      runtimeDynamicConfigHash: preview.runtimeDynamicConfigHash,
+      snapshotAssetSha256: preview.snapshotAssetSha256,
+      runtimeAssetSha256: preview.runtimeAssetSha256,
+      preparedAt: preview.preparedAt,
+      actions: preview.actions,
+    },
+    plan,
+  };
+}
+
+function logInspection(
+  event: "restore_readiness.inspect" | "restore_readiness.prepare",
+  requestId: string | null,
+  payload: RestoreTargetInspectionPayload,
+  destructive: boolean,
+): void {
+  logInfo(event, {
+    requestId,
+    destructive,
+    ok: payload.ok,
+    reusable: payload.attestation.reusable,
+    needsPrepare: payload.attestation.needsPrepare,
+    reasons: payload.attestation.reasons,
+    restorePreparedStatus: payload.attestation.restorePreparedStatus,
+    restorePreparedReason: payload.attestation.restorePreparedReason,
+    planStatus: payload.plan.status,
+    planActionIds: payload.plan.actions.map((action) => action.id),
+    previewOk: payload.preview.ok,
+    previewState: payload.preview.state,
+    previewReason: payload.preview.reason,
+  });
+}
 
 export async function GET(request: Request): Promise<Response> {
   const auth = await requireJsonRouteAuth(request);
-  if (auth instanceof Response) {
-    return auth;
-  }
+  if (auth instanceof Response) return auth;
+
+  const requestId = extractRequestId(request);
 
   try {
-    const meta = await getInitializedMeta();
-
-    const payload: PrepareRestoreResult = {
-      ok: meta.restorePreparedStatus === "ready",
-      destructive: false,
-      state: meta.restorePreparedStatus,
-      reason: meta.restorePreparedReason,
-      snapshotId: meta.snapshotId,
-      snapshotDynamicConfigHash: meta.snapshotDynamicConfigHash,
-      runtimeDynamicConfigHash: meta.runtimeDynamicConfigHash,
-      snapshotAssetSha256: meta.snapshotAssetSha256,
-      runtimeAssetSha256: meta.runtimeAssetSha256,
-      preparedAt: meta.restorePreparedAt,
-      actions: [],
-    };
-
-    logInfo("prepare_restore.get", {
-      state: payload.state,
-      reason: payload.reason,
-    });
-
-    const response = Response.json(payload);
-    if (auth.setCookieHeader) {
-      response.headers.append("Set-Cookie", auth.setCookieHeader);
-    }
-    return response;
+    const payload = await buildInspectionPayload(request, false);
+    logInspection("restore_readiness.inspect", requestId ?? null, payload, false);
+    return authJsonOk(payload, auth);
   } catch (error) {
+    logError("restore_readiness.inspect_failed", {
+      requestId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return jsonError(error);
   }
 }
 
 export async function POST(request: Request): Promise<Response> {
   const auth = await requireMutationAuth(request);
-  if (auth instanceof Response) {
-    return auth;
+  if (auth instanceof Response) return auth;
+
+  const requestId = extractRequestId(request);
+
+  let destructive = false;
+  try {
+    const body = (await request.json()) as { destructive?: boolean };
+    destructive = body.destructive === true;
+  } catch {
+    destructive = false;
   }
 
   try {
-    let destructive = false;
-    try {
-      const body = await request.json();
-      destructive = body?.destructive === true;
-    } catch {
-      // empty body is fine — defaults to non-destructive
-    }
-
-    const origin = getPublicOrigin(request);
-
-    const result = await prepareRestoreTarget({
-      origin,
-      reason: "operator-request",
+    const payload = await buildInspectionPayload(request, destructive);
+    logInspection(
+      "restore_readiness.prepare",
+      requestId ?? null,
+      payload,
       destructive,
-    });
-
-    logInfo("prepare_restore.post", {
-      ok: result.ok,
-      destructive: result.destructive,
-      state: result.state,
-      actionCount: result.actions.length,
-    });
-
-    const response = Response.json(result);
-    if (auth.setCookieHeader) {
-      response.headers.append("Set-Cookie", auth.setCookieHeader);
-    }
-    return response;
+    );
+    return authJsonOk(payload, auth);
   } catch (error) {
+    logError("restore_readiness.prepare_failed", {
+      requestId,
+      destructive,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return jsonError(error);
   }
 }

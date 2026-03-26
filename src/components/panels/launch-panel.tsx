@@ -7,6 +7,7 @@ import type {
   LaunchVerificationPayload,
   LaunchVerificationPhase,
   ChannelReadiness,
+  RestoreTargetInspectionPayload,
 } from "@/shared/launch-verification";
 
 type LaunchPanelProps = {
@@ -67,6 +68,69 @@ async function loadPersistedReadiness(): Promise<ChannelReadiness | null> {
   }
 }
 
+async function loadRestoreReadiness(): Promise<RestoreTargetInspectionPayload | null> {
+  try {
+    const res = await fetch("/api/admin/prepare-restore", {
+      cache: "no-store",
+      headers: { accept: "application/json" },
+    });
+    return res.ok ? ((await res.json()) as RestoreTargetInspectionPayload) : null;
+  } catch {
+    return null;
+  }
+}
+
+type RestoreReadinessViewModel = {
+  ok: boolean;
+  state: "unknown" | "dirty" | "preparing" | "ready" | "failed" | "blocked";
+  reason: string | null;
+  reusable: boolean;
+  reasons: string[];
+  preparedAt: number | null;
+  actions: Array<{
+    id: string;
+    title: string;
+  }>;
+};
+
+function toRestoreReadinessViewModel(
+  payload: RestoreTargetInspectionPayload,
+): RestoreReadinessViewModel {
+  return {
+    ok: payload.ok,
+    state: payload.attestation.restorePreparedStatus === "unknown"
+      ? "unknown"
+      : payload.attestation.restorePreparedStatus,
+    reason: payload.attestation.restorePreparedReason,
+    reusable: payload.attestation.reusable,
+    reasons: payload.attestation.reasons,
+    preparedAt: payload.attestation.restorePreparedAt,
+    actions: payload.plan.actions.map((a) => ({ id: a.id, title: a.title })),
+  };
+}
+
+function restoreStateLabel(state: RestoreReadinessViewModel["state"]): string {
+  switch (state) {
+    case "ready": return "Sealed";
+    case "dirty": return "Stale";
+    case "preparing": return "Preparing";
+    case "blocked": return "Blocked";
+    case "failed": return "Failed";
+    case "unknown": return "Unknown";
+  }
+}
+
+function restoreStateBadgeClass(state: RestoreReadinessViewModel["state"]): string {
+  switch (state) {
+    case "ready": return "running";
+    case "dirty":
+    case "failed": return "error";
+    case "preparing": return "creating";
+    case "blocked":
+    case "unknown": return "stopped";
+  }
+}
+
 type StreamPhaseEvent = { type: "phase"; phase: LaunchVerificationPhase };
 type StreamResultEvent = {
   type: "result";
@@ -77,6 +141,7 @@ type StreamEvent = StreamPhaseEvent | StreamResultEvent;
 export function LaunchPanel({ status, busy, requestJson }: LaunchPanelProps) {
   const [result, setResult] = useState<LaunchVerificationPayload | null>(null);
   const [readiness, setReadiness] = useState<ChannelReadiness | null>(null);
+  const [restoreReadiness, setRestoreReadiness] = useState<RestoreReadinessViewModel | null>(null);
   const [running, setRunning] = useState(false);
   const [streamingPhases, setStreamingPhases] = useState<LaunchVerificationPhase[]>([]);
   const [expanded, setExpanded] = useState(false);
@@ -87,6 +152,11 @@ export function LaunchPanel({ status, busy, requestJson }: LaunchPanelProps) {
     void loadPersistedReadiness().then((data) => {
       if (!cancelled && data) {
         setReadiness(data);
+      }
+    });
+    void loadRestoreReadiness().then((data) => {
+      if (!cancelled && data) {
+        setRestoreReadiness(toRestoreReadinessViewModel(data));
       }
     });
     return () => { cancelled = true; };
@@ -199,7 +269,7 @@ export function LaunchPanel({ status, busy, requestJson }: LaunchPanelProps) {
   const completedStreamCount = streamingPhases.filter(
     (p) => p.status !== "running",
   ).length;
-  const totalPhaseCount = 5;
+  const totalPhaseCount = 6;
   const progressPct = isStreaming
     ? Math.round((completedStreamCount / totalPhaseCount) * 100)
     : 0;
@@ -398,6 +468,69 @@ export function LaunchPanel({ status, busy, requestJson }: LaunchPanelProps) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {restoreReadiness && (
+        <div style={{ marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <p className="eyebrow">Restore Readiness</p>
+            <span className={`status-badge ${restoreStateBadgeClass(restoreReadiness.state)}`}>
+              {restoreStateLabel(restoreReadiness.state)}
+            </span>
+          </div>
+
+          <div className="metrics-grid" style={{ marginBottom: 12 }}>
+            <div>
+              <dt>Reusable</dt>
+              <dd>{restoreReadiness.reusable ? "Yes" : "No"}</dd>
+            </div>
+            <div>
+              <dt>State</dt>
+              <dd>{restoreReadiness.state}</dd>
+            </div>
+            {restoreReadiness.reason && (
+              <div>
+                <dt>Reason</dt>
+                <dd>{restoreReadiness.reason}</dd>
+              </div>
+            )}
+            {restoreReadiness.preparedAt && (
+              <div>
+                <dt>Prepared</dt>
+                <dd>{formatTimestamp(new Date(restoreReadiness.preparedAt).toISOString())}</dd>
+              </div>
+            )}
+          </div>
+
+          {restoreReadiness.reasons.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <p className="eyebrow" style={{ marginBottom: 4 }}>Issues</p>
+              <div className="launch-phases">
+                {restoreReadiness.reasons.map((reason) => (
+                  <div key={reason} className="launch-phase-row launch-phase-fail">
+                    <span className="launch-phase-icon">{"\u2717"}</span>
+                    <span className="launch-phase-id">{reason}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {restoreReadiness.actions.length > 0 && (
+            <div>
+              <p className="eyebrow" style={{ marginBottom: 4 }}>Required Actions</p>
+              <div className="launch-phases">
+                {restoreReadiness.actions.map((action) => (
+                  <div key={action.id} className="launch-phase-row launch-phase-skip">
+                    <span className="launch-phase-icon">{"\u2192"}</span>
+                    <span className="launch-phase-id">{action.id}</span>
+                    <span className="launch-phase-message">{action.title}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </article>

@@ -118,6 +118,33 @@ test("buildRestoreTargetAttestation reports reusable when snapshot is fresh and 
   assert.deepEqual(attestation.reasons, []);
 });
 
+test("buildRestoreTargetAttestation marks stale snapshot hashes (config + assets) as non-reusable", () => {
+  const base = createDefaultMeta(Date.now(), "gw-token");
+  const desiredConfigHash = computeGatewayConfigHash({});
+  const desiredAssetSha256 = buildRestoreAssetManifest().sha256;
+
+  const attestation = buildRestoreTargetAttestation({
+    ...base,
+    runtimeDynamicConfigHash: desiredConfigHash,
+    snapshotDynamicConfigHash: "old-snapshot-config-hash",
+    runtimeAssetSha256: desiredAssetSha256,
+    snapshotAssetSha256: "old-snapshot-asset-sha256",
+    restorePreparedStatus: "dirty",
+    restorePreparedReason: "static-assets-changed",
+    restorePreparedAt: 1,
+  });
+
+  assert.equal(attestation.reusable, false);
+  assert.equal(attestation.needsPrepare, true);
+  assert.equal(attestation.snapshotConfigFresh, false);
+  assert.equal(attestation.snapshotAssetsFresh, false);
+  assert.equal(attestation.runtimeConfigFresh, true);
+  assert.equal(attestation.runtimeAssetsFresh, true);
+  assert.ok(attestation.reasons.includes("snapshot-config-stale"));
+  assert.ok(attestation.reasons.includes("snapshot-assets-stale"));
+  assert.ok(attestation.reasons.includes("restore-target-dirty"));
+});
+
 // ---------------------------------------------------------------------------
 // buildRestoreTargetPlan tests
 // ---------------------------------------------------------------------------

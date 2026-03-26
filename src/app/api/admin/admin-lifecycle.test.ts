@@ -61,6 +61,8 @@ const snapshotRoute = loadRoute("@/app/api/admin/snapshot/route");
 const snapshotsRoute = loadRoute("@/app/api/admin/snapshots/route");
 const restoreRoute = loadRoute("@/app/api/admin/snapshots/restore/route");
 const statusRoute = loadRoute("@/app/api/status/route");
+const prepareRestoreRoute = loadRoute("@/app/api/admin/prepare-restore/route");
+const restoreTargetRoute = loadRoute("@/app/api/admin/restore-target/route");
 
 // ---------------------------------------------------------------------------
 // Environment isolation
@@ -103,6 +105,9 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
   try {
     await fn();
   } finally {
+    _setSandboxControllerForTesting(null);
+    _resetStoreForTesting();
+    resetAfterCallbacks();
     for (const key of keys) {
       if (originals[key] === undefined) {
         delete process.env[key];
@@ -110,9 +115,6 @@ async function withTestEnv(fn: () => Promise<void>): Promise<void> {
         process.env[key] = originals[key];
       }
     }
-    _resetStoreForTesting();
-    resetAfterCallbacks();
-    _setSandboxControllerForTesting(null);
   }
 }
 
@@ -603,5 +605,123 @@ test("POST /api/status: without CSRF headers returns 403", async () => {
     const request = buildPostRequest("/api/status", "{}", {});
     const result = await callRoute(statusRoute.POST!, request);
     assert.equal(result.status, 403);
+  });
+});
+
+// ===========================================================================
+// GET /api/admin/prepare-restore
+// ===========================================================================
+
+test("GET /api/admin/prepare-restore: returns RestoreTargetInspectionPayload with attestation and plan", async () => {
+  await withTestEnv(async () => {
+    installFakeController();
+    await mutateMeta((m) => {
+      m.status = "stopped";
+      m.snapshotId = "snap-inspect";
+      m.sandboxId = null;
+      m.restorePreparedStatus = "dirty";
+      m.restorePreparedReason = "dynamic-config-changed";
+    });
+
+    const result = await callRoute(prepareRestoreRoute.GET!, authGet("/api/admin/prepare-restore"));
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      ok: boolean;
+      generatedAt: string;
+      attestation: { reusable: boolean; needsPrepare: boolean; reasons: string[] };
+      preview: { ok: boolean; destructive: boolean; state: string };
+      plan: { schemaVersion: number; status: string; blocking: boolean; actions: Array<{ id: string }> };
+    };
+
+    // Payload has full inspection shape
+    assert.equal(typeof body.generatedAt, "string");
+    assert.ok(body.attestation, "Should include attestation");
+    assert.ok(body.preview, "Should include preview");
+    assert.ok(body.plan, "Should include plan");
+
+    // Dirty target is not reusable
+    assert.equal(body.ok, false);
+    assert.equal(body.attestation.reusable, false);
+    assert.equal(body.attestation.needsPrepare, true);
+
+    // Plan includes prepare-destructive action
+    assert.equal(body.plan.status, "needs-prepare");
+    assert.equal(body.plan.blocking, true);
+    assert.ok(
+      body.plan.actions.some((a) => a.id === "prepare-destructive"),
+      "Plan should include prepare-destructive action",
+    );
+  });
+});
+
+test("GET /api/admin/prepare-restore: returns ok=true when restore target is reusable", async () => {
+  await withTestEnv(async () => {
+    installFakeController();
+
+    // Build current desired hashes
+    const { computeGatewayConfigHash } = await import("@/server/openclaw/config");
+    const { buildRestoreAssetManifest } = await import("@/server/openclaw/restore-assets");
+    const desiredConfigHash = computeGatewayConfigHash({});
+    const desiredAssetSha256 = buildRestoreAssetManifest().sha256;
+
+    await mutateMeta((m) => {
+      m.status = "stopped";
+      m.snapshotId = "snap-ready";
+      m.sandboxId = null;
+      m.restorePreparedStatus = "ready";
+      m.restorePreparedReason = "prepared";
+      m.restorePreparedAt = Date.now();
+      m.snapshotDynamicConfigHash = desiredConfigHash;
+      m.runtimeDynamicConfigHash = desiredConfigHash;
+      m.snapshotAssetSha256 = desiredAssetSha256;
+      m.runtimeAssetSha256 = desiredAssetSha256;
+    });
+
+    const result = await callRoute(prepareRestoreRoute.GET!, authGet("/api/admin/prepare-restore"));
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      ok: boolean;
+      attestation: { reusable: boolean; reasons: string[] };
+      plan: { status: string; actions: unknown[] };
+    };
+
+    assert.equal(body.ok, true);
+    assert.equal(body.attestation.reusable, true);
+    assert.equal(body.plan.status, "ready");
+    assert.equal(body.plan.actions.length, 0);
+  });
+});
+
+// ===========================================================================
+// /api/admin/restore-target delegates to /api/admin/prepare-restore
+// ===========================================================================
+
+test("GET /api/admin/restore-target: returns same shape as prepare-restore (delegation)", async () => {
+  await withTestEnv(async () => {
+    installFakeController();
+    await mutateMeta((m) => {
+      m.status = "stopped";
+      m.snapshotId = "snap-delegate";
+      m.sandboxId = null;
+      m.restorePreparedStatus = "dirty";
+      m.restorePreparedReason = "static-assets-changed";
+    });
+
+    const result = await callRoute(restoreTargetRoute.GET!, authGet("/api/admin/restore-target"));
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      ok: boolean;
+      attestation: { reusable: boolean };
+      preview: { ok: boolean };
+      plan: { status: string };
+    };
+
+    assert.equal(typeof body.ok, "boolean");
+    assert.ok(body.attestation, "Should include attestation");
+    assert.ok(body.preview, "Should include preview");
+    assert.ok(body.plan, "Should include plan");
   });
 });

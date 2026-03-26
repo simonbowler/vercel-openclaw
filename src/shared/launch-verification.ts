@@ -366,6 +366,7 @@ const REQUIRED_PHASE_IDS: LaunchVerificationPhaseId[] = [
   "ensureRunning",
   "chatCompletions",
   "wakeFromSleep",
+  "restorePrepared",
 ];
 
 export function isChannelReady(payload: LaunchVerificationPayload): boolean {
