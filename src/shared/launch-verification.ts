@@ -1,4 +1,5 @@
 import type { ChannelName } from "@/shared/channels";
+import type { RestorePreparedStatus, RestorePreparedReason } from "@/shared/types";
 
 export type LaunchVerificationPhaseId =
   | "preflight"
@@ -25,6 +26,12 @@ export type LaunchVerificationRuntime = {
   lastRestoreConfigHash: string | null;
   dynamicConfigVerified: boolean | null;
   dynamicConfigReason?: "hash-match" | "hash-miss" | "no-snapshot-hash";
+  restorePreparedStatus: RestorePreparedStatus;
+  restorePreparedReason: RestorePreparedReason | null;
+  snapshotDynamicConfigHash: string | null;
+  runtimeDynamicConfigHash: string | null;
+  snapshotAssetSha256: string | null;
+  runtimeAssetSha256: string | null;
 };
 
 export type LaunchVerificationSandboxHealth = {

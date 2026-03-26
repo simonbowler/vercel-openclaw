@@ -10,6 +10,8 @@ import {
   ensureSandboxReady,
   ensureRunningSandboxDynamicConfigFresh,
   getRunningSandboxTimeoutRemainingMs,
+  isPreparedRestoreReusable,
+  markRestoreTargetDirty,
   probeGatewayReady,
   reconcileSandboxHealth,
   stopSandbox,
@@ -824,7 +826,7 @@ test("restoreSandboxFromSnapshot writes all files + manifest on first restore (n
       assert.equal(
         meta.lastRestoreMetrics.dynamicConfigReason,
         "no-snapshot-hash",
-        "First restore without snapshotConfigHash should report no-snapshot-hash",
+        "First restore without snapshotDynamicConfigHash should report no-snapshot-hash",
       );
       assert.equal(
         meta.lastRestoreMetrics.skippedDynamicConfigSync,
@@ -979,7 +981,7 @@ test("restoreSandboxFromSnapshot skips static files on second restore when manif
   });
 });
 
-test("restoreSandboxFromSnapshot records hash-match when snapshotConfigHash matches current config", async () => {
+test("restoreSandboxFromSnapshot records hash-match when snapshotDynamicConfigHash matches current config", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
@@ -991,7 +993,7 @@ test("restoreSandboxFromSnapshot records hash-match when snapshotConfigHash matc
       meta.status = "stopped";
       meta.snapshotId = "snap-hash-match";
       meta.gatewayToken = "test-gw-token";
-      meta.snapshotConfigHash = expectedHash;
+      meta.snapshotDynamicConfigHash = expectedHash;
     });
 
     globalThis.fetch = async () =>
@@ -1015,7 +1017,7 @@ test("restoreSandboxFromSnapshot records hash-match when snapshotConfigHash matc
       assert.equal(
         meta.lastRestoreMetrics.dynamicConfigReason,
         "hash-match",
-        "Matching snapshotConfigHash should report hash-match",
+        "Matching snapshotDynamicConfigHash should report hash-match",
       );
       assert.equal(
         meta.lastRestoreMetrics.skippedDynamicConfigSync,
@@ -1033,7 +1035,7 @@ test("restoreSandboxFromSnapshot records hash-match when snapshotConfigHash matc
   });
 });
 
-test("restoreSandboxFromSnapshot records hash-miss when snapshotConfigHash differs from current config", async () => {
+test("restoreSandboxFromSnapshot records hash-miss when snapshotDynamicConfigHash differs from current config", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
@@ -1042,7 +1044,7 @@ test("restoreSandboxFromSnapshot records hash-miss when snapshotConfigHash diffe
       meta.status = "stopped";
       meta.snapshotId = "snap-hash-miss";
       meta.gatewayToken = "test-gw-token";
-      meta.snapshotConfigHash = "stale-hash-from-previous-snapshot";
+      meta.snapshotDynamicConfigHash = "stale-hash-from-previous-snapshot";
     });
 
     globalThis.fetch = async () =>
@@ -1065,7 +1067,7 @@ test("restoreSandboxFromSnapshot records hash-miss when snapshotConfigHash diffe
       assert.equal(
         meta.lastRestoreMetrics.dynamicConfigReason,
         "hash-miss",
-        "Mismatched snapshotConfigHash should report hash-miss",
+        "Mismatched snapshotDynamicConfigHash should report hash-miss",
       );
       assert.equal(
         meta.lastRestoreMetrics.skippedDynamicConfigSync,
@@ -3774,7 +3776,7 @@ test("restoreSandboxFromSnapshot keeps skippedStaticAssetSync=false after backgr
       meta.status = "stopped";
       meta.snapshotId = "snap-needs-background-assets";
       meta.gatewayToken = "test-gw-token";
-      meta.snapshotConfigHash = null;
+      meta.snapshotDynamicConfigHash = null;
     });
 
     globalThis.fetch = async () =>
@@ -3812,9 +3814,10 @@ test("ensureRunningSandboxDynamicConfigFresh returns already-fresh when hash mat
     await h.driveToRunning();
 
     // Compute the expected hash from current (empty) channel state and set it.
+    // Runtime reconcile compares against runtimeDynamicConfigHash.
     const expectedHash = computeGatewayConfigHash({});
     await h.mutateMeta((meta) => {
-      meta.snapshotConfigHash = expectedHash;
+      meta.runtimeDynamicConfigHash = expectedHash;
     });
 
     const result = await ensureRunningSandboxDynamicConfigFresh({
@@ -3841,9 +3844,9 @@ test("ensureRunningSandboxDynamicConfigFresh rewrites and restarts on hash miss"
   await withHarness(async (h) => {
     await h.driveToRunning();
 
-    // Set a stale hash so reconcile detects a miss.
+    // Set a stale runtime hash so reconcile detects a miss.
     await h.mutateMeta((meta) => {
-      meta.snapshotConfigHash = "stale-hash-from-previous-deploy";
+      meta.runtimeDynamicConfigHash = "stale-hash-from-previous-deploy";
     });
 
     const result = await ensureRunningSandboxDynamicConfigFresh({
@@ -3854,10 +3857,12 @@ test("ensureRunningSandboxDynamicConfigFresh rewrites and restarts on hash miss"
     assert.equal(result.changed, true, "Should have changed config");
     assert.equal(result.reason, "rewritten-and-restarted");
 
-    // Verify the metadata hash was updated.
+    // Verify runtimeDynamicConfigHash was updated (not snapshotConfigHash).
     const meta = await h.getMeta();
     const expectedHash = computeGatewayConfigHash({});
-    assert.equal(meta.snapshotConfigHash, expectedHash, "Hash should be updated in metadata");
+    assert.equal(meta.runtimeDynamicConfigHash, expectedHash, "Runtime hash should be updated in metadata");
+    // snapshotDynamicConfigHash must NOT be touched by runtime reconcile.
+    assert.equal(meta.snapshotDynamicConfigHash, null, "Snapshot hash must not be updated by runtime reconcile");
 
     // Verify restart command was issued.
     const handle = h.controller.created.find(
@@ -3878,7 +3883,7 @@ test("ensureRunningSandboxDynamicConfigFresh returns rewrite-failed on writeFile
     await h.driveToRunning();
 
     await h.mutateMeta((meta) => {
-      meta.snapshotConfigHash = "stale-hash";
+      meta.runtimeDynamicConfigHash = "stale-hash";
     });
 
     // Install a hook that throws on writeFiles to simulate failure.
@@ -3907,7 +3912,7 @@ test("ensureRunningSandboxDynamicConfigFresh returns restart-failed on nonzero e
     await h.driveToRunning();
 
     await h.mutateMeta((meta) => {
-      meta.snapshotConfigHash = "stale-hash";
+      meta.runtimeDynamicConfigHash = "stale-hash";
     });
 
     // Install a command responder that fails the restart script.
@@ -3945,6 +3950,193 @@ test("ensureRunningSandboxDynamicConfigFresh returns sandbox-unavailable when no
     assert.equal(result.changed, false);
     assert.equal(result.reason, "sandbox-unavailable");
   });
+});
+
+// ---------------------------------------------------------------------------
+// Restore target truth split
+// ---------------------------------------------------------------------------
+
+test("runtime reconcile updates runtimeDynamicConfigHash but not snapshotDynamicConfigHash", async () => {
+  await withHarness(async (h) => {
+    await h.driveToRunning();
+
+    // Seed snapshot-truth from a prior snapshot.
+    await h.mutateMeta((meta) => {
+      meta.snapshotDynamicConfigHash = "old-snapshot-hash";
+      meta.runtimeDynamicConfigHash = "stale-runtime-hash";
+    });
+
+    const result = await ensureRunningSandboxDynamicConfigFresh({
+      origin: "https://test.example.com",
+    });
+
+    assert.equal(result.verified, true);
+    assert.equal(result.changed, true);
+
+    const meta = await h.getMeta();
+    const expectedHash = computeGatewayConfigHash({});
+    assert.equal(meta.runtimeDynamicConfigHash, expectedHash);
+    assert.equal(meta.snapshotDynamicConfigHash, "old-snapshot-hash",
+      "Snapshot-truth must not be altered by runtime reconcile");
+    assert.equal(meta.restorePreparedStatus, "dirty",
+      "Runtime reconcile should mark restore target dirty");
+  });
+});
+
+test("runtime static sync updates runtimeAssetSha256 but not snapshotAssetSha256", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-asset-truth-split";
+      meta.gatewayToken = "test-gw-token";
+      meta.snapshotDynamicConfigHash = null;
+      meta.snapshotAssetSha256 = "old-snapshot-asset-hash";
+    });
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    try {
+      await triggerRestore(fake, { tokenOverride: "test-ai-key" });
+
+      // Allow background asset sync promise to settle
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const meta = await getInitializedMeta();
+      assert.ok(
+        typeof meta.runtimeAssetSha256 === "string" &&
+          meta.runtimeAssetSha256.length > 0,
+        "runtimeAssetSha256 should be set after background asset sync",
+      );
+      assert.equal(
+        meta.snapshotAssetSha256,
+        "old-snapshot-asset-hash",
+        "snapshotAssetSha256 must not be altered by background asset sync",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("restore after runtime-only reconcile still performs hot-path config write", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  await withTestEnv(fake, async () => {
+    const currentHash = computeGatewayConfigHash({});
+
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-stale-snapshot-hash";
+      meta.gatewayToken = "test-gw-token";
+      // Simulate: runtime was reconciled (runtimeDynamicConfigHash is fresh)
+      // but snapshot-truth is stale (snapshotDynamicConfigHash differs).
+      meta.snapshotDynamicConfigHash = "stale-snapshot-hash";
+      meta.runtimeDynamicConfigHash = currentHash;
+    });
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    try {
+      const { handle } = await triggerRestore(fake, { tokenOverride: "test-ai-key" });
+
+      // Snapshot-truth is stale so hot-path write should happen.
+      const configWrites = handle.writtenFiles.filter((f) => f.path === OPENCLAW_CONFIG_PATH);
+      assert.equal(
+        configWrites.length,
+        2,
+        "Stale snapshot hash should trigger hot-path config write even if runtimeDynamicConfigHash was fresh",
+      );
+
+      const meta = await getInitializedMeta();
+      assert.equal(
+        meta.lastRestoreMetrics?.dynamicConfigReason,
+        "hash-miss",
+        "Restore should see hash-miss when snapshotDynamicConfigHash is stale",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+test("stopSandbox stamps snapshotDynamicConfigHash and snapshotAssetSha256", async () => {
+  await withHarness(async (h) => {
+    await h.driveToRunning();
+
+    const meta = await stopSandbox();
+
+    assert.ok(meta.snapshotDynamicConfigHash, "snapshotDynamicConfigHash should be stamped on stop");
+    assert.ok(meta.snapshotAssetSha256, "snapshotAssetSha256 should be stamped on stop");
+    assert.equal(meta.restorePreparedStatus, "ready", "Snapshot creation should set status to ready");
+    assert.equal(meta.restorePreparedReason, "prepared", "Snapshot creation should set reason to prepared");
+    assert.ok(meta.restorePreparedAt, "Snapshot creation should set preparedAt timestamp");
+  });
+});
+
+test("markRestoreTargetDirty sets status to dirty", async () => {
+  await withHarness(async (h) => {
+    await h.driveToRunning();
+
+    // First stop to get a "ready" state
+    await stopSandbox();
+    let meta = await getInitializedMeta();
+    assert.equal(meta.restorePreparedStatus, "ready");
+
+    meta = await markRestoreTargetDirty({ reason: "dynamic-config-changed" });
+
+    assert.equal(meta.restorePreparedStatus, "dirty");
+    assert.equal(meta.restorePreparedReason, "dynamic-config-changed");
+  });
+});
+
+test("isPreparedRestoreReusable returns true only when all hashes match and status is ready", () => {
+  assert.equal(
+    isPreparedRestoreReusable({
+      meta: {
+        snapshotDynamicConfigHash: "cfg-hash",
+        snapshotAssetSha256: "asset-hash",
+        restorePreparedStatus: "ready",
+      },
+      desiredDynamicConfigHash: "cfg-hash",
+      desiredAssetSha256: "asset-hash",
+    }),
+    true,
+    "Should be reusable when all match",
+  );
+
+  assert.equal(
+    isPreparedRestoreReusable({
+      meta: {
+        snapshotDynamicConfigHash: "cfg-hash",
+        snapshotAssetSha256: "asset-hash",
+        restorePreparedStatus: "dirty",
+      },
+      desiredDynamicConfigHash: "cfg-hash",
+      desiredAssetSha256: "asset-hash",
+    }),
+    false,
+    "Should not be reusable when status is dirty",
+  );
+
+  assert.equal(
+    isPreparedRestoreReusable({
+      meta: {
+        snapshotDynamicConfigHash: "old-cfg-hash",
+        snapshotAssetSha256: "asset-hash",
+        restorePreparedStatus: "ready",
+      },
+      desiredDynamicConfigHash: "cfg-hash",
+      desiredAssetSha256: "asset-hash",
+    }),
+    false,
+    "Should not be reusable when config hash differs",
+  );
 });
 
 // ---------------------------------------------------------------------------

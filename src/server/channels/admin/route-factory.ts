@@ -8,7 +8,10 @@ import {
 } from "@/server/channels/connectability";
 import { getPublicChannelState } from "@/server/channels/state";
 import { logInfo, logWarn } from "@/server/log";
-import { syncGatewayConfigToSandbox } from "@/server/sandbox/lifecycle";
+import {
+  markRestoreTargetDirty,
+  syncGatewayConfigToSandbox,
+} from "@/server/sandbox/lifecycle";
 import { getInitializedMeta } from "@/server/store/store";
 
 type RouteAuth = Exclude<Awaited<ReturnType<typeof requireJsonRouteAuth>>, Response>;
@@ -91,6 +94,10 @@ export function createChannelAdminRouteHandlers<TState>(
           return result;
         }
 
+        // Channel config changed — mark restore target dirty so operators
+        // know the next restore will not match the current snapshot image.
+        await markRestoreTargetDirty({ reason: "dynamic-config-changed" });
+
         // Sync updated config to the running sandbox and restart the
         // gateway so new HTTP routes (e.g. /slack/events) are registered.
         try {
@@ -132,6 +139,9 @@ export function createChannelAdminRouteHandlers<TState>(
         if (result instanceof Response) {
           return result;
         }
+
+        // Channel config removed — mark restore target dirty.
+        await markRestoreTargetDirty({ reason: "dynamic-config-changed" });
 
         // Sync updated config to the running sandbox and restart the
         // gateway so removed channel routes are cleaned up.

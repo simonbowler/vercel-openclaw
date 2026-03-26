@@ -6,6 +6,7 @@ import type {
   CronRestoreOutcome,
   OperationContext,
   RestorePhaseMetrics,
+  RestorePreparedReason,
   SingleMeta,
   StoredCronRecord,
 } from "@/shared/types";
@@ -629,8 +630,11 @@ export async function stopSandbox(): Promise<SingleMeta> {
         logInfo("sandbox.cron_jobs_cleared", { reason: "no-jobs-on-stop" });
       }
 
+      const currentManifest = buildRestoreAssetManifest();
+      const currentAssetSha256 = meta.runtimeAssetSha256 ?? currentManifest.sha256;
+
       return mutateMeta((next) => {
-        recordSnapshotMetadata(next, snapshot.snapshotId, "stop", configHash);
+        recordSnapshotMetadata(next, snapshot.snapshotId, "stop", configHash, currentAssetSha256);
         next.sandboxId = null;
         next.portUrls = null;
         next.status = "stopped";
@@ -861,15 +865,21 @@ export async function ensureRunningSandboxDynamicConfigFresh(input: {
   };
   const expectedHash = computeGatewayConfigHash(configHashInput);
 
+  // Runtime reconcile compares against runtimeDynamicConfigHash (what is
+  // actually on the running sandbox) — NOT snapshotDynamicConfigHash (what
+  // was baked into the snapshot image).
+  const runtimeHash = meta.runtimeDynamicConfigHash ?? meta.snapshotConfigHash;
+
   logInfo("sandbox.config_reconcile.checkpoint_before", {
     sandboxId,
+    runtimeDynamicConfigHash: runtimeHash,
     snapshotConfigHash: meta.snapshotConfigHash,
     expectedHash,
     hashVersion: GATEWAY_CONFIG_HASH_VERSION,
   });
 
   // Already fresh — no work needed.
-  if (meta.snapshotConfigHash === expectedHash) {
+  if (runtimeHash === expectedHash) {
     logInfo("sandbox.config_reconcile.already_fresh", {
       sandboxId,
       configHash: expectedHash,
@@ -941,9 +951,18 @@ export async function ensureRunningSandboxDynamicConfigFresh(input: {
     return { verified: false, changed: true, reason: "restart-failed" };
   }
 
-  // Update metadata with the new config hash.
+  // Update runtime-truth only — snapshot-truth is stamped only by snapshot
+  // creation paths.  Mark restore target dirty since the running sandbox now
+  // differs from the snapshot image.
   await mutateMeta((next) => {
-    next.snapshotConfigHash = expectedHash;
+    next.runtimeDynamicConfigHash = expectedHash;
+    if (
+      next.restorePreparedStatus === "ready" ||
+      next.restorePreparedStatus === "unknown"
+    ) {
+      next.restorePreparedStatus = "dirty";
+      next.restorePreparedReason = "dynamic-config-changed";
+    }
   });
 
   logInfo("sandbox.config_reconcile.checkpoint_verified", {
@@ -952,6 +971,352 @@ export async function ensureRunningSandboxDynamicConfigFresh(input: {
   });
 
   return { verified: true, changed: true, reason: "rewritten-and-restarted" };
+}
+
+// ---------------------------------------------------------------------------
+// Restore target truth
+// ---------------------------------------------------------------------------
+
+/**
+ * Mark the next restore target as dirty.  Call this whenever the running
+ * sandbox diverges from its snapshot image (channel config change, deploy
+ * drift, manual reset).
+ */
+export async function markRestoreTargetDirty(input: {
+  reason: RestorePreparedReason;
+}): Promise<SingleMeta> {
+  logInfo("sandbox.restore_target.mark_dirty", { reason: input.reason });
+  return mutateMeta((next) => {
+    next.restorePreparedStatus = "dirty";
+    next.restorePreparedReason = input.reason;
+  });
+}
+
+/**
+ * Check whether a prepared restore image is still reusable given the
+ * desired config and asset hashes.
+ */
+export function isPreparedRestoreReusable(input: {
+  meta: Pick<
+    SingleMeta,
+    | "snapshotDynamicConfigHash"
+    | "snapshotAssetSha256"
+    | "restorePreparedStatus"
+  >;
+  desiredDynamicConfigHash: string;
+  desiredAssetSha256: string;
+}): boolean {
+  return (
+    input.meta.restorePreparedStatus === "ready" &&
+    input.meta.snapshotDynamicConfigHash === input.desiredDynamicConfigHash &&
+    input.meta.snapshotAssetSha256 === input.desiredAssetSha256
+  );
+}
+
+export type PrepareRestoreAction = {
+  id:
+    | "ensure-running"
+    | "reconcile-dynamic-config"
+    | "sync-static-assets"
+    | "verify-ready"
+    | "snapshot"
+    | "stamp-meta";
+  status: "completed" | "skipped" | "failed";
+  message: string;
+};
+
+export type PrepareRestoreResult = {
+  ok: boolean;
+  destructive: boolean;
+  state: SingleMeta["restorePreparedStatus"];
+  reason: SingleMeta["restorePreparedReason"];
+  snapshotId: string | null;
+  snapshotDynamicConfigHash: string | null;
+  runtimeDynamicConfigHash: string | null;
+  snapshotAssetSha256: string | null;
+  runtimeAssetSha256: string | null;
+  preparedAt: number | null;
+  actions: PrepareRestoreAction[];
+};
+
+/**
+ * Prepare the next restore target.  When `destructive` is true, the sandbox
+ * is snapshot-and-stopped so the snapshot image matches current config and
+ * assets.  When `destructive` is false, the function reports whether the
+ * current snapshot is reusable without modifying state.
+ */
+export async function prepareRestoreTarget(input: {
+  origin: string;
+  reason: string;
+  destructive?: boolean;
+  op?: OperationContext;
+}): Promise<PrepareRestoreResult> {
+  const actions: PrepareRestoreAction[] = [];
+  const meta = await getInitializedMeta();
+
+  logInfo("sandbox.restore_target.prepare_start", {
+    destructive: input.destructive ?? false,
+    reason: input.reason,
+    status: meta.status,
+    sandboxId: meta.sandboxId,
+  });
+
+  const currentManifest = buildRestoreAssetManifest();
+  const configHashInput: GatewayConfigHashInput = {
+    telegramBotToken: meta.channels.telegram?.botToken,
+    telegramWebhookSecret: meta.channels.telegram?.webhookSecret,
+    slackCredentials: meta.channels.slack
+      ? {
+          botToken: meta.channels.slack.botToken,
+          signingSecret: meta.channels.slack.signingSecret,
+        }
+      : undefined,
+    whatsappConfig: toWhatsAppGatewayConfig(meta.channels.whatsapp),
+  };
+  const desiredConfigHash = computeGatewayConfigHash(configHashInput);
+
+  // Check if the existing snapshot is already prepared and fresh.
+  if (
+    isPreparedRestoreReusable({
+      meta,
+      desiredDynamicConfigHash: desiredConfigHash,
+      desiredAssetSha256: currentManifest.sha256,
+    })
+  ) {
+    logInfo("sandbox.restore_target.already_prepared", {
+      snapshotId: meta.snapshotId,
+      snapshotDynamicConfigHash: meta.snapshotDynamicConfigHash,
+      snapshotAssetSha256: meta.snapshotAssetSha256,
+    });
+    return {
+      ok: true,
+      destructive: false,
+      state: meta.restorePreparedStatus,
+      reason: meta.restorePreparedReason,
+      snapshotId: meta.snapshotId,
+      snapshotDynamicConfigHash: meta.snapshotDynamicConfigHash,
+      runtimeDynamicConfigHash: meta.runtimeDynamicConfigHash,
+      snapshotAssetSha256: meta.snapshotAssetSha256,
+      runtimeAssetSha256: meta.runtimeAssetSha256,
+      preparedAt: meta.restorePreparedAt,
+      actions: [{ id: "stamp-meta", status: "skipped", message: "already prepared" }],
+    };
+  }
+
+  // Non-destructive: report status without mutating.
+  if (!input.destructive) {
+    logInfo("sandbox.restore_target.non_destructive_check", {
+      currentState: meta.restorePreparedStatus,
+      snapshotDynamicConfigHash: meta.snapshotDynamicConfigHash,
+      desiredConfigHash,
+      snapshotAssetSha256: meta.snapshotAssetSha256,
+      desiredAssetSha256: currentManifest.sha256,
+    });
+    return {
+      ok: false,
+      destructive: false,
+      state: meta.restorePreparedStatus === "ready" ? "dirty" : meta.restorePreparedStatus,
+      reason: meta.restorePreparedReason,
+      snapshotId: meta.snapshotId,
+      snapshotDynamicConfigHash: meta.snapshotDynamicConfigHash,
+      runtimeDynamicConfigHash: meta.runtimeDynamicConfigHash,
+      snapshotAssetSha256: meta.snapshotAssetSha256,
+      runtimeAssetSha256: meta.runtimeAssetSha256,
+      preparedAt: meta.restorePreparedAt,
+      actions: [{ id: "snapshot", status: "failed", message: "destructive snapshot required but not allowed" }],
+    };
+  }
+
+  // Destructive: ensure running, reconcile, snapshot, stamp.
+  await mutateMeta((next) => {
+    next.restorePreparedStatus = "preparing";
+    next.restorePreparedReason = null;
+  });
+
+  // Step 1: Ensure the sandbox is running.
+  if (meta.status !== "running" || !meta.sandboxId) {
+    actions.push({ id: "ensure-running", status: "failed", message: `sandbox status: ${meta.status}` });
+    await mutateMeta((next) => {
+      next.restorePreparedStatus = "failed";
+      next.restorePreparedReason = "prepare-failed";
+    });
+    const failMeta = await getInitializedMeta();
+    return {
+      ok: false,
+      destructive: true,
+      state: failMeta.restorePreparedStatus,
+      reason: failMeta.restorePreparedReason,
+      snapshotId: failMeta.snapshotId,
+      snapshotDynamicConfigHash: failMeta.snapshotDynamicConfigHash,
+      runtimeDynamicConfigHash: failMeta.runtimeDynamicConfigHash,
+      snapshotAssetSha256: failMeta.snapshotAssetSha256,
+      runtimeAssetSha256: failMeta.runtimeAssetSha256,
+      preparedAt: failMeta.restorePreparedAt,
+      actions,
+    };
+  }
+  actions.push({ id: "ensure-running", status: "completed", message: "sandbox running" });
+
+  // Step 2: Reconcile dynamic config on the live sandbox.
+  const reconcileResult = await ensureRunningSandboxDynamicConfigFresh({
+    origin: input.origin,
+    op: input.op,
+  });
+  actions.push({
+    id: "reconcile-dynamic-config",
+    status: reconcileResult.verified ? "completed" : "failed",
+    message: reconcileResult.reason,
+  });
+  if (!reconcileResult.verified) {
+    await mutateMeta((next) => {
+      next.restorePreparedStatus = "failed";
+      next.restorePreparedReason = "prepare-failed";
+    });
+    const failMeta = await getInitializedMeta();
+    return {
+      ok: false,
+      destructive: true,
+      state: failMeta.restorePreparedStatus,
+      reason: failMeta.restorePreparedReason,
+      snapshotId: failMeta.snapshotId,
+      snapshotDynamicConfigHash: failMeta.snapshotDynamicConfigHash,
+      runtimeDynamicConfigHash: failMeta.runtimeDynamicConfigHash,
+      snapshotAssetSha256: failMeta.snapshotAssetSha256,
+      runtimeAssetSha256: failMeta.runtimeAssetSha256,
+      preparedAt: failMeta.restorePreparedAt,
+      actions,
+    };
+  }
+
+  // Step 3: Sync static assets.
+  try {
+    const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
+    const slackConfig = meta.channels.slack;
+    const apiKey = await getAiGatewayBearerTokenOptional();
+    await syncRestoreAssetsIfNeeded(sandbox, {
+      origin: input.origin,
+      apiKey,
+      telegramBotToken: meta.channels.telegram?.botToken,
+      telegramWebhookSecret: meta.channels.telegram?.webhookSecret,
+      slackCredentials: slackConfig
+        ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret }
+        : undefined,
+      whatsappConfig: toWhatsAppGatewayConfig(meta.channels.whatsapp),
+    });
+    actions.push({ id: "sync-static-assets", status: "completed", message: "runtime assets fresh" });
+  } catch (err) {
+    actions.push({
+      id: "sync-static-assets",
+      status: "failed",
+      message: err instanceof Error ? err.message : String(err),
+    });
+    await mutateMeta((next) => {
+      next.restorePreparedStatus = "failed";
+      next.restorePreparedReason = "prepare-failed";
+    });
+    const failMeta = await getInitializedMeta();
+    return {
+      ok: false,
+      destructive: true,
+      state: failMeta.restorePreparedStatus,
+      reason: failMeta.restorePreparedReason,
+      snapshotId: failMeta.snapshotId,
+      snapshotDynamicConfigHash: failMeta.snapshotDynamicConfigHash,
+      runtimeDynamicConfigHash: failMeta.runtimeDynamicConfigHash,
+      snapshotAssetSha256: failMeta.snapshotAssetSha256,
+      runtimeAssetSha256: failMeta.runtimeAssetSha256,
+      preparedAt: failMeta.restorePreparedAt,
+      actions,
+    };
+  }
+
+  // Step 4: Verify gateway readiness before snapshotting.
+  const readiness = await probeGatewayReady();
+  actions.push({
+    id: "verify-ready",
+    status: readiness.ready ? "completed" : "failed",
+    message:
+      readiness.ready
+        ? "gateway ready"
+        : readiness.error ??
+          `gateway not ready${readiness.statusCode ? ` (status ${readiness.statusCode})` : ""}`,
+  });
+  if (!readiness.ready) {
+    await mutateMeta((next) => {
+      next.restorePreparedStatus = "failed";
+      next.restorePreparedReason = "prepare-failed";
+    });
+    const failMeta = await getInitializedMeta();
+    return {
+      ok: false,
+      destructive: true,
+      state: failMeta.restorePreparedStatus,
+      reason: failMeta.restorePreparedReason,
+      snapshotId: failMeta.snapshotId,
+      snapshotDynamicConfigHash: failMeta.snapshotDynamicConfigHash,
+      runtimeDynamicConfigHash: failMeta.runtimeDynamicConfigHash,
+      snapshotAssetSha256: failMeta.snapshotAssetSha256,
+      runtimeAssetSha256: failMeta.runtimeAssetSha256,
+      preparedAt: failMeta.restorePreparedAt,
+      actions,
+    };
+  }
+
+  // Step 5: Snapshot and stop.
+  try {
+    await stopSandbox();
+    actions.push({ id: "snapshot", status: "completed", message: "snapshot created" });
+  } catch (err) {
+    actions.push({
+      id: "snapshot",
+      status: "failed",
+      message: err instanceof Error ? err.message : String(err),
+    });
+    await mutateMeta((next) => {
+      next.restorePreparedStatus = "failed";
+      next.restorePreparedReason = "prepare-failed";
+    });
+    const failMeta = await getInitializedMeta();
+    return {
+      ok: false,
+      destructive: true,
+      state: failMeta.restorePreparedStatus,
+      reason: failMeta.restorePreparedReason,
+      snapshotId: failMeta.snapshotId,
+      snapshotDynamicConfigHash: failMeta.snapshotDynamicConfigHash,
+      runtimeDynamicConfigHash: failMeta.runtimeDynamicConfigHash,
+      snapshotAssetSha256: failMeta.snapshotAssetSha256,
+      runtimeAssetSha256: failMeta.runtimeAssetSha256,
+      preparedAt: failMeta.restorePreparedAt,
+      actions,
+    };
+  }
+
+  // stopSandbox already calls recordSnapshotMetadata which stamps
+  // snapshotDynamicConfigHash, snapshotAssetSha256, and restorePreparedStatus.
+  actions.push({ id: "stamp-meta", status: "completed", message: "snapshot truth recorded" });
+
+  const finalMeta = await getInitializedMeta();
+  logInfo("sandbox.restore_target.prepare_complete", {
+    snapshotId: finalMeta.snapshotId,
+    snapshotDynamicConfigHash: finalMeta.snapshotDynamicConfigHash,
+    snapshotAssetSha256: finalMeta.snapshotAssetSha256,
+    restorePreparedStatus: finalMeta.restorePreparedStatus,
+  });
+
+  return {
+    ok: true,
+    destructive: true,
+    state: finalMeta.restorePreparedStatus,
+    reason: finalMeta.restorePreparedReason,
+    snapshotId: finalMeta.snapshotId,
+    snapshotDynamicConfigHash: finalMeta.snapshotDynamicConfigHash,
+    runtimeDynamicConfigHash: finalMeta.runtimeDynamicConfigHash,
+    snapshotAssetSha256: finalMeta.snapshotAssetSha256,
+    runtimeAssetSha256: finalMeta.runtimeAssetSha256,
+    preparedAt: finalMeta.restorePreparedAt,
+    actions,
+  };
 }
 
 export async function touchRunningSandbox(): Promise<SingleMeta> {
@@ -2115,10 +2480,12 @@ async function restoreSandboxFromSnapshot(
     // Secrets (API key, bot tokens) are also passed as separate env vars for
     // the startup script; they appear in the config for OpenClaw's own use.
     // External manifest hash comparison — avoids in-sandbox readFileToBuffer
-    // (~2-3s) for the static asset skip check.
+    // (~2-3s) for the static asset skip check.  Use snapshot-truth first,
+    // fall back to lastRestoreMetrics for backward compatibility.
     const currentManifest = buildRestoreAssetManifest();
+    const snapshotAssetHash = latest.snapshotAssetSha256 ?? latest.lastRestoreMetrics?.assetSha256;
     const skippedStaticAssetSync =
-      latest.lastRestoreMetrics?.assetSha256 === currentManifest.sha256;
+      snapshotAssetHash === currentManifest.sha256;
 
     const restoreEnv: Record<string, string> = {
       OPENCLAW_GATEWAY_TOKEN: latest.gatewayToken,
@@ -2166,16 +2533,19 @@ async function restoreSandboxFromSnapshot(
       whatsappConfig: toWhatsAppGatewayConfig(latest.channels.whatsapp),
     };
     const currentConfigHash = computeGatewayConfigHash(currentConfigHashInput);
+    // Restore skip gates use snapshot-truth fields only — never runtime-truth.
+    const snapshotHash = latest.snapshotDynamicConfigHash ?? latest.snapshotConfigHash;
     const skippedDynamicConfigSync =
-      latest.snapshotConfigHash !== null &&
-      latest.snapshotConfigHash === currentConfigHash;
+      snapshotHash !== null &&
+      snapshotHash === currentConfigHash;
     const dynamicConfigReason: "hash-match" | "hash-miss" | "no-snapshot-hash" =
-      latest.snapshotConfigHash === null
+      snapshotHash === null
         ? "no-snapshot-hash"
         : skippedDynamicConfigSync
           ? "hash-match"
           : "hash-miss";
     logInfo("sandbox.restore.config_hash_checkpoint", {
+      snapshotDynamicConfigHash: snapshotHash,
       snapshotConfigHash: latest.snapshotConfigHash,
       currentConfigHash,
       hashVersion: GATEWAY_CONFIG_HASH_VERSION,
@@ -2543,6 +2913,16 @@ async function restoreSandboxFromSnapshot(
             // Keep the hot-path skip flag truthful for the restore that already happened.
             m.lastRestoreMetrics.assetSha256 = result.assetSha256;
           }
+          // Runtime-truth only — snapshot-truth is stamped only by snapshot
+          // creation paths.
+          m.runtimeAssetSha256 = result.assetSha256;
+          if (
+            m.restorePreparedStatus === "ready" ||
+            m.restorePreparedStatus === "unknown"
+          ) {
+            m.restorePreparedStatus = "dirty";
+            m.restorePreparedReason = "static-assets-changed";
+          }
         });
         logInfo("sandbox.restore.background_asset_sync_complete", {
           assetSha256: result.assetSha256,
@@ -2621,6 +3001,11 @@ async function restoreSandboxFromSnapshot(
         0,
         MAX_RESTORE_HISTORY,
       );
+      // Runtime-truth: what is actually on the running sandbox right now.
+      meta.runtimeDynamicConfigHash = currentConfigHash;
+      meta.runtimeAssetSha256 = skippedStaticAssetSync
+        ? currentManifest.sha256
+        : (meta.runtimeAssetSha256 ?? null);
     });
 
     return getInitializedMeta();
@@ -2692,12 +3077,22 @@ function recordSnapshotMetadata(
   snapshotId: string,
   reason: string,
   configHash?: string,
+  assetSha256?: string,
 ): void {
   const timestamp = Date.now();
   meta.snapshotId = snapshotId;
   if (configHash) {
     meta.snapshotConfigHash = configHash;
+    // Snapshot-truth: this hash describes the config in the snapshot image.
+    meta.snapshotDynamicConfigHash = configHash;
   }
+  if (assetSha256) {
+    meta.snapshotAssetSha256 = assetSha256;
+  }
+  // A new snapshot means the restore target is now ready.
+  meta.restorePreparedStatus = "ready";
+  meta.restorePreparedReason = "prepared";
+  meta.restorePreparedAt = timestamp;
   meta.snapshotHistory = [
     {
       id: randomUUID(),
@@ -2791,6 +3186,13 @@ function clearSandboxRuntimeStateForReset(meta: SingleMeta): void {
   meta.portUrls = null;
   meta.snapshotId = null;
   meta.snapshotConfigHash = null;
+  meta.snapshotDynamicConfigHash = null;
+  meta.runtimeDynamicConfigHash = null;
+  meta.snapshotAssetSha256 = null;
+  meta.runtimeAssetSha256 = null;
+  meta.restorePreparedStatus = "unknown";
+  meta.restorePreparedReason = null;
+  meta.restorePreparedAt = null;
   meta.snapshotHistory = [];
   meta.lastRestoreMetrics = null;
   meta.restoreHistory = [];

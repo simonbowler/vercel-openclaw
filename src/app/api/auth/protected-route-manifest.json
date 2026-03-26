@@ -1,12 +1,12 @@
 {
   "version": 3,
-  "generatedAt": "2026-03-25T02:48:53.006Z",
+  "generatedAt": "2026-03-26T06:03:46.208Z",
   "roots": [
     "src/app/api/admin",
     "src/app/api/firewall",
     "src/app/api/debug"
   ],
-  "discoveredRouteCount": 38,
+  "discoveredRouteCount": 40,
   "unauthenticatedRouteCount": 0,
   "violationCount": 0,
   "routes": [
@@ -33,6 +33,10 @@
     {
       "method": "GET",
       "path": "/api/admin/preflight"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/prepare-restore"
     },
     {
       "method": "GET",
@@ -77,6 +81,10 @@
     {
       "method": "POST",
       "path": "/api/admin/launch-verify"
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/prepare-restore"
     },
     {
       "method": "POST",

@@ -195,6 +195,12 @@ function buildLaunchVerificationRuntime(
         ? null
         : runtimeMeta.lastRestoreMetrics.dynamicConfigHash === expectedConfigHash,
     dynamicConfigReason: runtimeMeta.lastRestoreMetrics?.dynamicConfigReason,
+    restorePreparedStatus: runtimeMeta.restorePreparedStatus,
+    restorePreparedReason: runtimeMeta.restorePreparedReason,
+    snapshotDynamicConfigHash: runtimeMeta.snapshotDynamicConfigHash,
+    runtimeDynamicConfigHash: runtimeMeta.runtimeDynamicConfigHash,
+    snapshotAssetSha256: runtimeMeta.snapshotAssetSha256,
+    runtimeAssetSha256: runtimeMeta.runtimeAssetSha256,
   };
 }
 

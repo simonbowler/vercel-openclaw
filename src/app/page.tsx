@@ -57,6 +57,15 @@ async function getInitialStatus(): Promise<StatusPayload | null> {
       timeoutSource: "none",
       firewall: { ...meta.firewall, wouldBlock: computeWouldBlock(meta.firewall) },
       channels: await getPublicChannelState(syntheticRequest, meta),
+      restoreTarget: {
+        restorePreparedStatus: meta.restorePreparedStatus,
+        restorePreparedReason: meta.restorePreparedReason,
+        restorePreparedAt: meta.restorePreparedAt,
+        snapshotDynamicConfigHash: meta.snapshotDynamicConfigHash,
+        runtimeDynamicConfigHash: meta.runtimeDynamicConfigHash,
+        snapshotAssetSha256: meta.snapshotAssetSha256,
+        runtimeAssetSha256: meta.runtimeAssetSha256,
+      },
       user: { sub: "admin", name: "Admin" },
     };
   } catch {

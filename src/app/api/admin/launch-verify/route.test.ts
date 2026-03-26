@@ -1101,16 +1101,16 @@ test("launch-verify POST: runtime.dynamicConfigVerified is null when no restore 
 // Dynamic config reconcile: configReconciled in sandboxHealth
 // ===========================================================================
 
-test("launch-verify POST: configReconciled is true when snapshotConfigHash already matches", async () => {
+test("launch-verify POST: configReconciled is true when runtimeDynamicConfigHash already matches", async () => {
   await withHarness(async (h) => {
     process.env.NEXT_PUBLIC_APP_URL = "https://test.example";
 
     await h.driveToRunning();
 
-    // Set snapshotConfigHash to match expected (no channels = empty input)
+    // Set runtimeDynamicConfigHash to match expected (no channels = empty input)
     const expectedHash = computeGatewayConfigHash({});
     await h.mutateMeta((meta) => {
-      meta.snapshotConfigHash = expectedHash;
+      meta.runtimeDynamicConfigHash = expectedHash;
     });
 
     h.fakeFetch.on("POST", /v1\/chat\/completions/, () => {
@@ -1139,9 +1139,9 @@ test("launch-verify POST: configReconciled is true after successful rewrite when
 
     await h.driveToRunning();
 
-    // Set a stale snapshotConfigHash so reconcile triggers rewrite+restart
+    // Set a stale runtimeDynamicConfigHash so reconcile triggers rewrite+restart
     await h.mutateMeta((meta) => {
-      meta.snapshotConfigHash = "stale-hash";
+      meta.runtimeDynamicConfigHash = "stale-hash";
     });
 
     h.fakeFetch.on("POST", /v1\/chat\/completions/, () => {
@@ -1168,9 +1168,9 @@ test("launch-verify POST: ok is false when config reconcile fails (writeFiles th
 
     await h.driveToRunning();
 
-    // Set a stale snapshotConfigHash
+    // Set a stale runtimeDynamicConfigHash
     await h.mutateMeta((meta) => {
-      meta.snapshotConfigHash = "stale-hash";
+      meta.runtimeDynamicConfigHash = "stale-hash";
     });
 
     // Make writeFiles throw to simulate reconcile failure.
@@ -1230,7 +1230,7 @@ test("launch-verify POST (NDJSON): configReconciled appears in result payload", 
 
     const expectedHash = computeGatewayConfigHash({});
     await h.mutateMeta((meta) => {
-      meta.snapshotConfigHash = expectedHash;
+      meta.runtimeDynamicConfigHash = expectedHash;
     });
 
     h.fakeFetch.on("POST", /v1\/chat\/completions/, () => {

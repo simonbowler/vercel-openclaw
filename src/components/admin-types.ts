@@ -1,4 +1,5 @@
 import type { PublicChannelState } from "@/shared/channel-admin-state";
+import type { RestorePreparedStatus, RestorePreparedReason } from "@/shared/types";
 
 export type DomainCategory = "npm" | "curl" | "git" | "dns" | "fetch" | "unknown";
 
@@ -51,6 +52,15 @@ export type StatusPayload = {
     wouldBlock: string[];
   };
   channels: PublicChannelState;
+  restoreTarget: {
+    restorePreparedStatus: RestorePreparedStatus;
+    restorePreparedReason: RestorePreparedReason | null;
+    restorePreparedAt: number | null;
+    snapshotDynamicConfigHash: string | null;
+    runtimeDynamicConfigHash: string | null;
+    snapshotAssetSha256: string | null;
+    runtimeAssetSha256: string | null;
+  };
   user: {
     sub: string;
     email?: string;

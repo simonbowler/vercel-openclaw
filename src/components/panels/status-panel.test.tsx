@@ -122,6 +122,15 @@ function makeStatus(overrides: Partial<LifecycleAwareStatus> = {}): LifecycleAwa
       wouldBlock: [],
     },
     channels: CHANNELS,
+    restoreTarget: {
+      restorePreparedStatus: "unknown",
+      restorePreparedReason: null,
+      restorePreparedAt: null,
+      snapshotDynamicConfigHash: null,
+      runtimeDynamicConfigHash: null,
+      snapshotAssetSha256: null,
+      runtimeAssetSha256: null,
+    },
     user: { sub: "admin", name: "Admin" },
     ...overrides,
   };

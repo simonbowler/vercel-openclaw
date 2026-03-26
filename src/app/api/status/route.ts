@@ -119,6 +119,15 @@ export async function GET(request: Request): Promise<Response> {
         wouldBlock: computeWouldBlock(responseMeta.firewall),
       },
       channels: await getPublicChannelState(request, responseMeta),
+      restoreTarget: {
+        restorePreparedStatus: responseMeta.restorePreparedStatus,
+        restorePreparedReason: responseMeta.restorePreparedReason,
+        restorePreparedAt: responseMeta.restorePreparedAt,
+        snapshotDynamicConfigHash: responseMeta.snapshotDynamicConfigHash,
+        runtimeDynamicConfigHash: responseMeta.runtimeDynamicConfigHash,
+        snapshotAssetSha256: responseMeta.snapshotAssetSha256,
+        runtimeAssetSha256: responseMeta.runtimeAssetSha256,
+      },
       lifecycle: {
         lastRestoreMetrics: responseMeta.lastRestoreMetrics ?? null,
         restoreHistory: (responseMeta.restoreHistory ?? []).slice(0, 5),
