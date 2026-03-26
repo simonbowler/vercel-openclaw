@@ -782,10 +782,11 @@ test("route-smoke: GET /api/channels/summary returns channel states", async (t) 
     const route = getChannelsSummaryRoute();
     const result = await callRoute(route.GET!, buildAuthGetRequest("/api/channels/summary"));
     assert.equal(result.status, 200);
-    const body = result.json as { slack: unknown; telegram: unknown; discord: unknown };
+    const body = result.json as { slack: unknown; telegram: unknown; discord: unknown; whatsapp: unknown };
     assert.ok("slack" in body);
     assert.ok("telegram" in body);
     assert.ok("discord" in body);
+    assert.ok("whatsapp" in body);
   } catch (err) {
     await dumpDiagnostics(t, h);
     throw err;

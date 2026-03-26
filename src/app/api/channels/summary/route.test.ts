@@ -186,6 +186,94 @@ test("GET /api/channels/summary: whatsapp response has no webhookUrl field", asy
   });
 });
 
+test("GET /api/channels/summary: whatsapp disabled config returns connected false", async () => {
+  await withTestEnv(async () => {
+    await mutateMeta((meta) => {
+      meta.channels.whatsapp = {
+        enabled: false,
+        configuredAt: Date.now(),
+        lastKnownLinkState: "linked",
+        linkedPhone: "+1234567890",
+      };
+    });
+
+    const route = getChannelsSummaryRoute();
+    const request = buildAuthGetRequest("/api/channels/summary");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      whatsapp: {
+        connected: boolean;
+        lastError: string | null;
+        deliveryMode: string;
+        requiresRunningSandbox: boolean;
+      };
+    };
+
+    assert.equal(body.whatsapp.connected, false);
+    assert.equal(body.whatsapp.lastError, null);
+    assert.equal(body.whatsapp.deliveryMode, "gateway-native");
+    assert.equal(body.whatsapp.requiresRunningSandbox, true);
+  });
+});
+
+test("GET /api/channels/summary: whatsapp enabled but needs-login still reports connected in coarse summary", async () => {
+  await withTestEnv(async () => {
+    await mutateMeta((meta) => {
+      meta.channels.whatsapp = {
+        enabled: true,
+        configuredAt: Date.now(),
+        lastKnownLinkState: "needs-login",
+        lastError: "scan QR to continue",
+      };
+    });
+
+    const route = getChannelsSummaryRoute();
+    const request = buildAuthGetRequest("/api/channels/summary");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      whatsapp: {
+        connected: boolean;
+        lastError: string | null;
+      };
+    };
+
+    assert.equal(body.whatsapp.connected, true);
+    assert.equal(body.whatsapp.lastError, "scan QR to continue");
+  });
+});
+
+test("GET /api/channels/summary: whatsapp lastError is surfaced", async () => {
+  await withTestEnv(async () => {
+    await mutateMeta((meta) => {
+      meta.channels.whatsapp = {
+        enabled: true,
+        configuredAt: Date.now(),
+        lastKnownLinkState: "error",
+        lastError: "connection timeout",
+      };
+    });
+
+    const route = getChannelsSummaryRoute();
+    const request = buildAuthGetRequest("/api/channels/summary");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      whatsapp: {
+        connected: boolean;
+        lastError: string | null;
+      };
+    };
+
+    assert.equal(body.whatsapp.connected, true);
+    assert.equal(body.whatsapp.lastError, "connection timeout");
+  });
+});
+
 test("GET /api/channels/summary: works without CSRF headers when bearer token is present", async () => {
   await withTestEnv(async () => {
     const route = getChannelsSummaryRoute();

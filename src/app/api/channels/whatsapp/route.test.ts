@@ -215,6 +215,142 @@ test("whatsapp PUT preserves original configuredAt timestamp", async () => {
 // Guardrail: no fake webhook path for WhatsApp
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// GET — detailed endpoint exposes link-state that summary omits
+// ---------------------------------------------------------------------------
+
+test("whatsapp GET returns needs-login status verbatim when configured", async () => {
+  await withHarness(async () => {
+    _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+    await mutateMeta((meta) => {
+      meta.channels.whatsapp = {
+        enabled: true,
+        configuredAt: Date.now(),
+        lastKnownLinkState: "needs-login",
+        lastError: "scan QR to continue",
+      };
+    });
+
+    const route = getWhatsAppChannelRoute();
+    const request = buildAuthGetRequest("/api/channels/whatsapp");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      configured: boolean;
+      status: string;
+      lastError: string | null;
+      mode: string;
+      requiresRunningSandbox: boolean;
+    };
+
+    // Detailed endpoint preserves the exact link state — not a coarse boolean.
+    assert.equal(body.configured, true);
+    assert.equal(body.status, "needs-login");
+    assert.equal(body.lastError, "scan QR to continue");
+    assert.equal(body.mode, "gateway-native");
+    assert.equal(body.requiresRunningSandbox, true);
+  });
+});
+
+test("whatsapp GET returns error status with lastError detail", async () => {
+  await withHarness(async () => {
+    _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+    await mutateMeta((meta) => {
+      meta.channels.whatsapp = {
+        enabled: true,
+        configuredAt: Date.now(),
+        lastKnownLinkState: "error",
+        lastError: "connection timeout",
+      };
+    });
+
+    const route = getWhatsAppChannelRoute();
+    const request = buildAuthGetRequest("/api/channels/whatsapp");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      configured: boolean;
+      status: string;
+      lastError: string | null;
+    };
+
+    // Detailed endpoint returns "error" — summary would still say connected: true.
+    assert.equal(body.configured, true);
+    assert.equal(body.status, "error");
+    assert.equal(body.lastError, "connection timeout");
+  });
+});
+
+test("whatsapp GET returns disconnected status when link was lost", async () => {
+  await withHarness(async () => {
+    _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+    await mutateMeta((meta) => {
+      meta.channels.whatsapp = {
+        enabled: true,
+        configuredAt: Date.now(),
+        lastKnownLinkState: "disconnected",
+        linkedPhone: "+1234567890",
+        lastError: "session expired",
+      };
+    });
+
+    const route = getWhatsAppChannelRoute();
+    const request = buildAuthGetRequest("/api/channels/whatsapp");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      configured: boolean;
+      status: string;
+      linkedPhone: string | null;
+      lastError: string | null;
+    };
+
+    assert.equal(body.configured, true);
+    assert.equal(body.status, "disconnected");
+    assert.equal(body.linkedPhone, "+1234567890");
+    assert.equal(body.lastError, "session expired");
+  });
+});
+
+test("whatsapp GET returns needs-plugin status verbatim", async () => {
+  await withHarness(async () => {
+    _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+    await mutateMeta((meta) => {
+      meta.channels.whatsapp = {
+        enabled: true,
+        configuredAt: Date.now(),
+        lastKnownLinkState: "needs-plugin",
+      };
+    });
+
+    const route = getWhatsAppChannelRoute();
+    const request = buildAuthGetRequest("/api/channels/whatsapp");
+    const result = await callRoute(route.GET!, request);
+
+    assert.equal(result.status, 200);
+    const body = result.json as {
+      configured: boolean;
+      status: string;
+      lastError: string | null;
+    };
+
+    assert.equal(body.configured, true);
+    assert.equal(body.status, "needs-plugin");
+    assert.equal(body.lastError, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Guardrail: no fake webhook path for WhatsApp
+// ---------------------------------------------------------------------------
+
 test("whatsapp connectability in GET response has null webhookUrl", async () => {
   await withHarness(async () => {
     _setAiGatewayTokenOverrideForTesting("oidc-token");

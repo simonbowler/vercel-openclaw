@@ -43,6 +43,9 @@ export async function GET(request: Request): Promise<Response> {
         lastError: meta.channels.discord?.endpointError ?? null,
       },
       whatsapp: {
+        // Contract: "connected" means enabled/configured for delivery,
+        // not verified linked-session health. Use /api/channels/whatsapp
+        // for detailed link state (lastKnownLinkState, linkedPhone, etc.).
         connected: meta.channels.whatsapp?.enabled === true,
         lastError: meta.channels.whatsapp?.lastError ?? null,
         deliveryMode: "gateway-native",

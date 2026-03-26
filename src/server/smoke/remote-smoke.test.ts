@@ -344,7 +344,7 @@ test("channelsSummary phase: passes on valid object", async () => {
   const restore = installMockFetch([
     {
       pattern: /\/api\/channels\/summary/,
-      response: () => Response.json({ slack: null, telegram: null, discord: null }),
+      response: () => Response.json({ slack: null, telegram: null, discord: null, whatsapp: { connected: false, lastError: null, deliveryMode: "gateway-native", requiresRunningSandbox: true } }),
     },
   ]);
   try {
@@ -481,7 +481,7 @@ test("CLI: all-pass report has passed=true and exit 0", async () => {
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
     } else if (req.url === "/api/channels/summary") {
-      res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
+      res.end(JSON.stringify({ slack: null, telegram: null, discord: null, whatsapp: { connected: false, lastError: null, deliveryMode: "gateway-native", requiresRunningSandbox: true } }));
     } else if (req.url === "/api/admin/ssh") {
       res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
     } else if (req.url === "/gateway/v1/chat/completions") {
@@ -547,7 +547,7 @@ test("CLI: any-fail report has passed=false and exit 1", async () => {
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
     } else if (req.url === "/api/channels/summary") {
-      res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
+      res.end(JSON.stringify({ slack: null, telegram: null, discord: null, whatsapp: { connected: false, lastError: null, deliveryMode: "gateway-native", requiresRunningSandbox: true } }));
     } else if (req.url === "/api/admin/ssh") {
       res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
     } else {
@@ -691,7 +691,7 @@ test("destructive flow: channelWakeFromSleep skips gracefully when no channels c
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
     } else if (req.url === "/api/channels/summary") {
-      res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
+      res.end(JSON.stringify({ slack: null, telegram: null, discord: null, whatsapp: { connected: false, lastError: null, deliveryMode: "gateway-native", requiresRunningSandbox: true } }));
     } else if (req.url === "/api/admin/ssh") {
       let body = "";
       req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
@@ -777,7 +777,7 @@ test("CLI: safe-only mode runs 8 phases, --destructive runs 16", async () => {
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
     } else if (req.url === "/api/channels/summary") {
-      res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
+      res.end(JSON.stringify({ slack: null, telegram: null, discord: null, whatsapp: { connected: false, lastError: null, deliveryMode: "gateway-native", requiresRunningSandbox: true } }));
     } else if (req.url === "/api/admin/ssh") {
       let body = "";
       req.on("data", (chunk: Buffer) => { body += chunk.toString(); });
@@ -1304,7 +1304,7 @@ test("CLI all-pass report: every phase has endpoint field", async () => {
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
     } else if (req.url === "/api/channels/summary") {
-      res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
+      res.end(JSON.stringify({ slack: null, telegram: null, discord: null, whatsapp: { connected: false, lastError: null, deliveryMode: "gateway-native", requiresRunningSandbox: true } }));
     } else if (req.url === "/api/admin/ssh") {
       res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
     } else {
@@ -1358,7 +1358,7 @@ test("CLI: --request-timeout accepts a positive number", async () => {
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
     } else if (req.url === "/api/channels/summary") {
-      res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
+      res.end(JSON.stringify({ slack: null, telegram: null, discord: null, whatsapp: { connected: false, lastError: null, deliveryMode: "gateway-native", requiresRunningSandbox: true } }));
     } else if (req.url === "/api/admin/ssh") {
       res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
     } else {
@@ -1406,7 +1406,7 @@ test("CLI: --json-only suppresses stderr, emits only JSON to stdout", async () =
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
     } else if (req.url === "/api/channels/summary") {
-      res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
+      res.end(JSON.stringify({ slack: null, telegram: null, discord: null, whatsapp: { connected: false, lastError: null, deliveryMode: "gateway-native", requiresRunningSandbox: true } }));
     } else if (req.url === "/api/admin/ssh") {
       res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
     } else {
@@ -1456,7 +1456,7 @@ test("CLI: --auth-cookie overrides SMOKE_AUTH_COOKIE env var", async () => {
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
     } else if (req.url === "/api/channels/summary") {
-      res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
+      res.end(JSON.stringify({ slack: null, telegram: null, discord: null, whatsapp: { connected: false, lastError: null, deliveryMode: "gateway-native", requiresRunningSandbox: true } }));
     } else if (req.url === "/api/admin/ssh") {
       res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
     } else {
@@ -1494,7 +1494,7 @@ test("CLI: --auth-cookie value is never logged to stderr or stdout", async () =>
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
     } else if (req.url === "/api/channels/summary") {
-      res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
+      res.end(JSON.stringify({ slack: null, telegram: null, discord: null, whatsapp: { connected: false, lastError: null, deliveryMode: "gateway-native", requiresRunningSandbox: true } }));
     } else if (req.url === "/api/admin/ssh") {
       res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
     } else {
@@ -1574,7 +1574,7 @@ test("event stream: --json-only emits smoke-start, phase-end, and smoke-finish e
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
     } else if (req.url === "/api/channels/summary") {
-      res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
+      res.end(JSON.stringify({ slack: null, telegram: null, discord: null, whatsapp: { connected: false, lastError: null, deliveryMode: "gateway-native", requiresRunningSandbox: true } }));
     } else if (req.url === "/api/admin/ssh") {
       res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
     } else {
@@ -1661,7 +1661,7 @@ test("event stream: non-json-only mode emits events AND human-readable text", as
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
     } else if (req.url === "/api/channels/summary") {
-      res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
+      res.end(JSON.stringify({ slack: null, telegram: null, discord: null, whatsapp: { connected: false, lastError: null, deliveryMode: "gateway-native", requiresRunningSandbox: true } }));
     } else if (req.url === "/api/admin/ssh") {
       res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
     } else if (req.url === "/gateway/v1/chat/completions") {
@@ -1709,7 +1709,7 @@ test("event stream: each event line is independently parseable", async () => {
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
     } else if (req.url === "/api/channels/summary") {
-      res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
+      res.end(JSON.stringify({ slack: null, telegram: null, discord: null, whatsapp: { connected: false, lastError: null, deliveryMode: "gateway-native", requiresRunningSandbox: true } }));
     } else if (req.url === "/api/admin/ssh") {
       res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
     } else {
@@ -1760,7 +1760,7 @@ test("event stream: phase-end events have correct phase order", async () => {
     } else if (req.url === "/api/firewall") {
       res.end(JSON.stringify({ mode: "learning", allowlist: [] }));
     } else if (req.url === "/api/channels/summary") {
-      res.end(JSON.stringify({ slack: null, telegram: null, discord: null }));
+      res.end(JSON.stringify({ slack: null, telegram: null, discord: null, whatsapp: { connected: false, lastError: null, deliveryMode: "gateway-native", requiresRunningSandbox: true } }));
     } else if (req.url === "/api/admin/ssh") {
       res.end(JSON.stringify({ stdout: "smoke-ok\n", stderr: "", exitCode: 0 }));
     } else if (req.url === "/gateway/v1/chat/completions") {
