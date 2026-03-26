@@ -14,6 +14,7 @@ import {
   isBusyStatus,
   probeGatewayReady,
   reconcileSandboxHealth,
+  reconcileStaleRunningStatus,
   type ProbeResult,
   type SandboxHealthResult,
 } from "@/server/sandbox/lifecycle";
@@ -39,6 +40,7 @@ export type WatchdogDeps = {
   buildContract: (options: { request?: Request }) => Promise<DeploymentContract>;
   getMeta: () => Promise<SingleMeta>;
   probe: () => Promise<ProbeResult>;
+  reconcileStale: () => Promise<SingleMeta>;
   reconcile: (options: {
     origin: string;
     reason: string;
@@ -67,6 +69,7 @@ const defaultDeps: WatchdogDeps = {
   buildContract: buildDeploymentContract,
   getMeta: getInitializedMeta,
   probe: probeGatewayReady,
+  reconcileStale: reconcileStaleRunningStatus,
   reconcile: reconcileSandboxHealth,
   ensureReady: ensureSandboxReady,
   readPrevious: readWatchdogReport,
@@ -193,6 +196,21 @@ export async function runSandboxWatchdog(
       );
       status = failingRequirementIds.length > 0 ? "failed" : "idle";
     } else {
+      // Before probing the gateway, check whether the sandbox is actually
+      // still running via the SDK.  When the platform auto-sleeps a sandbox
+      // after its timeout, metadata still says "running" — probing and then
+      // repairing would needlessly restore it.
+      const staleCheckStart = deps.now();
+      const reconciledMeta = await deps.reconcileStale();
+      if (reconciledMeta.status !== "running") {
+        addCheck("probe", "skip", staleCheckStart,
+          `SDK reports sandbox is ${reconciledMeta.status}; metadata reconciled from stale running state.`);
+        addCheck("reconcile", "skip", deps.now(),
+          "No repair needed — sandbox naturally slept after timeout.");
+        meta = reconciledMeta;
+        status = failingRequirementIds.length > 0 ? "failed" : "idle";
+      } else {
+
       const probeStartedAt = deps.now();
       const probe = await deps.probe();
 
@@ -236,6 +254,7 @@ export async function runSandboxWatchdog(
           }
         }
       }
+      } // close SDK stale-check else
     }
 
     // Cron wake: if sandbox is stopped or recoverable from an error snapshot and

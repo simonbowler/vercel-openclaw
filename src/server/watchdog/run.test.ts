@@ -33,6 +33,8 @@ function makeDeps(overrides: Partial<Parameters<typeof runSandboxWatchdog>[1]> =
     getMeta: async () =>
       ({ status: "running", sandboxId: "sbx_123" }) as SingleMeta,
     probe: async () => ({ ready: true }),
+    reconcileStale: async () =>
+      ({ status: "running", sandboxId: "sbx_123" }) as SingleMeta,
     reconcile: async () => ({
       status: "recovering" as const,
       repaired: true,
@@ -361,6 +363,41 @@ test("stuck-busy recovery passes schedule callback to reconcile", async () => {
   assert.equal(receivedSchedule, fakeSchedule, "schedule callback must be forwarded to reconcile");
   assert.equal(report.status, "repairing");
   assert.equal(findCheck(report, "reconcile")?.status, "pass");
+});
+
+test("auto-slept sandbox reconciled to stopped without repair", async () => {
+  let probeCalled = false;
+  let reconcileCalled = false;
+
+  const report = await runSandboxWatchdog(
+    { request: new Request("https://app.test/api/cron/watchdog") },
+    makeDeps({
+      // SDK reports sandbox is no longer running (auto-slept)
+      reconcileStale: async () =>
+        ({ status: "stopped", sandboxId: null }) as SingleMeta,
+      probe: async () => {
+        probeCalled = true;
+        return { ready: false, error: "should not be called" };
+      },
+      reconcile: async () => {
+        reconcileCalled = true;
+        return {
+          status: "recovering" as const,
+          repaired: true,
+          meta: { status: "booting" } as SingleMeta,
+        };
+      },
+    }),
+  );
+
+  assert.equal(probeCalled, false, "Gateway probe must not be called when SDK says sandbox stopped");
+  assert.equal(reconcileCalled, false, "Repair must not be triggered for naturally slept sandbox");
+  assert.equal(report.status, "idle");
+  assert.equal(report.sandboxStatus, "stopped");
+  assert.equal(report.triggeredRepair, false);
+  assert.equal(findCheck(report, "probe")?.status, "skip");
+  assert.ok(findCheck(report, "probe")?.message?.includes("SDK reports sandbox is stopped"));
+  assert.equal(findCheck(report, "reconcile")?.status, "skip");
 });
 
 test("probe-failed recovery passes schedule callback to reconcile", async () => {
