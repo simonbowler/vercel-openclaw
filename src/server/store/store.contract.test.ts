@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { getServerLogs, _resetLogBuffer } from "@/server/log";
 import { _resetStoreForTesting, getStore } from "./store";
 
 function withEnv<T>(
@@ -25,6 +26,7 @@ function withEnv<T>(
         process.env[key] = originals[key];
       }
     }
+    _resetLogBuffer();
     _resetStoreForTesting();
   };
 
@@ -68,6 +70,36 @@ test("[contract] memory store allowed outside Vercel even in production mode", (
       _resetStoreForTesting();
       assert.equal(getStore().name, "memory");
       _resetStoreForTesting();
+    },
+  );
+});
+
+test("[contract] getStore() uses Upstash on Vercel and warns on default instance id", () => {
+  withEnv(
+    {
+      NODE_ENV: "production",
+      VERCEL: "1",
+      VERCEL_ENV: "production",
+      VERCEL_URL: "preview-123.vercel.app",
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token",
+      KV_REST_API_URL: undefined,
+      KV_REST_API_TOKEN: undefined,
+      OPENCLAW_INSTANCE_ID: undefined,
+    },
+    () => {
+      _resetLogBuffer();
+      _resetStoreForTesting();
+
+      const store = getStore();
+      assert.equal(store.name, "upstash");
+
+      const warning = getServerLogs().find(
+        (entry) => entry.message === "store.default_instance_id",
+      );
+      assert.ok(warning);
+      assert.equal(warning?.data?.instanceId, "openclaw-single");
     },
   );
 });

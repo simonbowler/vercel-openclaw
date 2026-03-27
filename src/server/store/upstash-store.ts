@@ -3,8 +3,11 @@ import { randomUUID } from "node:crypto";
 import { Redis } from "@upstash/redis";
 
 import type { SingleMeta } from "@/shared/types";
-import { getStoreEnv } from "@/server/env";
-import { metaKey as resolveMetaKey } from "@/server/store/keyspace";
+import { getOpenclawInstanceId, getStoreEnv } from "@/server/env";
+import {
+  assertScopedRedisKey,
+  metaKey as resolveMetaKey,
+} from "@/server/store/keyspace";
 
 const RELEASE_LOCK_LUA = `
 if redis.call("get", KEYS[1]) == ARGV[1] then
@@ -64,7 +67,22 @@ export class UpstashStore {
   ) {}
 
   private getMetaKey(): string {
-    return this.configuredMetaKey ?? resolveMetaKey();
+    const key = this.configuredMetaKey ?? resolveMetaKey();
+    if (this.configuredMetaKey && process.env.NODE_ENV !== "test") {
+      throw new Error("configuredMetaKey is only supported in test mode.");
+    }
+    assertScopedRedisKey(key);
+    return key;
+  }
+
+  private validateMetaOwnership(meta: SingleMeta): SingleMeta {
+    const instanceId = getOpenclawInstanceId();
+    if (meta.id !== instanceId) {
+      throw new Error(
+        `Refusing meta for instance "${meta.id}" while current instance is "${instanceId}".`,
+      );
+    }
+    return meta;
   }
 
   static fromEnv(): UpstashStore | null {
@@ -88,26 +106,32 @@ export class UpstashStore {
     }
 
     if (typeof raw === "object") {
-      return raw as SingleMeta;
+      return this.validateMetaOwnership(raw as SingleMeta);
     }
 
+    let parsed: SingleMeta;
     try {
-      return JSON.parse(raw) as SingleMeta;
+      parsed = JSON.parse(raw) as SingleMeta;
     } catch {
       return null;
     }
+
+    return this.validateMetaOwnership(parsed);
   }
 
   async setMeta(meta: SingleMeta): Promise<void> {
+    this.validateMetaOwnership(meta);
     await this.redis.set(this.getMetaKey(), JSON.stringify(meta));
   }
 
   async createMetaIfAbsent(meta: SingleMeta): Promise<boolean> {
+    this.validateMetaOwnership(meta);
     const result = await this.redis.set(this.getMetaKey(), JSON.stringify(meta), { nx: true });
     return result === "OK";
   }
 
   async compareAndSetMeta(expectedVersion: number, next: SingleMeta): Promise<boolean> {
+    this.validateMetaOwnership(next);
     const result = await this.redis.eval<[string, string], number>(
       CAS_META_LUA,
       [this.getMetaKey()],
@@ -118,6 +142,7 @@ export class UpstashStore {
   }
 
   async getValue<T>(key: string): Promise<T | null> {
+    assertScopedRedisKey(key);
     const raw = await this.redis.get<T | string>(key);
     if (!raw) {
       return null;
@@ -135,6 +160,7 @@ export class UpstashStore {
   }
 
   async setValue<T>(key: string, value: T, ttlSeconds?: number): Promise<void> {
+    assertScopedRedisKey(key);
     const payload = JSON.stringify(value);
     if (typeof ttlSeconds === "number") {
       await this.redis.set(key, payload, { ex: ttlSeconds });
@@ -145,10 +171,12 @@ export class UpstashStore {
   }
 
   async deleteValue(key: string): Promise<void> {
+    assertScopedRedisKey(key);
     await this.redis.del(key);
   }
 
   async acquireLock(key: string, ttlSeconds: number): Promise<string | null> {
+    assertScopedRedisKey(key);
     const token = randomUUID();
     const result = await this.redis.set(key, token, {
       nx: true,
@@ -159,6 +187,7 @@ export class UpstashStore {
   }
 
   async renewLock(key: string, token: string, ttlSeconds: number): Promise<boolean> {
+    assertScopedRedisKey(key);
     const result = await this.redis.eval<[string, string], number>(
       RENEW_LOCK_LUA,
       [key],
@@ -169,6 +198,7 @@ export class UpstashStore {
   }
 
   async releaseLock(key: string, token: string): Promise<void> {
+    assertScopedRedisKey(key);
     await this.redis.eval(RELEASE_LOCK_LUA, [key], [token]);
   }
 }

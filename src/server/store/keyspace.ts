@@ -1,8 +1,26 @@
 import type { ChannelName } from "@/shared/channels";
 import { getOpenclawInstanceId } from "@/server/env";
+import { resolveOpenclawInstanceId } from "@/shared/types";
+
+export function instanceKeyPrefix(): string {
+  return `${getOpenclawInstanceId()}:`;
+}
+
+export function assertScopedRedisKey(key: string): void {
+  const prefix = instanceKeyPrefix();
+  if (!key.startsWith(prefix)) {
+    throw new Error(
+      `Refusing to access Redis key "${key}" outside instance prefix "${prefix}".`,
+    );
+  }
+}
 
 function buildKey(suffix: string): string {
-  return `${getOpenclawInstanceId()}:${suffix}`;
+  return `${instanceKeyPrefix()}${suffix}`;
+}
+
+function buildKeyForInstance(instanceId: string, suffix: string): string {
+  return `${resolveOpenclawInstanceId(instanceId)}:${suffix}`;
 }
 
 export function metaKey(): string {
@@ -43,6 +61,10 @@ export function learningLockKey(): string {
 
 export function debugLockKey(): string {
   return buildKey("lock:debug-timing");
+}
+
+export function setupProgressKey(instanceId = "openclaw-single"): string {
+  return buildKeyForInstance(instanceId, "setup-progress");
 }
 
 export function channelQueueKey(channel: ChannelName): string {

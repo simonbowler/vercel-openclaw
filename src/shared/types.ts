@@ -7,10 +7,10 @@ import {
   type ChannelName,
 } from "@/shared/channels";
 
-const DEFAULT_OPENCLAW_INSTANCE_ID = "openclaw-single";
-const INSTANCE_ID_OVERRIDE_GLOBAL_KEY = "__openclawInstanceIdOverrideForTesting";
+export const DEFAULT_OPENCLAW_INSTANCE_ID = "openclaw-single";
+export const INSTANCE_ID_OVERRIDE_GLOBAL_KEY = "__openclawInstanceIdOverrideForTesting";
 
-function resolveDefaultInstanceId(raw: string | null | undefined): string {
+export function resolveOpenclawInstanceId(raw: string | null | undefined): string {
   if (raw == null) {
     return DEFAULT_OPENCLAW_INSTANCE_ID;
   }
@@ -26,8 +26,8 @@ function resolveDefaultInstanceId(raw: string | null | undefined): string {
   return trimmed;
 }
 
-function getDefaultInstanceId(): string {
-  return resolveDefaultInstanceId(
+export function getDefaultOpenclawInstanceId(): string {
+  return resolveOpenclawInstanceId(
     (
       globalThis as typeof globalThis & {
         [INSTANCE_ID_OVERRIDE_GLOBAL_KEY]?: string | null;
@@ -400,7 +400,7 @@ export const CURRENT_SCHEMA_VERSION = 3;
 export function createDefaultMeta(
   now: number,
   gatewayToken: string,
-  instanceId = getDefaultInstanceId(),
+  instanceId = getDefaultOpenclawInstanceId(),
 ): SingleMeta {
   return {
     _schemaVersion: CURRENT_SCHEMA_VERSION,
@@ -467,7 +467,7 @@ export function createDefaultMeta(
 
 export function ensureMetaShape(
   input: unknown,
-  expectedInstanceId = getDefaultInstanceId(),
+  expectedInstanceId = getDefaultOpenclawInstanceId(),
 ): SingleMeta | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return null;

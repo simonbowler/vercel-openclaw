@@ -10,6 +10,7 @@ import {
   _setInstanceIdOverrideForTesting,
   getOpenclawInstanceId,
 } from "@/server/env";
+import { getServerLogs, _resetLogBuffer } from "@/server/log";
 import { initLockKey, metaKey } from "@/server/store/keyspace";
 import {
   getInitializedMeta,
@@ -18,6 +19,46 @@ import {
   mutateMeta,
   _resetStoreForTesting,
 } from "@/server/store/store";
+import { UpstashStore } from "@/server/store/upstash-store";
+
+type EvalHandler = (keys: string[], args: string[]) => unknown;
+
+class FakeRedis {
+  readonly values = new Map<string, string>();
+
+  evalHandler: EvalHandler | null = null;
+
+  async get<T>(key: string): Promise<T | null> {
+    return (this.values.get(key) as T | undefined) ?? null;
+  }
+
+  async set(
+    key: string,
+    value: string,
+    options?: { nx?: boolean; ex?: number },
+  ): Promise<"OK" | null> {
+    if (options?.nx && this.values.has(key)) {
+      return null;
+    }
+    this.values.set(key, value);
+    return "OK";
+  }
+
+  async del(key: string): Promise<number> {
+    return this.values.delete(key) ? 1 : 0;
+  }
+
+  async eval<TKeys extends string[], TResult>(
+    _script: string,
+    keys: TKeys,
+    args: string[],
+  ): Promise<TResult> {
+    if (!this.evalHandler) {
+      throw new Error("Missing eval handler");
+    }
+    return this.evalHandler(keys, args) as TResult;
+  }
+}
 
 function withEnv<T>(
   overrides: Record<string, string | undefined>,
@@ -42,6 +83,7 @@ function withEnv<T>(
       }
     }
     _setInstanceIdOverrideForTesting(null);
+    _resetLogBuffer();
     _resetStoreForTesting();
   };
 
@@ -133,6 +175,32 @@ test("getStore: falls back to MemoryStore when NODE_ENV is test", () => {
     () => {
       const store = getStore();
       assert.equal(store.name, "memory");
+    },
+  );
+});
+
+test("getStore: Upstash initialization does not warn when instance id is explicitly scoped", () => {
+  withEnv(
+    {
+      NODE_ENV: "production",
+      VERCEL: "1",
+      VERCEL_ENV: "production",
+      VERCEL_URL: "preview-123.vercel.app",
+      VERCEL_PROJECT_PRODUCTION_URL: undefined,
+      UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+      UPSTASH_REDIS_REST_TOKEN: "token",
+      KV_REST_API_URL: undefined,
+      KV_REST_API_TOKEN: undefined,
+      OPENCLAW_INSTANCE_ID: "fork-a",
+    },
+    () => {
+      _resetLogBuffer();
+      const store = getStore();
+      assert.equal(store.name, "upstash");
+      assert.equal(
+        getServerLogs().some((entry) => entry.message === "store.default_instance_id"),
+        false,
+      );
     },
   );
 });
@@ -873,4 +941,106 @@ test("[store] concurrent mutateMeta calls are serializable", async () => {
     assert.equal(final.lastAccessedAt, 5, "All 5 increments should have applied");
     assert.equal(final.version, 6, "Version should be initial(1) + 5 mutations = 6");
   });
+});
+
+test("[upstash-store] low-level redis methods reject unscoped keys", async () => {
+  await withEnv(
+    {
+      NODE_ENV: "test",
+      OPENCLAW_INSTANCE_ID: "fork-a",
+    },
+    async () => {
+      const redis = new FakeRedis();
+      const store = new UpstashStore(redis as never);
+
+      await assert.rejects(() => store.getValue("fork-b:key"), /outside instance prefix "fork-a:"/);
+      await assert.rejects(() => store.setValue("plain-key", "value"), /outside instance prefix "fork-a:"/);
+      await assert.rejects(() => store.deleteValue("fork-b:key"), /outside instance prefix "fork-a:"/);
+      await assert.rejects(() => store.acquireLock("fork-b:lock", 30), /outside instance prefix "fork-a:"/);
+      await assert.rejects(() => store.renewLock("fork-b:lock", "token", 30), /outside instance prefix "fork-a:"/);
+      await assert.rejects(() => store.releaseLock("fork-b:lock", "token"), /outside instance prefix "fork-a:"/);
+    },
+  );
+});
+
+test("[upstash-store] getMeta rejects persisted meta for a different instance", async () => {
+  await withEnv(
+    {
+      NODE_ENV: "test",
+      OPENCLAW_INSTANCE_ID: "fork-a",
+    },
+    async () => {
+      const redis = new FakeRedis();
+      redis.values.set(metaKey(), JSON.stringify(createDefaultMeta(Date.now(), "gateway-token", "fork-b")));
+      const store = new UpstashStore(redis as never);
+
+      await assert.rejects(
+        () => store.getMeta(),
+        /Refusing meta for instance "fork-b" while current instance is "fork-a"/,
+      );
+    },
+  );
+});
+
+test("[upstash-store] write-side meta operations reject mismatched instance ids", async () => {
+  await withEnv(
+    {
+      NODE_ENV: "test",
+      OPENCLAW_INSTANCE_ID: "fork-a",
+    },
+    async () => {
+      const redis = new FakeRedis();
+      redis.evalHandler = () => 1;
+      const store = new UpstashStore(redis as never);
+      const wrongMeta = createDefaultMeta(Date.now(), "gateway-token", "fork-b");
+
+      await assert.rejects(
+        () => store.setMeta(wrongMeta),
+        /Refusing meta for instance "fork-b" while current instance is "fork-a"/,
+      );
+      await assert.rejects(
+        () => store.createMetaIfAbsent(wrongMeta),
+        /Refusing meta for instance "fork-b" while current instance is "fork-a"/,
+      );
+      await assert.rejects(
+        () => store.compareAndSetMeta(1, wrongMeta),
+        /Refusing meta for instance "fork-b" while current instance is "fork-a"/,
+      );
+    },
+  );
+});
+
+test("[upstash-store] configuredMetaKey stays test-only and must still be scoped", async () => {
+  await withEnv(
+    {
+      NODE_ENV: "test",
+      OPENCLAW_INSTANCE_ID: "fork-a",
+    },
+    async () => {
+      const redis = new FakeRedis();
+      const scopedStore = new UpstashStore(redis as never, "fork-a:meta:test");
+      await scopedStore.setMeta(createDefaultMeta(Date.now(), "gateway-token", "fork-a"));
+
+      const unscopedStore = new UpstashStore(redis as never, "meta:test");
+      await assert.rejects(
+        () => unscopedStore.getMeta(),
+        /outside instance prefix "fork-a:"/,
+      );
+    },
+  );
+
+  await withEnv(
+    {
+      NODE_ENV: "production",
+      OPENCLAW_INSTANCE_ID: "fork-a",
+    },
+    async () => {
+      const redis = new FakeRedis();
+      const store = new UpstashStore(redis as never, "fork-a:meta:test");
+      await assert.rejects(
+        () => store.getMeta(),
+        /configuredMetaKey is only supported in test mode/,
+      );
+    },
+  );
 });

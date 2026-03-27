@@ -167,6 +167,12 @@ test("memory-store: setValue + getValue round-trips", async () => {
   assert.deepEqual(value, { hello: "world" });
 });
 
+test("memory-store: unscoped keys remain allowed for local development", async () => {
+  const store = makeStore();
+  await store.setValue("plain-key", "value");
+  assert.equal(await store.getValue("plain-key"), "value");
+});
+
 test("memory-store: setValue overwrites existing", async () => {
   const store = makeStore();
   await store.setValue("key1", "first");

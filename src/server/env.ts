@@ -1,4 +1,9 @@
 import { getVercelOidcToken } from "@vercel/oidc";
+import {
+  DEFAULT_OPENCLAW_INSTANCE_ID,
+  INSTANCE_ID_OVERRIDE_GLOBAL_KEY,
+  resolveOpenclawInstanceId,
+} from "@/shared/types";
 import { logWarn } from "@/server/log";
 
 export type AuthMode = "admin-secret" | "sign-in-with-vercel";
@@ -94,9 +99,6 @@ export function getStoreEnv():
   return { url, token };
 }
 
-const DEFAULT_OPENCLAW_INSTANCE_ID = "openclaw-single";
-const INSTANCE_ID_OVERRIDE_GLOBAL_KEY = "__openclawInstanceIdOverrideForTesting";
-
 let _instanceIdOverrideForTesting: string | null = null;
 
 function readInstanceIdOverrideFromGlobal(): string | null | undefined {
@@ -107,22 +109,6 @@ function readInstanceIdOverrideFromGlobal(): string | null | undefined {
   )[INSTANCE_ID_OVERRIDE_GLOBAL_KEY];
 }
 
-function resolveOpenclawInstanceId(raw: string | null | undefined): string {
-  if (raw == null) {
-    return DEFAULT_OPENCLAW_INSTANCE_ID;
-  }
-
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    throw new Error("OPENCLAW_INSTANCE_ID must not be blank.");
-  }
-  if (trimmed.includes(":")) {
-    throw new Error("OPENCLAW_INSTANCE_ID must not contain ':'.");
-  }
-
-  return trimmed;
-}
-
 export function getOpenclawInstanceId(): string {
   return resolveOpenclawInstanceId(
     _instanceIdOverrideForTesting ??
@@ -130,6 +116,8 @@ export function getOpenclawInstanceId(): string {
       process.env.OPENCLAW_INSTANCE_ID,
   );
 }
+
+export { DEFAULT_OPENCLAW_INSTANCE_ID };
 
 export function _setInstanceIdOverrideForTesting(id: string | null): void {
   _instanceIdOverrideForTesting = id;

@@ -6,6 +6,7 @@ import {
   type SingleMeta,
 } from "@/shared/types";
 import {
+  DEFAULT_OPENCLAW_INSTANCE_ID,
   getOpenclawInstanceId,
   isVercelDeployment,
   requiresDurableStore,
@@ -57,6 +58,14 @@ export function getStore(): Store {
     const upstash = UpstashStore.fromEnv();
     if (upstash) {
       singletonStore = upstash;
+      if (getOpenclawInstanceId() === DEFAULT_OPENCLAW_INSTANCE_ID) {
+        logWarn("store.default_instance_id", {
+          backend: singletonStore.name,
+          instanceId: DEFAULT_OPENCLAW_INSTANCE_ID,
+          message:
+            "Using default OPENCLAW_INSTANCE_ID with Upstash. Shared Redis deployments should set a unique instance id.",
+        });
+      }
       logInfo("store.initialized", { backend: singletonStore.name });
       return singletonStore;
     }
