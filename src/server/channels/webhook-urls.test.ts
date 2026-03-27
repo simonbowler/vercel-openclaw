@@ -43,15 +43,11 @@ afterEach(() => {
 // Path map completeness
 // ---------------------------------------------------------------------------
 
-test("CHANNEL_WEBHOOK_PATHS covers webhook-proxied channels only", () => {
+test("CHANNEL_WEBHOOK_PATHS covers all app-owned webhook channels", () => {
   assert.equal(CHANNEL_WEBHOOK_PATHS.slack, "/api/channels/slack/webhook");
   assert.equal(CHANNEL_WEBHOOK_PATHS.telegram, "/api/channels/telegram/webhook");
   assert.equal(CHANNEL_WEBHOOK_PATHS.discord, "/api/channels/discord/webhook");
-  assert.equal(
-    "whatsapp" in CHANNEL_WEBHOOK_PATHS,
-    false,
-    "whatsapp must not have a webhook path",
-  );
+  assert.equal(CHANNEL_WEBHOOK_PATHS.whatsapp, "/api/channels/whatsapp/webhook");
 });
 
 // ---------------------------------------------------------------------------
@@ -64,9 +60,8 @@ test("buildChannelDisplayWebhookUrl returns clean URL for webhook-proxied channe
 
   const request = makeRequest();
 
-  for (const channel of ["slack", "telegram", "discord"] as const) {
+  for (const channel of ["slack", "telegram", "discord", "whatsapp"] as const) {
     const url = buildChannelDisplayWebhookUrl(channel, request);
-    assert.ok(url !== null, `${channel} display URL must not be null`);
     assert.ok(
       !url.includes("x-vercel-protection-bypass"),
       `${channel} display URL must not include bypass param`,
@@ -79,19 +74,23 @@ test("buildChannelDisplayWebhookUrl returns clean URL for webhook-proxied channe
 });
 
 // ---------------------------------------------------------------------------
-// WhatsApp: gateway-native, returns null for webhook URLs
+// WhatsApp: display URL is clean, delivery URL includes bypass like Slack
 // ---------------------------------------------------------------------------
 
-test("buildChannelDisplayWebhookUrl returns null for whatsapp", () => {
+test("buildChannelDisplayWebhookUrl returns clean URL for whatsapp", () => {
   process.env.NEXT_PUBLIC_APP_URL = "https://app.example.com";
   const url = buildChannelDisplayWebhookUrl("whatsapp", makeRequest());
-  assert.equal(url, null, "whatsapp display URL must be null");
+  assert.equal(url, "https://app.example.com/api/channels/whatsapp/webhook");
 });
 
-test("buildChannelWebhookUrl returns null for whatsapp", () => {
+test("buildChannelWebhookUrl for whatsapp includes bypass secret", () => {
   process.env.NEXT_PUBLIC_APP_URL = "https://app.example.com";
+  process.env.VERCEL_AUTOMATION_BYPASS_SECRET = "bypass-secret";
   const url = buildChannelWebhookUrl("whatsapp", makeRequest());
-  assert.equal(url, null, "whatsapp webhook URL must be null");
+  assert.ok(
+    url.includes("x-vercel-protection-bypass=bypass-secret"),
+    "whatsapp delivery URL must include bypass secret",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -145,9 +144,8 @@ test("buildChannelWebhookUrl without bypass returns clean URLs for webhook-proxi
 
   const request = makeRequest();
 
-  for (const channel of ["slack", "telegram", "discord"] as const) {
+  for (const channel of ["slack", "telegram", "discord", "whatsapp"] as const) {
     const url = buildChannelWebhookUrl(channel, request);
-    assert.ok(url !== null, `${channel} must return a URL`);
     assert.ok(!url.includes("x-vercel-protection-bypass"));
     assert.ok(url.startsWith("https://app.example.com"));
   }

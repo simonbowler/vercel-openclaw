@@ -115,6 +115,86 @@ export function buildTelegramWebhook(options: TelegramWebhookOptions): Request {
 }
 
 // ---------------------------------------------------------------------------
+// WhatsApp
+// ---------------------------------------------------------------------------
+
+export type WhatsAppWebhookOptions = {
+  appSecret: string;
+  payload?: Record<string, unknown>;
+};
+
+function defaultWhatsAppPayload(overrides?: Record<string, unknown>): Record<string, unknown> {
+  return {
+    object: "whatsapp_business_account",
+    entry: [
+      {
+        id: "waba-123",
+        changes: [
+          {
+            field: "messages",
+            value: {
+              messaging_product: "whatsapp",
+              metadata: {
+                display_phone_number: "15550001111",
+                phone_number_id: "123456789",
+              },
+              contacts: [
+                {
+                  profile: { name: "Test User" },
+                  wa_id: "15551234567",
+                },
+              ],
+              messages: [
+                {
+                  from: "15551234567",
+                  id: "wamid.default",
+                  timestamp: String(Math.floor(Date.now() / 1000)),
+                  type: "text",
+                  text: { body: "hello from whatsapp test" },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    ],
+    ...overrides,
+  };
+}
+
+export function buildWhatsAppWebhook(options: WhatsAppWebhookOptions): Request {
+  const payload = options.payload ?? defaultWhatsAppPayload();
+  const rawBody = JSON.stringify(payload);
+  const signature =
+    "sha256=" +
+    crypto
+      .createHmac("sha256", options.appSecret)
+      .update(rawBody)
+      .digest("hex");
+
+  return new Request("http://localhost:3000/api/channels/whatsapp/webhook", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-hub-signature-256": signature,
+    },
+    body: rawBody,
+  });
+}
+
+export function buildWhatsAppVerificationRequest(
+  verifyToken: string,
+  challenge = "whatsapp-test-challenge",
+): Request {
+  return new Request(
+    `http://localhost:3000/api/channels/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=${encodeURIComponent(verifyToken)}&hub.challenge=${encodeURIComponent(challenge)}`,
+    {
+      method: "GET",
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Discord
 // ---------------------------------------------------------------------------
 

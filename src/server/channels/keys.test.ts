@@ -26,7 +26,7 @@ import {
   channelSessionHistoryKey as keyspaceChannelSessionHistoryKey,
 } from "@/server/store/keyspace";
 
-const CHANNELS: ChannelName[] = ["slack", "telegram", "discord"];
+const CHANNELS: ChannelName[] = ["slack", "telegram", "discord", "whatsapp"];
 
 function withInstanceId<T>(
   instanceId: string | null,
@@ -153,8 +153,8 @@ test("keys: all key functions produce unique keys per channel", () => {
     allKeys.add(channelSessionHistoryKey(ch, "s1"));
     allKeys.add(channelDedupKey(ch, "d1"));
   }
-  // 6 key functions × 3 channels = 18 unique keys
-  assert.equal(allKeys.size, 18);
+  // 6 key functions × 4 channels = 24 unique keys
+  assert.equal(allKeys.size, 24);
 });
 
 // ---------------------------------------------------------------------------

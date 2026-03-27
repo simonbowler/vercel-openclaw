@@ -52,6 +52,11 @@ export type WhatsAppLinkState =
 export type WhatsAppChannelConfig = {
   enabled: boolean;
   configuredAt: number;
+  phoneNumberId?: string;
+  accessToken?: string;
+  verifyToken?: string;
+  appSecret?: string;
+  businessAccountId?: string;
   pluginSpec?: string;
   accountId?: string;
   dmPolicy?: "pairing" | "allowlist" | "open" | "disabled";
@@ -154,6 +159,55 @@ function isWhatsAppChannelConfig(value: unknown): value is WhatsAppChannelConfig
   const raw = value as Partial<WhatsAppChannelConfig>;
   return (
     typeof raw.enabled === "boolean" &&
-    typeof raw.configuredAt === "number"
+    typeof raw.configuredAt === "number" &&
+    (raw.phoneNumberId === undefined || typeof raw.phoneNumberId === "string") &&
+    (raw.accessToken === undefined || typeof raw.accessToken === "string") &&
+    (raw.verifyToken === undefined || typeof raw.verifyToken === "string") &&
+    (raw.appSecret === undefined || typeof raw.appSecret === "string") &&
+    (raw.businessAccountId === undefined || typeof raw.businessAccountId === "string") &&
+    (raw.pluginSpec === undefined || typeof raw.pluginSpec === "string") &&
+    (raw.accountId === undefined || typeof raw.accountId === "string") &&
+    (raw.dmPolicy === undefined ||
+      raw.dmPolicy === "pairing" ||
+      raw.dmPolicy === "allowlist" ||
+      raw.dmPolicy === "open" ||
+      raw.dmPolicy === "disabled") &&
+    (raw.allowFrom === undefined ||
+      (Array.isArray(raw.allowFrom) && raw.allowFrom.every((entry) => typeof entry === "string"))) &&
+    (raw.groupPolicy === undefined ||
+      raw.groupPolicy === "open" ||
+      raw.groupPolicy === "allowlist" ||
+      raw.groupPolicy === "disabled") &&
+    (raw.groupAllowFrom === undefined ||
+      (Array.isArray(raw.groupAllowFrom) &&
+        raw.groupAllowFrom.every((entry) => typeof entry === "string"))) &&
+    (raw.groups === undefined ||
+      (Array.isArray(raw.groups) && raw.groups.every((entry) => typeof entry === "string"))) &&
+    (raw.lastKnownLinkState === undefined ||
+      raw.lastKnownLinkState === "unconfigured" ||
+      raw.lastKnownLinkState === "needs-plugin" ||
+      raw.lastKnownLinkState === "needs-login" ||
+      raw.lastKnownLinkState === "linked" ||
+      raw.lastKnownLinkState === "disconnected" ||
+      raw.lastKnownLinkState === "error") &&
+    (raw.linkedPhone === undefined || typeof raw.linkedPhone === "string") &&
+    (raw.displayName === undefined || typeof raw.displayName === "string") &&
+    (raw.lastError === undefined || typeof raw.lastError === "string")
+  );
+}
+
+export function hasWhatsAppBusinessCredentials(
+  config: WhatsAppChannelConfig | null | undefined,
+): config is WhatsAppChannelConfig & {
+  phoneNumberId: string;
+  accessToken: string;
+  verifyToken: string;
+  appSecret: string;
+} {
+  return Boolean(
+    config?.phoneNumberId &&
+      config.accessToken &&
+      config.verifyToken &&
+      config.appSecret,
   );
 }

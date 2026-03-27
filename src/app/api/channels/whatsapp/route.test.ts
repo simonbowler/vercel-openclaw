@@ -21,6 +21,14 @@ import {
   getWhatsAppChannelRoute,
 } from "@/test-utils/route-caller";
 
+const VALID_WHATSAPP_CONFIG = {
+  enabled: true,
+  phoneNumberId: "123456789",
+  accessToken: "wa-access-token",
+  verifyToken: "wa-verify-token",
+  appSecret: "wa-app-secret",
+};
+
 afterEach(() => {
   _setAiGatewayTokenOverrideForTesting(null);
 });
@@ -65,7 +73,14 @@ test("whatsapp PUT enables with config-only body", async () => {
     const route = getWhatsAppChannelRoute();
     const request = buildAuthPutRequest(
       "/api/channels/whatsapp",
-      JSON.stringify({ enabled: true, dmPolicy: "pairing" }),
+      JSON.stringify({
+        enabled: true,
+        phoneNumberId: "123456789",
+        accessToken: "wa-access-token",
+        verifyToken: "wa-verify-token",
+        appSecret: "wa-app-secret",
+        dmPolicy: "pairing",
+      }),
     );
     const result = await callRoute(route.PUT!, request);
 
@@ -95,7 +110,7 @@ test("whatsapp DELETE removes config", async () => {
     // First enable
     const putRequest = buildAuthPutRequest(
       "/api/channels/whatsapp",
-      JSON.stringify({ enabled: true }),
+      JSON.stringify(VALID_WHATSAPP_CONFIG),
     );
     await callRoute(route.PUT!, putRequest);
 
@@ -126,6 +141,10 @@ test("whatsapp PUT preserves auth state fields across config updates", async () 
       meta.channels.whatsapp = {
         enabled: true,
         configuredAt: 1000,
+        phoneNumberId: "123456789",
+        accessToken: "wa-access-token",
+        verifyToken: "wa-verify-token",
+        appSecret: "wa-app-secret",
         lastKnownLinkState: "linked",
         linkedPhone: "+1234567890",
         displayName: "My Phone",
@@ -139,7 +158,14 @@ test("whatsapp PUT preserves auth state fields across config updates", async () 
     // Update policy only — auth state must survive
     const request = buildAuthPutRequest(
       "/api/channels/whatsapp",
-      JSON.stringify({ dmPolicy: "allowlist", allowFrom: ["+9876543210"] }),
+      JSON.stringify({
+        phoneNumberId: "123456789",
+        accessToken: "wa-access-token",
+        verifyToken: "wa-verify-token",
+        appSecret: "wa-app-secret",
+        dmPolicy: "allowlist",
+        allowFrom: ["+9876543210"],
+      }),
     );
     const result = await callRoute(route.PUT!, request);
 
@@ -169,7 +195,13 @@ test("whatsapp PUT response has no webhookUrl field", async () => {
     const route = getWhatsAppChannelRoute();
     const request = buildAuthPutRequest(
       "/api/channels/whatsapp",
-      JSON.stringify({ enabled: true }),
+      JSON.stringify({
+        enabled: true,
+        phoneNumberId: "123456789",
+        accessToken: "wa-access-token",
+        verifyToken: "wa-verify-token",
+        appSecret: "wa-app-secret",
+      }),
     );
     const result = await callRoute(route.PUT!, request);
 
@@ -193,7 +225,13 @@ test("whatsapp PUT preserves original configuredAt timestamp", async () => {
     // First PUT sets configuredAt
     const firstPut = buildAuthPutRequest(
       "/api/channels/whatsapp",
-      JSON.stringify({ enabled: true }),
+      JSON.stringify({
+        enabled: true,
+        phoneNumberId: "123456789",
+        accessToken: "wa-access-token",
+        verifyToken: "wa-verify-token",
+        appSecret: "wa-app-secret",
+      }),
     );
     const firstResult = await callRoute(route.PUT!, firstPut);
     const firstBody = firstResult.json as { configuredAt: number };
@@ -203,7 +241,13 @@ test("whatsapp PUT preserves original configuredAt timestamp", async () => {
     // Second PUT should keep the same configuredAt
     const secondPut = buildAuthPutRequest(
       "/api/channels/whatsapp",
-      JSON.stringify({ dmPolicy: "open" }),
+      JSON.stringify({
+        phoneNumberId: "123456789",
+        accessToken: "wa-access-token",
+        verifyToken: "wa-verify-token",
+        appSecret: "wa-app-secret",
+        dmPolicy: "open",
+      }),
     );
     const secondResult = await callRoute(route.PUT!, secondPut);
     const secondBody = secondResult.json as { configuredAt: number };
@@ -225,7 +269,7 @@ test("whatsapp GET returns needs-login status verbatim when configured", async (
 
     await mutateMeta((meta) => {
       meta.channels.whatsapp = {
-        enabled: true,
+        ...VALID_WHATSAPP_CONFIG,
         configuredAt: Date.now(),
         lastKnownLinkState: "needs-login",
         lastError: "scan QR to continue",
@@ -260,7 +304,7 @@ test("whatsapp GET returns error status with lastError detail", async () => {
 
     await mutateMeta((meta) => {
       meta.channels.whatsapp = {
-        enabled: true,
+        ...VALID_WHATSAPP_CONFIG,
         configuredAt: Date.now(),
         lastKnownLinkState: "error",
         lastError: "connection timeout",
@@ -291,7 +335,7 @@ test("whatsapp GET returns disconnected status when link was lost", async () => 
 
     await mutateMeta((meta) => {
       meta.channels.whatsapp = {
-        enabled: true,
+        ...VALID_WHATSAPP_CONFIG,
         configuredAt: Date.now(),
         lastKnownLinkState: "disconnected",
         linkedPhone: "+1234567890",
@@ -324,7 +368,7 @@ test("whatsapp GET returns needs-plugin status verbatim", async () => {
 
     await mutateMeta((meta) => {
       meta.channels.whatsapp = {
-        enabled: true,
+        ...VALID_WHATSAPP_CONFIG,
         configuredAt: Date.now(),
         lastKnownLinkState: "needs-plugin",
       };
@@ -362,7 +406,7 @@ test("whatsapp PUT rejects invalid dmPolicy with actionable 400", async () => {
     const route = getWhatsAppChannelRoute();
     const request = buildAuthPutRequest(
       "/api/channels/whatsapp",
-      JSON.stringify({ enabled: true, dmPolicy: "bogus" }),
+      JSON.stringify({ ...VALID_WHATSAPP_CONFIG, dmPolicy: "bogus" }),
     );
     const result = await callRoute(route.PUT!, request);
 
@@ -384,7 +428,7 @@ test("whatsapp PUT rejects invalid groupPolicy with actionable 400", async () =>
     const route = getWhatsAppChannelRoute();
     const request = buildAuthPutRequest(
       "/api/channels/whatsapp",
-      JSON.stringify({ enabled: true, groupPolicy: "nope" }),
+      JSON.stringify({ ...VALID_WHATSAPP_CONFIG, groupPolicy: "nope" }),
     );
     const result = await callRoute(route.PUT!, request);
 
@@ -406,7 +450,7 @@ test("whatsapp PUT rejects invalid allowFrom arrays with actionable 400", async 
     const route = getWhatsAppChannelRoute();
     const request = buildAuthPutRequest(
       "/api/channels/whatsapp",
-      JSON.stringify({ allowFrom: ["+15551234567", 123] }),
+      JSON.stringify({ ...VALID_WHATSAPP_CONFIG, allowFrom: ["+15551234567", 123] }),
     );
     const result = await callRoute(route.PUT!, request);
 
@@ -428,7 +472,7 @@ test("whatsapp PUT rejects non-array allowFrom with actionable 400", async () =>
     const route = getWhatsAppChannelRoute();
     const request = buildAuthPutRequest(
       "/api/channels/whatsapp",
-      JSON.stringify({ allowFrom: "not-an-array" }),
+      JSON.stringify({ ...VALID_WHATSAPP_CONFIG, allowFrom: "not-an-array" }),
     );
     const result = await callRoute(route.PUT!, request);
 
@@ -449,7 +493,7 @@ test("whatsapp PUT rejects non-boolean enabled with actionable 400", async () =>
     const route = getWhatsAppChannelRoute();
     const request = buildAuthPutRequest(
       "/api/channels/whatsapp",
-      JSON.stringify({ enabled: "yes" }),
+      JSON.stringify({ ...VALID_WHATSAPP_CONFIG, enabled: "yes" }),
     );
     const result = await callRoute(route.PUT!, request);
 
@@ -493,7 +537,7 @@ test("whatsapp PUT rejects malformed groupAllowFrom with actionable 400", async 
     const route = getWhatsAppChannelRoute();
     const request = buildAuthPutRequest(
       "/api/channels/whatsapp",
-      JSON.stringify({ groupAllowFrom: [null] }),
+      JSON.stringify({ ...VALID_WHATSAPP_CONFIG, groupAllowFrom: [null] }),
     );
     const result = await callRoute(route.PUT!, request);
 

@@ -5,6 +5,11 @@ import { ApiError } from "@/shared/http";
 
 type PutWhatsAppBody = {
   enabled?: boolean;
+  phoneNumberId?: string;
+  accessToken?: string;
+  verifyToken?: string;
+  appSecret?: string;
+  businessAccountId?: string;
   pluginSpec?: string;
   accountId?: string;
   dmPolicy?: "pairing" | "allowlist" | "open" | "disabled";
@@ -85,6 +90,17 @@ export const { GET, PUT, DELETE } = createChannelAdminRouteHandlers({
 
     const existing = meta.channels.whatsapp;
     const enabled = requireOptionalBoolean(body.enabled, "enabled") ?? existing?.enabled ?? true;
+    const phoneNumberId =
+      requireOptionalTrimmedString(body.phoneNumberId, "phoneNumberId") ?? existing?.phoneNumberId;
+    const accessToken =
+      requireOptionalTrimmedString(body.accessToken, "accessToken") ?? existing?.accessToken;
+    const verifyToken =
+      requireOptionalTrimmedString(body.verifyToken, "verifyToken") ?? existing?.verifyToken;
+    const appSecret =
+      requireOptionalTrimmedString(body.appSecret, "appSecret") ?? existing?.appSecret;
+    const businessAccountId =
+      requireOptionalTrimmedString(body.businessAccountId, "businessAccountId") ??
+      existing?.businessAccountId;
     const pluginSpec = requireOptionalTrimmedString(body.pluginSpec, "pluginSpec") ?? existing?.pluginSpec;
     const accountId = requireOptionalTrimmedString(body.accountId, "accountId") ?? existing?.accountId;
     const dmPolicy =
@@ -96,9 +112,27 @@ export const { GET, PUT, DELETE } = createChannelAdminRouteHandlers({
       requireOptionalStringArray(body.groupAllowFrom, "groupAllowFrom") ?? existing?.groupAllowFrom;
     const groups = requireOptionalStringArray(body.groups, "groups") ?? existing?.groups;
 
+    if (!phoneNumberId) {
+      throw new ApiError(400, "INVALID_PHONENUMBERID", "phoneNumberId must be a non-empty string");
+    }
+    if (!accessToken) {
+      throw new ApiError(400, "INVALID_ACCESSTOKEN", "accessToken must be a non-empty string");
+    }
+    if (!verifyToken) {
+      throw new ApiError(400, "INVALID_VERIFYTOKEN", "verifyToken must be a non-empty string");
+    }
+    if (!appSecret) {
+      throw new ApiError(400, "INVALID_APPSECRET", "appSecret must be a non-empty string");
+    }
+
     await setWhatsAppChannelConfig({
       enabled,
       configuredAt: existing?.configuredAt ?? Date.now(),
+      phoneNumberId,
+      accessToken,
+      verifyToken,
+      appSecret,
+      businessAccountId,
       pluginSpec,
       accountId,
       dmPolicy,
@@ -114,6 +148,11 @@ export const { GET, PUT, DELETE } = createChannelAdminRouteHandlers({
 
     logInfo("channels.whatsapp_config_updated", {
       enabled,
+      hasPhoneNumberId: Boolean(phoneNumberId),
+      hasAccessToken: Boolean(accessToken),
+      hasVerifyToken: Boolean(verifyToken),
+      hasAppSecret: Boolean(appSecret),
+      hasBusinessAccountId: Boolean(businessAccountId),
       hasPluginSpec: Boolean(pluginSpec),
       hasAccountId: Boolean(accountId),
       dmPolicy: dmPolicy ?? "pairing",

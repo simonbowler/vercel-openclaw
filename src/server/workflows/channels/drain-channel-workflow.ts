@@ -1,11 +1,19 @@
-import type { SlackChannelConfig, TelegramChannelConfig, DiscordChannelConfig } from "@/shared/channels";
+import {
+  hasWhatsAppBusinessCredentials,
+  type SlackChannelConfig,
+  type TelegramChannelConfig,
+  type DiscordChannelConfig,
+  type WhatsAppChannelConfig,
+} from "@/shared/channels";
 import type { BootMessageHandle } from "@/server/channels/core/types";
 import type { ChannelJobOptions, QueuedChannelJob } from "@/server/channels/driver";
 import type { SlackExtractedMessage } from "@/server/channels/slack/adapter";
 import type { TelegramExtractedMessage } from "@/server/channels/telegram/adapter";
 import type { DiscordExtractedMessage } from "@/server/channels/discord/adapter";
+import type { WhatsAppExtractedMessage } from "@/server/channels/whatsapp/adapter";
 import { extractTelegramChatId } from "@/server/channels/telegram/adapter";
 import { deleteMessage, editMessageText } from "@/server/channels/telegram/bot-api";
+import { deleteMessage as deleteWhatsAppMessage } from "@/server/channels/whatsapp/whatsapp-api";
 import { logWarn } from "@/server/log";
 import { getInitializedMeta } from "@/server/store/store";
 
@@ -15,13 +23,14 @@ export type DrainChannelWorkflowDependencies = {
   createSlackAdapter: typeof import("@/server/channels/slack/adapter").createSlackAdapter;
   createTelegramAdapter: typeof import("@/server/channels/telegram/adapter").createTelegramAdapter;
   createDiscordAdapter: typeof import("@/server/channels/discord/adapter").createDiscordAdapter;
+  createWhatsAppAdapter: typeof import("@/server/channels/whatsapp/adapter").createWhatsAppAdapter;
   RetryableError: typeof import("workflow").RetryableError;
   FatalError: typeof import("workflow").FatalError;
 };
 
 type DrainChannelAdapterDependencies = Pick<
   DrainChannelWorkflowDependencies,
-  "createSlackAdapter" | "createTelegramAdapter" | "createDiscordAdapter"
+  "createSlackAdapter" | "createTelegramAdapter" | "createDiscordAdapter" | "createWhatsAppAdapter"
 >;
 
 type DrainChannelErrorDependencies = Pick<
@@ -32,14 +41,15 @@ type DrainChannelErrorDependencies = Pick<
 type SupportedChannelJobOptions =
   | ChannelJobOptions<SlackChannelConfig, unknown, SlackExtractedMessage>
   | ChannelJobOptions<TelegramChannelConfig, unknown, TelegramExtractedMessage>
-  | ChannelJobOptions<DiscordChannelConfig, unknown, DiscordExtractedMessage>;
+  | ChannelJobOptions<DiscordChannelConfig, unknown, DiscordExtractedMessage>
+  | ChannelJobOptions<WhatsAppChannelConfig, unknown, WhatsAppExtractedMessage>;
 
 export async function drainChannelWorkflow(
   channel: string,
   payload: unknown,
   origin: string,
   requestId: string | null,
-  bootMessageId?: number | null,
+  bootMessageId?: number | string | null,
 ): Promise<void> {
   "use workflow";
 
@@ -51,7 +61,7 @@ export async function processChannelStep(
   payload: unknown,
   origin: string,
   requestId: string | null,
-  bootMessageId?: number | null,
+  bootMessageId?: number | string | null,
   dependencies?: DrainChannelWorkflowDependencies,
 ): Promise<void> {
   "use step";
@@ -97,6 +107,28 @@ export async function processChannelStep(
             await deleteMessage(token, numChatId, bootMessageId);
           } catch (error) {
             logWarn("channels.telegram_boot_message_cleanup_failed", {
+              bootMessageId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
+      };
+    }
+  }
+  if (bootMessageId && channel === "whatsapp" && typeof bootMessageId === "string") {
+    const meta = await getInitializedMeta();
+    const waConfig = meta.channels.whatsapp;
+    if (waConfig) {
+      existingBootHandle = {
+        async update() {
+          // WhatsApp does not support editing sent messages. Keep the
+          // pre-sent boot message in place until final cleanup.
+        },
+        async clear() {
+          try {
+            await deleteWhatsAppMessage(waConfig.accessToken, bootMessageId);
+          } catch (error) {
+            logWarn("channels.whatsapp_boot_message_cleanup_failed", {
               bootMessageId,
               error: error instanceof Error ? error.message : String(error),
             });
@@ -161,6 +193,16 @@ export function buildChannelJobOptions(
         createAdapter: (config: Parameters<typeof dependencies.createDiscordAdapter>[0]) => dependencies.createDiscordAdapter(config),
         sandboxReadyTimeoutMs: WORKFLOW_SANDBOX_READY_TIMEOUT_MS,
       };
+    case "whatsapp":
+      return {
+        channel: "whatsapp",
+        getConfig: (meta) =>
+          hasWhatsAppBusinessCredentials(meta.channels.whatsapp)
+            ? meta.channels.whatsapp
+            : null,
+        createAdapter: (config: Parameters<typeof dependencies.createWhatsAppAdapter>[0]) => dependencies.createWhatsAppAdapter(config),
+        sandboxReadyTimeoutMs: WORKFLOW_SANDBOX_READY_TIMEOUT_MS,
+      };
     default:
       throw new Error(`unsupported_channel:${channel}`);
   }
@@ -198,12 +240,14 @@ async function loadDrainChannelWorkflowDependencies(): Promise<DrainChannelWorkf
     { createSlackAdapter },
     { createTelegramAdapter },
     { createDiscordAdapter },
+    { createWhatsAppAdapter },
     { RetryableError, FatalError },
   ] = await Promise.all([
     import("@/server/channels/driver"),
     import("@/server/channels/slack/adapter"),
     import("@/server/channels/telegram/adapter"),
     import("@/server/channels/discord/adapter"),
+    import("@/server/channels/whatsapp/adapter"),
     import("workflow"),
   ]);
 
@@ -213,6 +257,7 @@ async function loadDrainChannelWorkflowDependencies(): Promise<DrainChannelWorkf
     createSlackAdapter,
     createTelegramAdapter,
     createDiscordAdapter,
+    createWhatsAppAdapter,
     RetryableError,
     FatalError,
   };

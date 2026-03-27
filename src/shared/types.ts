@@ -71,6 +71,7 @@ export type OperationTrigger =
   | "channel.slack.webhook"
   | "channel.telegram.webhook"
   | "channel.discord.webhook"
+  | "channel.whatsapp.webhook"
   | "channel.queue.consumer";
 
 export type OperationContext = {
