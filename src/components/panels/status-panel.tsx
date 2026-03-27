@@ -80,29 +80,29 @@ function getStepStyle(
 ): CSSProperties {
   if (failed && index === activeIndex) {
     return {
-      borderColor: "rgba(239, 68, 68, 0.55)",
-      background: "rgba(127, 29, 29, 0.35)",
-      color: "#fecaca",
+      borderColor: "var(--border-strong, rgba(255,255,255,0.24))",
+      background: "var(--background-muted)",
+      color: "var(--foreground)",
     };
   }
   if (index < activeIndex) {
     return {
-      borderColor: "rgba(16, 185, 129, 0.4)",
-      background: "rgba(6, 78, 59, 0.28)",
-      color: "#d1fae5",
+      borderColor: "var(--border)",
+      background: "var(--background-muted)",
+      color: "var(--foreground-subtle, #a1a1aa)",
     };
   }
   if (index === activeIndex) {
     return {
-      borderColor: "rgba(255,255,255,0.24)",
-      background: "rgba(255,255,255,0.08)",
-      color: "#ffffff",
+      borderColor: "var(--border-strong, rgba(255,255,255,0.24))",
+      background: "var(--background-muted)",
+      color: "var(--foreground)",
     };
   }
   return {
-    borderColor: "rgba(255,255,255,0.08)",
-    background: "rgba(0,0,0,0.2)",
-    color: "#71717a",
+    borderColor: "var(--border)",
+    background: "var(--background)",
+    color: "var(--foreground-muted)",
   };
 }
 
@@ -377,9 +377,9 @@ export function StatusPanel({
         <section
           style={{
             marginTop: 20,
-            border: "1px solid rgba(255,255,255,0.08)",
-            borderRadius: 14,
-            background: "linear-gradient(180deg, rgba(17,24,39,0.82), rgba(9,9,11,0.92))",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            background: "var(--background-elevated)",
             padding: 16,
           }}
         >
@@ -401,8 +401,8 @@ export function StatusPanel({
                 <div
                   key={step}
                   style={{
-                    border: "1px solid rgba(255,255,255,0.08)",
-                    borderRadius: 10,
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
                     padding: "10px 8px",
                     fontSize: 12,
                     lineHeight: 1.4,
@@ -460,10 +460,10 @@ export function StatusPanel({
                   style={{
                     margin: "10px 0 0",
                     padding: 12,
-                    borderRadius: 10,
-                    background: "rgba(0,0,0,0.45)",
-                    border: "1px solid rgba(255,255,255,0.08)",
-                    color: "#d4d4d8",
+                    borderRadius: 6,
+                    background: "var(--background)",
+                    border: "1px solid var(--border)",
+                    color: "var(--foreground-muted)",
                     fontSize: 12,
                     lineHeight: 1.55,
                     whiteSpace: "pre-wrap",
