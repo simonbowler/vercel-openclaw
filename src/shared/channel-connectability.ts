@@ -9,8 +9,9 @@ export type ChannelConnectabilityStatus = "pass" | "warn" | "fail";
  */
 export type ChannelOnlyIssueId =
   | "public-webhook-url"
-  | "launch-verification"
-  | "running-only";
+  | "launch-verification";
+
+type LegacyChannelConnectabilityIssueId = "running-only";
 
 /**
  * Union of deployment-contract requirement IDs and channel-specific IDs.
@@ -19,7 +20,8 @@ export type ChannelOnlyIssueId =
  */
 export type ChannelConnectabilityIssueId =
   | DeploymentRequirementId
-  | ChannelOnlyIssueId;
+  | ChannelOnlyIssueId
+  | LegacyChannelConnectabilityIssueId;
 
 export type ChannelConnectabilityIssue = {
   id: ChannelConnectabilityIssueId;

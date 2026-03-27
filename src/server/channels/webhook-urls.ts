@@ -21,17 +21,10 @@ export function buildChannelDisplayWebhookUrl(
   channel: ChannelName,
   request?: Request,
 ): string | null {
-  try {
-    return buildPublicDisplayUrl(
-      CHANNEL_WEBHOOK_PATHS[channel as WebhookProxiedChannel],
-      request,
-    );
-  } catch (error) {
-    if (channel === "whatsapp") {
-      return null;
-    }
-    throw error;
-  }
+  return buildPublicDisplayUrl(
+    CHANNEL_WEBHOOK_PATHS[channel as WebhookProxiedChannel],
+    request,
+  );
 }
 
 /**
@@ -53,15 +46,8 @@ export function buildChannelWebhookUrl(
     return buildChannelDisplayWebhookUrl(channel, request);
   }
 
-  try {
-    return buildPublicUrl(
-      CHANNEL_WEBHOOK_PATHS[channel as WebhookProxiedChannel],
-      request,
-    );
-  } catch (error) {
-    if (channel === "whatsapp") {
-      return null;
-    }
-    throw error;
-  }
+  return buildPublicUrl(
+    CHANNEL_WEBHOOK_PATHS[channel as WebhookProxiedChannel],
+    request,
+  );
 }

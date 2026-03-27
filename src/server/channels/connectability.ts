@@ -24,7 +24,7 @@ const CHANNEL_DEFINITIONS: Record<ChannelName, ChannelDefinition> = {
   slack: { label: "Slack", mode: "webhook-proxied", requiresPublicWebhook: true },
   telegram: { label: "Telegram", mode: "webhook-proxied", requiresPublicWebhook: true },
   discord: { label: "Discord", mode: "webhook-proxied", requiresPublicWebhook: true },
-  whatsapp: { label: "WhatsApp", mode: "gateway-native", requiresPublicWebhook: false },
+  whatsapp: { label: "WhatsApp", mode: "webhook-proxied", requiresPublicWebhook: true },
 };
 
 const CHANNEL_LABELS: Record<ChannelName, string> = Object.fromEntries(
@@ -163,31 +163,6 @@ export async function buildChannelPrerequisite(
   const def = CHANNEL_DEFINITIONS[channel];
   const label = def.label;
   const contract = shared.contract ?? await buildDeploymentContract({ request });
-
-  // Gateway-native channels skip contract and webhook checks entirely.
-  if (def.mode === "gateway-native") {
-    const issues: ChannelConnectabilityIssue[] = [
-      {
-        id: "running-only",
-        status: "warn",
-        message: `${label} requires a running sandbox; stopped sandboxes cannot receive messages.`,
-        remediation:
-          "Treat WhatsApp as experimental until a wake-compatible ingress strategy exists.",
-        env: [],
-      },
-    ];
-
-    logInfo("channel_prerequisite.built", {
-      channel,
-      mode: def.mode,
-      status: summarizeStatus(issues),
-      issueCount: issues.length,
-      issueIds: issues.map((i) => i.id),
-      excludedContractIds: [],
-    });
-
-    return buildResult(channel, null, issues);
-  }
 
   // Webhook-proxied channels: contract + webhook URL checks.
   const issues: ChannelConnectabilityIssue[] = collectContractIssues(
