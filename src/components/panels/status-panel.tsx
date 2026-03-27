@@ -5,8 +5,6 @@ import { ConfirmDialog, useConfirm } from "@/components/ui/confirm-dialog";
 import {
   getFirstRunCallout,
   getLifecycleActionLabel,
-  getLifecycleProgressDetail,
-  getLifecycleProgressLabel,
 } from "@/shared/sandbox-lifecycle-copy";
 import type { StatusPayload, RunAction } from "@/components/admin-types";
 import type { SingleStatus } from "@/shared/types";
@@ -164,8 +162,6 @@ export function StatusPanel({
     effectiveStatus === "asleep" ? "stopped" : lifecycleStatus,
     hasSnapshot,
   );
-  const progressLabel = getLifecycleProgressLabel(lifecycleStatus);
-  const progressDetail = getLifecycleProgressDetail(lifecycleStatus, isFirstRun);
   const firstRunCallout =
     lifecycleStatus === "uninitialized" ? getFirstRunCallout() : null;
 
@@ -344,17 +340,6 @@ export function StatusPanel({
         )}
       </div>
 
-      {isLifecycleTransition && (progressLabel || progressDetail) ? (
-        <section className="status-progress" aria-live="polite">
-          <p className="status-progress-label">Lifecycle</p>
-          {progressLabel ? (
-            <p className="status-progress-title">{progressLabel}</p>
-          ) : null}
-          {progressDetail ? (
-            <p className="status-progress-detail">{progressDetail}</p>
-          ) : null}
-        </section>
-      ) : null}
 
       {errorCopy ? (
         <div className="error-banner">

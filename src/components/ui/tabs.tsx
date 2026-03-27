@@ -32,7 +32,9 @@ export function Tabs({ tabs, defaultTab, children }: TabsProps) {
           </button>
         ))}
       </nav>
-      <div role="tabpanel">{children(active)}</div>
+      <div role="tabpanel" style={{ minHeight: 600 }}>
+        {children(active)}
+      </div>
     </div>
   );
 }
