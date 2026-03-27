@@ -217,13 +217,14 @@ function toPublicWhatsAppState(
 ): PublicWhatsAppState {
   return {
     configured: config?.enabled === true,
-    mode: "gateway-native",
+    mode: connectability.mode,
+    webhookUrl: config ? connectability.webhookUrl : null,
     status: config?.lastKnownLinkState ?? "unconfigured",
     configuredAt: config?.configuredAt ?? null,
     displayName: config?.displayName ?? null,
     linkedPhone: config?.linkedPhone ?? null,
     lastError: config?.lastError ?? null,
-    requiresRunningSandbox: true,
+    requiresRunningSandbox: false,
     loginVia: "/gateway",
     connectability,
   };

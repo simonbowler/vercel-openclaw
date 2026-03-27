@@ -150,14 +150,13 @@ test("PUT handler wraps ApiError with correct status code", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// WhatsApp (gateway-native): PUT is never 409-blocked because canConnect
-// is always true — no public webhook URL requirement.
+// WhatsApp now follows the same webhook-proxied connectability contract as
+// Slack and Telegram, so localhost requests are blocked before spec.put().
 // ---------------------------------------------------------------------------
 
-test("PUT handler for gateway-native channel (whatsapp) is not 409-blocked on localhost", async () => {
+test("PUT handler for webhook-proxied channel (whatsapp) returns 409 on localhost", async () => {
   await withHarness(async () => {
     _setAiGatewayTokenOverrideForTesting("oidc-token");
-    // Even without a public origin, WhatsApp should pass connectability
     delete process.env.NEXT_PUBLIC_APP_URL;
 
     let putCalled = false;
@@ -178,9 +177,8 @@ test("PUT handler for gateway-native channel (whatsapp) is not 409-blocked on lo
 
     const result = await callRoute(PUT, request);
 
-    // Gateway-native channels don't require public webhook URL
-    assert.notEqual(result.status, 409, "whatsapp PUT must not be 409-blocked");
-    assert.equal(putCalled, true, "spec.put must be called for gateway-native channel");
+    assert.equal(result.status, 409, "whatsapp PUT must be blocked without a public origin");
+    assert.equal(putCalled, false, "spec.put must not be called when connectability blocks");
   });
 });
 
@@ -213,6 +211,6 @@ test("DELETE handler calls spec.delete and returns updated state", async () => {
     assert.equal(result.status, 200);
     assert.equal(deleteCalled, true, "spec.delete must be called");
     const body = result.json as { configured: boolean; mode: string };
-    assert.equal(body.mode, "gateway-native");
+    assert.equal(body.mode, "webhook-proxied");
   });
 });

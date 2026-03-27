@@ -81,7 +81,10 @@ export function WhatsAppPanel({
     () => null,
   );
 
-  const webhookUrl = getWhatsAppWebhookUrl(origin);
+  const webhookUrl =
+    wa.webhookUrl ??
+    wa.connectability.webhookUrl ??
+    getWhatsAppWebhookUrl(origin);
   const hasDraft =
     draft.phoneNumberId.trim().length > 0 ||
     draft.accessToken.trim().length > 0 ||
@@ -219,7 +222,13 @@ export function WhatsAppPanel({
       {wa.configured && !editing ? (
         <div className="channel-connected-view">
           <div className="channel-detail-row">
-            <span className="field-label">Verification endpoint</span>
+            <span className="field-label">Business account</span>
+            <code className="inline-code">
+              {wa.displayName ?? wa.linkedPhone ?? "configured"}
+            </code>
+          </div>
+          <div className="channel-detail-row">
+            <span className="field-label">Webhook URL</span>
             <div className="channel-copy-row">
               <code className="inline-code channel-copy-code">
                 {webhookUrl ?? "Unavailable until this admin UI has a public origin"}
@@ -234,16 +243,8 @@ export function WhatsAppPanel({
             </div>
           </div>
           <div className="channel-detail-row">
-            <span className="field-label">Webhook status</span>
+            <span className="field-label">Connection</span>
             <code className="inline-code">{wa.status}</code>
-          </div>
-          <div className="channel-detail-row">
-            <span className="field-label">Sandbox requirement</span>
-            <code className="inline-code">
-              {wa.requiresRunningSandbox
-                ? "Running sandbox required for delivery"
-                : "Always available"}
-            </code>
           </div>
           <div className="inline-actions">
             <button

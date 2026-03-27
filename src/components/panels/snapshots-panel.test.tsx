@@ -13,7 +13,7 @@ function makeConnectability(
 ): ChannelConnectability {
   return {
     channel,
-    mode: channel === "whatsapp" ? "gateway-native" : "webhook-proxied",
+    mode: "webhook-proxied",
     canConnect: true,
     status: "pass",
     webhookUrl,
@@ -65,13 +65,14 @@ const CHANNELS: StatusPayload["channels"] = {
   },
   whatsapp: {
     configured: false,
-    mode: "gateway-native",
+    mode: "webhook-proxied",
+    webhookUrl: null,
     status: "unconfigured",
     configuredAt: null,
     displayName: null,
     linkedPhone: null,
     lastError: null,
-    requiresRunningSandbox: true,
+    requiresRunningSandbox: false,
     loginVia: "/gateway",
     connectability: makeConnectability("whatsapp", null),
   },

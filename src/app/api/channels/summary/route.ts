@@ -41,8 +41,8 @@ function buildWhatsAppSummaryEntry(
     lastError: config?.lastError ?? null,
     connectionSemantics: WHATSAPP_CONNECTION_SEMANTICS,
     detailRoute: WHATSAPP_SUMMARY_DETAIL_ROUTE,
-    deliveryMode: "gateway-native",
-    requiresRunningSandbox: true,
+    deliveryMode: "webhook-proxied",
+    requiresRunningSandbox: false,
   };
 
   const hasProjectionGap =

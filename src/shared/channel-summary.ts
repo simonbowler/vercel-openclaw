@@ -22,8 +22,8 @@ export type WhatsAppSummaryEntry = ChannelSummaryEntry & {
   linkState: WhatsAppLinkState;
   connectionSemantics: typeof WHATSAPP_CONNECTION_SEMANTICS;
   detailRoute: typeof WHATSAPP_SUMMARY_DETAIL_ROUTE;
-  deliveryMode: "gateway-native";
-  requiresRunningSandbox: true;
+  deliveryMode: "webhook-proxied";
+  requiresRunningSandbox: false;
 };
 
 export type ChannelSummaryResponse = {

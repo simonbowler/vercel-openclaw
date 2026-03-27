@@ -88,7 +88,7 @@ test("each channel includes a connectability field", async () => {
 
     assert.ok(state.whatsapp.connectability, "whatsapp missing connectability");
     assert.equal(state.whatsapp.connectability.channel, "whatsapp");
-    assert.equal(state.whatsapp.connectability.mode, "gateway-native");
+    assert.equal(state.whatsapp.connectability.mode, "webhook-proxied");
   });
 });
 
@@ -530,7 +530,7 @@ test("[security] connectability.webhookUrl never contains bypass secret", async 
 });
 
 // ---------------------------------------------------------------------------
-// WhatsApp — gateway-native public state
+// WhatsApp public state
 // ---------------------------------------------------------------------------
 
 function makeWhatsAppConfig(overrides: Partial<WhatsAppChannelConfig> = {}): WhatsAppChannelConfig {
@@ -541,16 +541,17 @@ function makeWhatsAppConfig(overrides: Partial<WhatsAppChannelConfig> = {}): Wha
   };
 }
 
-test("[state] unconfigured whatsapp returns gateway-native defaults", async () => {
+test("[state] unconfigured whatsapp returns webhook-proxied defaults", async () => {
   await withHarness(async (h) => {
     const meta = await h.getMeta();
     const state = await getPublicChannelState(makeRequest(), meta);
 
     assert.equal(state.whatsapp.configured, false);
-    assert.equal(state.whatsapp.mode, "gateway-native");
+    assert.equal(state.whatsapp.mode, "webhook-proxied");
     assert.equal(state.whatsapp.status, "unconfigured");
-    assert.equal(state.whatsapp.requiresRunningSandbox, true);
+    assert.equal(state.whatsapp.requiresRunningSandbox, false);
     assert.equal(state.whatsapp.loginVia, "/gateway");
+    assert.equal(state.whatsapp.webhookUrl, null);
     assert.equal(state.whatsapp.configuredAt, null);
     assert.equal(state.whatsapp.displayName, null);
     assert.equal(state.whatsapp.linkedPhone, null);
@@ -572,13 +573,17 @@ test("[state] configured whatsapp returns correct public shape", async () => {
     const state = await getPublicChannelState(makeRequest(), meta);
 
     assert.equal(state.whatsapp.configured, true);
-    assert.equal(state.whatsapp.mode, "gateway-native");
+    assert.equal(state.whatsapp.mode, "webhook-proxied");
     assert.equal(state.whatsapp.status, "linked");
     assert.equal(state.whatsapp.configuredAt, 4000);
     assert.equal(state.whatsapp.displayName, "Test Account");
     assert.equal(state.whatsapp.linkedPhone, "+1234567890");
-    assert.equal(state.whatsapp.requiresRunningSandbox, true);
+    assert.equal(state.whatsapp.requiresRunningSandbox, false);
     assert.equal(state.whatsapp.loginVia, "/gateway");
+    assert.equal(
+      state.whatsapp.webhookUrl,
+      "https://app.example.com/api/channels/whatsapp/webhook",
+    );
   });
 });
 
@@ -598,7 +603,7 @@ test("[state] whatsapp with error shows lastError", async () => {
   });
 });
 
-test("[state] whatsapp public state never exposes a webhook URL", async () => {
+test("[state] whatsapp public state includes webhook URL when configured", async () => {
   await withHarness(async (h) => {
     await h.mutateMeta((meta) => {
       meta.channels.whatsapp = makeWhatsAppConfig({ lastKnownLinkState: "linked" });
@@ -606,9 +611,14 @@ test("[state] whatsapp public state never exposes a webhook URL", async () => {
     const meta = await h.getMeta();
     const state = await getPublicChannelState(makeRequest(), meta);
 
-    // WhatsApp is gateway-native: no webhook URL in public state
-    assert.equal("webhookUrl" in state.whatsapp, false, "whatsapp must not have a webhookUrl field");
-    assert.equal(state.whatsapp.connectability.webhookUrl, null, "whatsapp connectability webhookUrl must be null");
+    assert.equal(
+      state.whatsapp.webhookUrl,
+      "https://app.example.com/api/channels/whatsapp/webhook",
+    );
+    assert.equal(
+      state.whatsapp.connectability.webhookUrl,
+      "https://app.example.com/api/channels/whatsapp/webhook",
+    );
   });
 });
 

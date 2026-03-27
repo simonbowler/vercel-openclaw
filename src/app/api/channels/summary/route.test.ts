@@ -97,8 +97,8 @@ test("GET /api/channels/summary: returns summary for all channels including what
     assert.equal(body.whatsapp.connected, false);
     assert.equal(body.whatsapp.configured, false);
     assert.equal(body.whatsapp.linkState, "unconfigured");
-    assert.equal(body.whatsapp.deliveryMode, "gateway-native");
-    assert.equal(body.whatsapp.requiresRunningSandbox, true);
+    assert.equal(body.whatsapp.deliveryMode, "webhook-proxied");
+    assert.equal(body.whatsapp.requiresRunningSandbox, false);
     assert.equal(body.whatsapp.connectionSemantics, "delivery-enabled");
     assert.equal(body.whatsapp.detailRoute, "/api/channels/whatsapp");
   });
@@ -156,8 +156,8 @@ test("GET /api/channels/summary: whatsapp connected reflects enabled config", as
     assert.equal(body.whatsapp.connected, true);
     assert.equal(body.whatsapp.configured, true);
     assert.equal(body.whatsapp.linkState, "linked");
-    assert.equal(body.whatsapp.deliveryMode, "gateway-native");
-    assert.equal(body.whatsapp.requiresRunningSandbox, true);
+    assert.equal(body.whatsapp.deliveryMode, "webhook-proxied");
+    assert.equal(body.whatsapp.requiresRunningSandbox, false);
     assert.equal(body.whatsapp.lastError, null);
     assert.equal(body.whatsapp.connectionSemantics, "delivery-enabled");
     assert.equal(body.whatsapp.detailRoute, "/api/channels/whatsapp");
@@ -204,8 +204,8 @@ test("GET /api/channels/summary: whatsapp disabled config reports configured fal
     assert.equal(body.whatsapp.lastError, null);
     assert.equal(body.whatsapp.connectionSemantics, "delivery-enabled");
     assert.equal(body.whatsapp.detailRoute, "/api/channels/whatsapp");
-    assert.equal(body.whatsapp.deliveryMode, "gateway-native");
-    assert.equal(body.whatsapp.requiresRunningSandbox, true);
+    assert.equal(body.whatsapp.deliveryMode, "webhook-proxied");
+    assert.equal(body.whatsapp.requiresRunningSandbox, false);
   });
 });
 

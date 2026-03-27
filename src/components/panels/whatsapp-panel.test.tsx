@@ -15,21 +15,11 @@ function makeConnectability(
 ): ChannelConnectability {
   return {
     channel: "whatsapp",
-    mode: "gateway-native",
+    mode: "webhook-proxied",
     canConnect: true,
     status,
-    webhookUrl: null,
-    issues: [
-      {
-        id: "running-only",
-        status: "warn",
-        message:
-          "WhatsApp requires a running sandbox; stopped sandboxes cannot receive messages.",
-        remediation:
-          "Treat WhatsApp as experimental until a wake-compatible ingress strategy exists.",
-        env: [],
-      },
-    ],
+    webhookUrl: "https://openclaw.example/api/channels/whatsapp/webhook",
+    issues: [],
   };
 }
 
@@ -133,13 +123,14 @@ function makeStatus(
       },
       whatsapp: {
         configured: false,
-        mode: "gateway-native",
+        mode: "webhook-proxied",
+        webhookUrl: null,
         status: "unconfigured",
         configuredAt: null,
         displayName: null,
         linkedPhone: null,
         lastError: null,
-        requiresRunningSandbox: true,
+        requiresRunningSandbox: false,
         loginVia: "/gateway",
         connectability: makeConnectability(),
         ...whatsappOverrides,
@@ -190,11 +181,6 @@ test("WhatsAppPanel renders the business credential setup flow", () => {
   assert.ok(html.includes("Verification endpoint"));
   assert.ok(
     html.includes(
-      "WhatsApp requires a running sandbox; stopped sandboxes cannot receive messages.",
-    ),
-  );
-  assert.ok(
-    html.includes(
       "Resolve the deployment blockers above before saving WhatsApp credentials.",
     ) === false,
   );
@@ -204,6 +190,7 @@ test("WhatsAppPanel renders connected details for configured accounts", () => {
   const html = renderPanel(
     makeStatus({
       configured: true,
+      webhookUrl: "https://openclaw.example/api/channels/whatsapp/webhook",
       status: "linked",
       displayName: "Support Inbox",
       linkedPhone: "+1 555 010 1000",
@@ -216,10 +203,11 @@ test("WhatsAppPanel renders connected details for configured accounts", () => {
   );
 
   assert.ok(html.includes("Connected · Support Inbox · +1 555 010 1000"));
-  assert.ok(html.includes("Webhook status"));
+  assert.ok(html.includes("Business account"));
+  assert.ok(html.includes("Webhook URL"));
   assert.ok(html.includes("linked"));
-  assert.ok(html.includes("Sandbox requirement"));
-  assert.ok(html.includes("Running sandbox required for delivery"));
+  assert.ok(html.includes("https://openclaw.example/api/channels/whatsapp/webhook"));
+  assert.ok(html.includes("Connection"));
   assert.ok(html.includes("Update credentials"));
   assert.ok(html.includes("Disconnect"));
 });
