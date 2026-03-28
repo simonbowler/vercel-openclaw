@@ -154,6 +154,10 @@ textarea {
   margin-top: 20px;
 }
 
+.hero-actions-end {
+  justify-content: flex-end;
+}
+
 .panel-grid {
   margin-top: 16px;
   display: grid;
@@ -1037,6 +1041,28 @@ a[href]:focus-visible {
   background: var(--danger-surface);
   color: #f9a8ab;
   font-size: 13px;
+}
+
+.error-banner-headline {
+  margin: 0;
+  font-weight: 500;
+}
+
+.error-banner-detail {
+  margin: 4px 0 0;
+  opacity: 0.85;
+}
+
+.error-banner-technical {
+  margin-top: 8px;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.error-banner-technical pre {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 /* ────── Launch verification ────── */
@@ -2229,6 +2255,22 @@ a[href]:focus-visible {
 
 /* ────── Snapshots ────── */
 
+.snapshot-list-container {
+  min-height: 96px;
+}
+
+.snapshot-row-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.snapshot-row-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .snapshot-current {
   border-color: rgba(69, 165, 87, 0.3) !important;
   background: rgba(69, 165, 87, 0.04) !important;
@@ -2445,6 +2487,227 @@ html body[data-scroll-locked] {
   padding-inline-end: 0 !important;
   position: static !important;
   --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* ────── Status panel ────── */
+
+.status-fact-detail {
+  margin: 4px 0 0;
+  color: var(--foreground-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.status-secondary-details {
+  margin-top: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+}
+
+.status-secondary-details summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  color: var(--foreground-muted);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  list-style: none;
+}
+
+.status-secondary-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.status-secondary-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 0 14px 14px;
+}
+
+.status-secondary-grid dt {
+  margin-bottom: 6px;
+  color: var(--foreground-subtle);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.status-secondary-grid dd {
+  margin: 0;
+  color: var(--foreground);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.status-callout {
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(24, 24, 27, 0.5);
+}
+
+.status-callout-title {
+  margin: 0;
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.status-callout-copy {
+  margin: 8px 0 0;
+  color: var(--foreground-muted);
+  line-height: 1.5;
+}
+
+.status-setup-card {
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background-elevated);
+}
+
+.status-setup-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.status-setup-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.status-setup-step {
+  padding: 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+  background: var(--background);
+  color: var(--foreground-muted);
+}
+
+.status-setup-step[data-state="past"] {
+  background: var(--background-muted);
+  color: var(--foreground-subtle);
+}
+
+.status-setup-step[data-state="current"],
+.status-setup-step[data-state="failed"] {
+  border-color: var(--border-strong, rgba(255, 255, 255, 0.24));
+  background: var(--background-muted);
+  color: var(--foreground);
+}
+
+.status-setup-phase-label {
+  margin: 0;
+  color: var(--foreground-muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.status-setup-phase-title {
+  margin: 6px 0 0;
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.status-setup-phase-preview {
+  margin: 6px 0 0;
+  color: var(--foreground-muted);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.status-setup-logs summary {
+  cursor: pointer;
+  color: var(--foreground-muted);
+  font-size: 12px;
+}
+
+.status-setup-logs pre {
+  margin: 10px 0 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground-muted);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ────── Snapshots panel ────── */
+
+.snapshots-intro {
+  margin-top: 6px;
+  max-width: 520px;
+  line-height: 1.45;
+}
+
+.snapshots-summary {
+  margin-bottom: 16px;
+}
+
+/* ────── Danger zone ────── */
+
+.danger-zone {
+  margin-top: 28px;
+}
+
+.danger-zone-label {
+  margin: 0 0 8px;
+  color: var(--foreground-subtle);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.danger-zone-card {
+  padding: 16px;
+  border: 1px solid rgba(127, 29, 29, 0.5);
+  border-radius: 8px;
+  background: rgba(127, 29, 29, 0.16);
+}
+
+.danger-zone-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.danger-zone-copy {
+  min-width: 280px;
+  flex: 1 1 0;
+}
+
+.danger-zone-title {
+  margin: 0;
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.danger-zone-text {
+  margin: 8px 0 0;
+  max-width: 56ch;
+  color: var(--foreground-muted);
+  line-height: 1.6;
 }
 
 /* ────── Responsive ────── */

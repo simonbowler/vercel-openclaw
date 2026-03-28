@@ -156,14 +156,8 @@ export function SnapshotsPanel({
         <div>
           <p className="eyebrow">Snapshots</p>
           <h2>Snapshot history</h2>
-          <p
-            className="event-meta"
-            style={{ marginTop: 6, maxWidth: 520, lineHeight: 1.45 }}
-          >
-            The tag after Current/Available is{" "}
-            <strong>how it was saved</strong>:{" "}
-            <em>Saved on stop</em> means the sandbox was stopped from Status (or
-            Stop elsewhere); <em>Manual</em> means you used Take snapshot here.
+          <p className="muted-copy snapshots-intro">
+            Current is the active restore point. The tag shows how it was created.
           </p>
         </div>
         <button
@@ -176,20 +170,19 @@ export function SnapshotsPanel({
         </button>
       </div>
 
-      {/* Current snapshot */}
-      <dl className="metrics-grid" style={{ marginBottom: 16 }}>
+      <dl className="metrics-grid snapshots-summary">
         <div>
-          <dt>Current snapshot</dt>
+          <dt>Restore point</dt>
           <dd>{status.snapshotId ?? "none"}</dd>
         </div>
         <div>
-          <dt>History count</dt>
-          <dd>{loading ? "..." : snapshots.length}</dd>
+          <dt>History</dt>
+          <dd>{loading ? "\u2026" : snapshots.length}</dd>
         </div>
       </dl>
 
       {/* Snapshot list — fixed min-height avoids CLS when count changes */}
-      <div style={{ minHeight: 96 }}>
+      <div className="snapshot-list-container">
         {loading && snapshots.length === 0 && (
           <div className="snapshot-loading">
             <div className="skeleton-line" />
@@ -210,7 +203,7 @@ export function SnapshotsPanel({
               className={isCurrent ? "snapshot-current" : undefined}
             >
               <div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div className="snapshot-row-header">
                   <code>{snap.snapshotId}</code>
                   <span
                     className={`snapshot-badge ${isCurrent ? "snapshot-badge-current" : "snapshot-badge-available"}`}
@@ -226,7 +219,7 @@ export function SnapshotsPanel({
                   {new Date(snap.timestamp).toLocaleString()}
                 </p>
               </div>
-              <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+              <div className="snapshot-row-actions">
                 <button
                   type="button"
                   className="button ghost"
@@ -249,18 +242,14 @@ export function SnapshotsPanel({
         })}
       </ul>
 
-      <section className="mt-7">
-        <p className="mb-2 text-xs font-medium leading-5 text-[var(--foreground-subtle)]">
-          Danger zone
-        </p>
-        <div className="rounded-lg border border-red-900/50 bg-red-950/20 p-4">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="min-w-80 flex-1">
-              <p className="m-0 font-semibold">Reset Sandbox</p>
-              <p className="mt-2 max-w-2xl text-[var(--foreground-muted)] leading-6">
-                Delete the current sandbox and all saved snapshots, then create
-                a brand new sandbox from scratch. Use this when the environment
-                is stuck, corrupted, or you want a clean rebuild.
+      <section className="danger-zone">
+        <p className="danger-zone-label">Danger zone</p>
+        <div className="danger-zone-card">
+          <div className="danger-zone-body">
+            <div className="danger-zone-copy">
+              <p className="danger-zone-title">Reset sandbox</p>
+              <p className="danger-zone-text">
+                Delete the current sandbox and snapshots, then build a fresh one.
               </p>
             </div>
             <button

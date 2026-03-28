@@ -230,11 +230,11 @@ test("StatusPanel renders minute-only auto-sleep and gateway check metadata", ()
     }),
   );
 
-  assert.ok(html.includes("Auto-sleep in"));
+  assert.ok(html.includes("Auto-sleep"));
   assert.ok(html.includes("3m (estimated)"));
   assert.ok(html.includes("Gateway"));
   assert.ok(html.includes("Unknown"));
-  assert.ok(html.includes("checked 2m ago"));
+  assert.ok(html.includes("Checked 2m ago"));
   assert.ok(!html.includes("Last keepalive"));
 });
 

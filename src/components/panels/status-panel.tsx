@@ -6,7 +6,6 @@ import {
   getFirstRunCallout,
   getLifecycleActionLabel,
 } from "@/shared/sandbox-lifecycle-copy";
-import type { CSSProperties } from "react";
 import type {
   SetupProgress,
   StatusPayload,
@@ -20,13 +19,6 @@ type StatusPanelProps = {
   pendingAction: string | null;
   runAction: RunAction;
   checkHealth: () => Promise<void>;
-};
-
-type LifecycleAwareStatus = StatusPayload & {
-  lifecycle?: {
-    restoreHistory?: unknown[];
-  };
-  snapshotHistory?: unknown[];
 };
 
 const NEEDS_RESTART = new Set<SingleStatus>(["error", "stopped", "uninitialized"]);
@@ -72,37 +64,15 @@ function getSetupStepIndex(progress: SetupProgress | null): number {
   }
 }
 
-function getStepStyle(
+function getSetupStepState(
   index: number,
   activeIndex: number,
   failed: boolean,
-): CSSProperties {
-  if (failed && index === activeIndex) {
-    return {
-      borderColor: "var(--border-strong, rgba(255,255,255,0.24))",
-      background: "var(--background-muted)",
-      color: "var(--foreground)",
-    };
-  }
-  if (index < activeIndex) {
-    return {
-      borderColor: "var(--border)",
-      background: "var(--background-muted)",
-      color: "var(--foreground-subtle, #a1a1aa)",
-    };
-  }
-  if (index === activeIndex) {
-    return {
-      borderColor: "var(--border-strong, rgba(255,255,255,0.24))",
-      background: "var(--background-muted)",
-      color: "var(--foreground)",
-    };
-  }
-  return {
-    borderColor: "var(--border)",
-    background: "var(--background)",
-    color: "var(--foreground-muted)",
-  };
+): "past" | "current" | "upcoming" | "failed" {
+  if (failed && index === activeIndex) return "failed";
+  if (index < activeIndex) return "past";
+  if (index === activeIndex) return "current";
+  return "upcoming";
 }
 
 function friendlyError(raw: string): { headline: string; detail: string } {
@@ -201,6 +171,49 @@ export function deriveEffectiveStatus(
   return status;
 }
 
+type StatusFact = { label: string; value: string; detail?: string };
+
+function getPrimaryStatusFacts(status: StatusPayload): StatusFact[] {
+  const facts: StatusFact[] = [
+    {
+      label: "Gateway",
+      value: formatGatewayStatus(status.gatewayStatus),
+      detail:
+        status.gatewayCheckedAt != null
+          ? `Checked ${formatRelativeTime(status.gatewayCheckedAt)}`
+          : undefined,
+    },
+    {
+      label: "Restore point",
+      value: status.snapshotId ? "Available" : "None",
+    },
+    {
+      label: "Auto-sleep",
+      value: getAutoSleepDisplay(status, status.timeoutRemainingMs),
+      detail:
+        status.timeoutSource === "none"
+          ? undefined
+          : `Target ${Math.round(status.sleepAfterMs / 60_000)}m`,
+    },
+  ];
+  if (status.status !== "running") {
+    return facts.filter((fact) => fact.label !== "Gateway");
+  }
+  return facts;
+}
+
+function getSecondaryStatusFacts(status: StatusPayload): StatusFact[] {
+  return [
+    { label: "Auth", value: status.authMode },
+    {
+      label: "Store",
+      value: status.persistentStore
+        ? status.storeBackend
+        : `${status.storeBackend} (memory only)`,
+    },
+  ];
+}
+
 export function StatusPanel({
   status,
   busy,
@@ -216,20 +229,7 @@ export function StatusPanel({
     status.timeoutRemainingMs,
     status.timeoutSource,
   );
-  const lifecycleAwareStatus = status as LifecycleAwareStatus;
   const hasSnapshot = Boolean(status.snapshotId);
-  const restoreHistory = Array.isArray(
-    lifecycleAwareStatus.lifecycle?.restoreHistory,
-  )
-    ? lifecycleAwareStatus.lifecycle.restoreHistory
-    : [];
-  const snapshotHistoryCount = Array.isArray(lifecycleAwareStatus.snapshotHistory)
-    ? lifecycleAwareStatus.snapshotHistory.length
-    : null;
-  const isFirstRun =
-    snapshotHistoryCount != null
-      ? snapshotHistoryCount === 0
-      : !hasSnapshot && restoreHistory.length === 0;
   const primaryActionLabel = getLifecycleActionLabel(
     effectiveStatus === "asleep" ? "stopped" : lifecycleStatus,
     hasSnapshot,
@@ -296,76 +296,34 @@ export function StatusPanel({
       </div>
 
       <dl className="metrics-grid">
-        <div>
-          <dt>Sandbox ID</dt>
-          <dd>{status.sandboxId ?? "none"}</dd>
-        </div>
-        <div>
-          <dt>Snapshot</dt>
-          <dd>{status.snapshotId ?? "none"}</dd>
-        </div>
-        <div>
-          <dt>Auth mode</dt>
-          <dd>{status.authMode}</dd>
-        </div>
-        <div>
-          <dt>Store</dt>
-          <dd>
-            {status.storeBackend}
-            {status.persistentStore ? "" : " (memory only)"}
-          </dd>
-        </div>
-        <div>
-          <dt>Gateway</dt>
-          <dd>{formatGatewayStatus(status.gatewayStatus)}</dd>
-          {status.gatewayCheckedAt != null ? (
-            <p
-              style={{
-                margin: "4px 0 0",
-                color: "var(--foreground-muted)",
-                fontSize: 12,
-                lineHeight: 1.4,
-              }}
-            >
-              checked {formatRelativeTime(status.gatewayCheckedAt)}
-            </p>
-          ) : null}
-        </div>
-        <div>
-          <dt>Sleep after</dt>
-          <dd>{Math.round(status.sleepAfterMs / 60_000)}m</dd>
-        </div>
-        <div>
-          <dt>Auto-sleep in</dt>
-          <dd>{getAutoSleepDisplay(status, status.timeoutRemainingMs)}</dd>
-        </div>
-        <div>
-          <dt>Firewall</dt>
-          <dd>{status.firewall.mode}</dd>
-        </div>
+        {getPrimaryStatusFacts(status).map((fact) => (
+          <div key={fact.label}>
+            <dt>{fact.label}</dt>
+            <dd>{fact.value}</dd>
+            {fact.detail ? (
+              <p className="status-fact-detail">{fact.detail}</p>
+            ) : null}
+          </div>
+        ))}
       </dl>
 
+      <details className="status-secondary-details">
+        <summary>Environment details</summary>
+        <dl className="status-secondary-grid">
+          {getSecondaryStatusFacts(status).map((fact) => (
+            <div key={fact.label}>
+              <dt>{fact.label}</dt>
+              <dd>{fact.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
+
       {firstRunCallout ? (
-        <div
-          className="border border-zinc-800 bg-zinc-900/50 rounded-lg p-4"
-          style={{
-            marginTop: 20,
-            border: "1px solid var(--border)",
-            borderRadius: 12,
-            background: "rgba(24, 24, 27, 0.5)",
-            padding: 16,
-          }}
-        >
-          <p style={{ margin: 0, fontWeight: 600 }}>{firstRunCallout.headline}</p>
+        <div className="status-callout">
+          <p className="status-callout-title">{firstRunCallout.headline}</p>
           {firstRunCallout.body.map((line) => (
-            <p
-              key={line}
-              style={{
-                margin: "8px 0 0",
-                color: "var(--foreground-muted)",
-                lineHeight: 1.5,
-              }}
-            >
+            <p key={line} className="status-callout-copy">
               {line}
             </p>
           ))}
@@ -373,103 +331,34 @@ export function StatusPanel({
       ) : null}
 
       {showSetupProgress ? (
-        <section
-          style={{
-            marginTop: 20,
-            border: "1px solid var(--border)",
-            borderRadius: 6,
-            background: "var(--background-elevated)",
-            padding: 16,
-          }}
-        >
-          <div
-            style={{
-              display: "grid",
-              gap: 8,
-            }}
-          >
-            <div
-              aria-label="Setup steps"
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-                gap: 8,
-              }}
-            >
+        <section className="status-setup-card">
+          <div className="status-setup-stack">
+            <div className="status-setup-steps" aria-label="Setup steps">
               {STEP_ORDER.map((step, index) => (
                 <div
                   key={step}
-                  style={{
-                    border: "1px solid var(--border)",
-                    borderRadius: 6,
-                    padding: "10px 8px",
-                    fontSize: 12,
-                    lineHeight: 1.4,
-                    textAlign: "center",
-                    ...getStepStyle(index, activeStepIndex, setupFailed),
-                  }}
+                  className="status-setup-step"
+                  data-state={getSetupStepState(index, activeStepIndex, setupFailed)}
                 >
                   {step}
                 </div>
               ))}
             </div>
-
             <div>
-              <p
-                style={{
-                  margin: 0,
-                  fontSize: 12,
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                  color: "var(--foreground-muted)",
-                }}
-              >
-                Current phase
-              </p>
-              <p style={{ margin: "6px 0 0", fontWeight: 600 }}>
+              <p className="status-setup-phase-label">Current phase</p>
+              <p className="status-setup-phase-title">
                 {setupProgress?.phaseLabel ?? "Starting setup"}
               </p>
               {setupProgress?.preview ? (
-                <p
-                  style={{
-                    margin: "6px 0 0",
-                    color: "var(--foreground-muted)",
-                    fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, monospace)",
-                    fontSize: 12,
-                    lineHeight: 1.5,
-                  }}
-                >
+                <p className="status-setup-phase-preview">
                   {setupProgress.preview}
                 </p>
               ) : null}
             </div>
-
             {setupProgress && setupProgress.lines.length > 0 ? (
-              <details>
-                <summary
-                  style={{
-                    cursor: "pointer",
-                    color: "var(--foreground-muted)",
-                    fontSize: 12,
-                  }}
-                >
-                  Recent setup logs
-                </summary>
-                <pre
-                  style={{
-                    margin: "10px 0 0",
-                    padding: 12,
-                    borderRadius: 6,
-                    background: "var(--background)",
-                    border: "1px solid var(--border)",
-                    color: "var(--foreground-muted)",
-                    fontSize: 12,
-                    lineHeight: 1.55,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                    fontFamily: "var(--font-mono, ui-monospace, SFMono-Regular, monospace)",
-                  }}
-                >
+              <details className="status-setup-logs">
+                <summary>Recent setup logs</summary>
+                <pre>
                   {setupProgress.lines
                     .map((line) => `[${line.stream}] ${line.text}`)
                     .join("\n")}
@@ -480,7 +369,7 @@ export function StatusPanel({
         </section>
       ) : null}
 
-      <div className="hero-actions" style={{ justifyContent: "flex-end" }}>
+      <div className="hero-actions hero-actions-end">
         {showRestart && (
           <button
             className="button success"
@@ -527,15 +416,15 @@ export function StatusPanel({
 
       {errorCopy ? (
         <div className="error-banner">
-          <p style={{ margin: 0, fontWeight: 500 }}>
+          <p className="error-banner-headline">
             {errorCopy.headline}
           </p>
-          <p style={{ margin: "4px 0 0", opacity: 0.85 }}>
+          <p className="error-banner-detail">
             {errorCopy.detail}
           </p>
-          <details style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
+          <details className="error-banner-technical">
             <summary>Technical details</summary>
-            <pre style={{ margin: "4px 0 0", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+            <pre>
               {status.lastError}
             </pre>
           </details>
