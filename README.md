@@ -26,7 +26,7 @@ Click **Deploy with Vercel** above, set a password, and you're up.
 
 1. **Deploy** — the button auto-provisions an [Upstash Redis](https://vercel.com/marketplace/upstash-redis) database and asks for an `ADMIN_SECRET` (your password).
 2. **Sign in** — open the deployment and enter your admin secret.
-3. **Use OpenClaw** — visit `/gateway` or click **Start** in the admin panel. The sandbox boots in about a minute.
+3. **Use OpenClaw** — visit `/gateway` or click **Start** in the admin panel. The first boot takes about a minute while OpenClaw is installed into the sandbox. After that, restores from snapshot take just a few seconds.
 4. **Verify** — run launch verification from the admin panel before connecting channels.
 5. **Connect channels** — optionally wire up Slack or Telegram from the admin panel so people can chat with your instance.
 
