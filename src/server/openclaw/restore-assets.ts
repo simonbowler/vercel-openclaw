@@ -159,6 +159,42 @@ export function buildDynamicRestoreFiles(options: {
   return files;
 }
 
+export type RestoreRuntimeEnvOptions = {
+  gatewayToken: string;
+  proxyOrigin: string;
+  apiKey?: string;
+  telegramBotToken?: string;
+  telegramWebhookSecret?: string;
+  slackCredentials?: { botToken: string; signingSecret: string };
+  whatsappConfig?: WhatsAppGatewayConfig;
+};
+
+export function buildRestoreRuntimeEnv(
+  options: RestoreRuntimeEnvOptions,
+): Record<string, string> {
+  const configJson = buildGatewayConfig(
+    options.apiKey,
+    options.proxyOrigin,
+    options.telegramBotToken,
+    options.slackCredentials,
+    options.telegramWebhookSecret,
+    options.whatsappConfig,
+  );
+
+  const env: Record<string, string> = {
+    OPENCLAW_GATEWAY_TOKEN: options.gatewayToken,
+    OPENCLAW_CONFIG_JSON_B64: Buffer.from(configJson, "utf8").toString("base64"),
+  };
+
+  if (options.apiKey) {
+    env.AI_GATEWAY_API_KEY = options.apiKey;
+    env.OPENAI_API_KEY = options.apiKey;
+    env.OPENAI_BASE_URL = "https://ai-gateway.vercel.sh/v1";
+  }
+
+  return env;
+}
+
 export function buildRestoreAssetManifest(): RestoreAssetManifest {
   const staticFiles = buildStaticRestoreFiles();
   const hash = createHash("sha256");

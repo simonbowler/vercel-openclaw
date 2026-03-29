@@ -73,6 +73,7 @@ export class FakeSandboxHandle implements SandboxHandle {
   extendedTimeouts: number[] = [];
   snapshotCalled = false;
   stopCalled = false;
+  createEnv?: Record<string, string>;
   createTimeNetworkPolicy?: import("@vercel/sandbox").NetworkPolicy;
   private portDomain: string;
   private eventLog: SandboxEvent[];
@@ -294,6 +295,9 @@ export class FakeSandboxController implements SandboxController {
     const isRestore = params.source?.type === "snapshot";
     const handle = new FakeSandboxHandle(id, this.events, params.timeout);
     handle.responders.push(...this.defaultResponders);
+    if (params.env) {
+      handle.createEnv = params.env;
+    }
     if (params.networkPolicy) {
       handle.createTimeNetworkPolicy = params.networkPolicy;
     }

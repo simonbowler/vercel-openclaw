@@ -10,7 +10,34 @@
 
 `channelReadiness.ready` is only true after destructive launch verification passes the full `preflight` → `queuePing` → `ensureRunning` → `chatCompletions` → `wakeFromSleep` → `restorePrepared` path for the current deployment.
 
-### Example `POST /api/admin/launch-verify` response
+### Verification mode contract
+
+There are three different verification surfaces and they are not interchangeable:
+
+- `GET /api/admin/preflight` is config-only. It never touches the sandbox.
+- `POST /api/admin/launch-verify` in **safe** mode runs `preflight`, `queuePing`, `ensureRunning`, and `chatCompletions`.
+- `POST /api/admin/launch-verify` in **destructive** mode runs everything in safe mode, then adds `wakeFromSleep` and `restorePrepared`.
+
+Automation should not treat safe mode as equivalent to `--preflight-only`. Safe mode is runtime verification. Preflight-only is not.
+
+### Example safe-mode `POST /api/admin/launch-verify` response
+
+```json
+{
+  "ok": true,
+  "mode": "safe",
+  "phases": [
+    { "id": "preflight", "status": "pass" },
+    { "id": "queuePing", "status": "pass" },
+    { "id": "ensureRunning", "status": "pass" },
+    { "id": "chatCompletions", "status": "pass" },
+    { "id": "wakeFromSleep", "status": "skip" },
+    { "id": "restorePrepared", "status": "skip" }
+  ]
+}
+```
+
+### Example destructive `POST /api/admin/launch-verify` response
 
 Destructive mode, all phases passing:
 

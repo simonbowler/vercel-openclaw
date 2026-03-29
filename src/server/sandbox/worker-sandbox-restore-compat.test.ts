@@ -13,7 +13,10 @@ import {
   OPENCLAW_WORKER_SANDBOX_SKILL_PATH,
   buildWorkerSandboxScript,
 } from "@/server/openclaw/config";
-import { buildRestoreAssetManifest } from "@/server/openclaw/restore-assets";
+import {
+  buildRestoreAssetManifest,
+  buildRestoreRuntimeEnv,
+} from "@/server/openclaw/restore-assets";
 import { ensureSandboxRunning } from "@/server/sandbox/lifecycle";
 import { getInitializedMeta } from "@/server/store/store";
 import { buildWorkerSandboxBearerToken } from "@/server/worker-sandboxes/auth";
@@ -745,6 +748,68 @@ test("worker-sandbox launcher exits clearly when restored config has no allowed 
     ),
     `expected stderr to mention missing origin, got: ${result.stderr.join("\n")}`,
   );
+});
+
+test("restore runtime env gives the worker-sandbox script the current deployment origin", async () => {
+  const restoreEnv = buildRestoreRuntimeEnv({
+    gatewayToken: "restore-gateway-token",
+    proxyOrigin: "https://current.example.com",
+  });
+
+  const encodedConfig = restoreEnv.OPENCLAW_CONFIG_JSON_B64;
+  assert.ok(encodedConfig);
+
+  const configJson = Buffer.from(encodedConfig, "base64").toString("utf8");
+
+  let requestedUrl: string | null = null;
+  let authorizationHeader: string | null = null;
+
+  const result = await runWorkerSandboxScriptForTest({
+    scriptContent: buildWorkerSandboxScript(),
+    gatewayToken: "restore-gateway-token",
+    configJson,
+    requestJson: JSON.stringify({
+      task: "process-images",
+      command: { cmd: "bash", args: ["-lc", "echo ok"] },
+    }),
+    fetchImpl: async (input, init) => {
+      requestedUrl =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      const headers = new Headers(
+        init?.headers ??
+          (typeof input === "string" || input instanceof URL
+            ? undefined
+            : input.headers),
+      );
+      authorizationHeader = headers.get("authorization");
+
+      const body: WorkerSandboxExecuteResponse = {
+        ok: true,
+        task: "process-images",
+        sandboxId: "sbx-child-1",
+        exitCode: 0,
+        stdout: "done\n",
+        stderr: "",
+        capturedFiles: [],
+      };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(
+    requestedUrl,
+    "https://current.example.com/api/internal/worker-sandboxes/execute",
+  );
+  assert.ok(authorizationHeader);
+  assert.match(authorizationHeader, /^Bearer [0-9a-f]{64}$/);
 });
 
 test("worker-sandbox launcher prints non-ok host responses to stderr and exits non-zero", async () => {

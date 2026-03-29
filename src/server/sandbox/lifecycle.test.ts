@@ -1466,6 +1466,48 @@ test("restoreSandboxFromSnapshot passes gateway token via env even without API k
   });
 });
 
+test("restoreSandboxFromSnapshot passes current origin via OPENCLAW_CONFIG_JSON_B64 in restore env", async () => {
+  const fake = new FakeSandboxController();
+  const originalFetch = globalThis.fetch;
+
+  await withTestEnv(fake, async () => {
+    await mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-restore-origin";
+      meta.gatewayToken = "test-gw-token";
+    });
+
+    globalThis.fetch = async () =>
+      new Response('<div id="openclaw-app"></div>', { status: 200 });
+
+    try {
+      const { handle } = await triggerRestore(fake, {
+        tokenOverride: "my-gateway-key",
+      });
+
+      // The restore env should contain the base64-encoded gateway config
+      // with the current origin baked in.
+      assert.ok(handle.createEnv, "Sandbox.create should receive env");
+      const encoded = handle.createEnv.OPENCLAW_CONFIG_JSON_B64;
+      assert.ok(encoded, "Restore env should contain OPENCLAW_CONFIG_JSON_B64");
+
+      const config = JSON.parse(
+        Buffer.from(encoded, "base64").toString("utf8"),
+      ) as {
+        gateway?: { controlUi?: { allowedOrigins?: string[] } };
+      };
+
+      assert.deepStrictEqual(
+        config.gateway?.controlUi?.allowedOrigins,
+        ["https://test.example.com"],
+        "Restore env config should use the current origin passed to ensureSandboxRunning",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
 test("restoreSandboxFromSnapshot runs bash fast-restore-script and checks exit code", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;

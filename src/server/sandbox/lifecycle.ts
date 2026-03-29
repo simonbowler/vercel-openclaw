@@ -40,6 +40,7 @@ import {
   OPENCLAW_RESTORE_ASSET_MANIFEST_PATH,
   buildDynamicRestoreFiles,
   buildRestoreAssetManifest,
+  buildRestoreRuntimeEnv,
   buildStaticRestoreFiles,
   buildWorkerSandboxRestoreFiles,
   type RestoreAssetManifest,
@@ -2573,14 +2574,17 @@ async function restoreSandboxFromSnapshot(
     const skippedStaticAssetSync =
       snapshotAssetHash === currentManifest.sha256;
 
-    const restoreEnv: Record<string, string> = {
-      OPENCLAW_GATEWAY_TOKEN: latest.gatewayToken,
-    };
-    if (freshApiKey) {
-      restoreEnv.AI_GATEWAY_API_KEY = freshApiKey;
-      restoreEnv.OPENAI_API_KEY = freshApiKey;
-      restoreEnv.OPENAI_BASE_URL = "https://ai-gateway.vercel.sh/v1";
-    }
+    const restoreEnv = buildRestoreRuntimeEnv({
+      gatewayToken: latest.gatewayToken,
+      proxyOrigin: origin,
+      apiKey: freshApiKey,
+      telegramBotToken: latest.channels.telegram?.botToken,
+      telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
+      slackCredentials: slackConfig
+        ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret }
+        : undefined,
+      whatsappConfig: toWhatsAppGatewayConfig(latest.channels.whatsapp),
+    });
 
     const sandboxCreateStart = Date.now();
     const sandbox = await getSandboxController().create({

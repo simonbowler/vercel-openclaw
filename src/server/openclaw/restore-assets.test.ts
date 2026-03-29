@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   buildDynamicRestoreFiles,
   buildRestoreAssetManifest,
+  buildRestoreRuntimeEnv,
   buildStaticRestoreFiles,
   buildWorkerSandboxRestoreFiles,
   OPENCLAW_RESTORE_ASSET_MANIFEST_PATH,
@@ -180,6 +181,46 @@ test("worker sandbox restore files contain exactly the goal-critical pair", () =
   for (const file of files) {
     assert.ok(file.content.length > 0, `${file.path} should be non-empty`);
   }
+});
+
+// --- buildRestoreRuntimeEnv ---
+
+test("buildRestoreRuntimeEnv encodes current proxy origin into OPENCLAW_CONFIG_JSON_B64", () => {
+  const env = buildRestoreRuntimeEnv({
+    gatewayToken: "gw-token",
+    proxyOrigin: "https://current.example.com",
+  });
+
+  assert.equal(env.OPENCLAW_GATEWAY_TOKEN, "gw-token");
+
+  const encoded = env.OPENCLAW_CONFIG_JSON_B64;
+  assert.ok(encoded);
+
+  const config = JSON.parse(
+    Buffer.from(encoded, "base64").toString("utf8"),
+  ) as {
+    gateway?: { controlUi?: { allowedOrigins?: string[] } };
+  };
+
+  assert.deepStrictEqual(config.gateway?.controlUi?.allowedOrigins, [
+    "https://current.example.com",
+  ]);
+
+  assert.equal(env.AI_GATEWAY_API_KEY, undefined);
+  assert.equal(env.OPENAI_API_KEY, undefined);
+  assert.equal(env.OPENAI_BASE_URL, undefined);
+});
+
+test("buildRestoreRuntimeEnv includes AI gateway env when apiKey is present", () => {
+  const env = buildRestoreRuntimeEnv({
+    gatewayToken: "gw-token",
+    apiKey: "test-ai-key",
+    proxyOrigin: "https://current.example.com",
+  });
+
+  assert.equal(env.AI_GATEWAY_API_KEY, "test-ai-key");
+  assert.equal(env.OPENAI_API_KEY, "test-ai-key");
+  assert.equal(env.OPENAI_BASE_URL, "https://ai-gateway.vercel.sh/v1");
 });
 
 // --- manifest path ---

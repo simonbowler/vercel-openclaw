@@ -15,28 +15,73 @@ Preflight is a config-readiness check. It does not prove the sandbox can complet
 
 ## What launch verification proves
 
-Launch verification is the runtime check. It starts with preflight, then verifies the system can actually do the work it claims to do: deliver a queue message, start the sandbox, get a real chat completion from the gateway, stop the sandbox, wake it back up, and seal a reusable restore target.
+Launch verification is the runtime check. It always starts with preflight, then runs one of two runtime paths.
+
+- **Safe mode** proves the deployment can receive a queue callback, boot or restore the sandbox, and get a real completion from the gateway.
+- **Destructive mode** proves everything in safe mode, then proves the stop-and-wake path and seals a reusable restore target.
 
 ## Safe mode vs destructive mode
 
 ### Safe mode
 
-Safe mode runs preflight and queue delivery checks only. It does not start, stop, or wake the sandbox.
+Safe mode runs these phases:
+
+- `preflight`
+- `queuePing`
+- `ensureRunning`
+- `chatCompletions`
+
+Safe mode is **not** a config-only check. It touches the sandbox and runs a real completion request.
+
+Safe mode does **not** run these phases:
+
+- `wakeFromSleep`
+- `restorePrepared`
+
+That means safe mode can prove "the deployment works right now," but it does not prove wake-from-sleep or that the current restore target is ready to reuse. Safe mode does not make `channelReadiness.ready` true.
 
 ### Destructive mode
 
-Destructive mode proves the full operational path: start the sandbox, run a real completion, stop it, wake it from sleep, and prepare a fresh restore target. This is the mode that sets `channelReadiness.ready = true`.
+Destructive mode runs every safe-mode phase, then adds:
+
+- `wakeFromSleep`
+- `restorePrepared`
+
+This is the only mode that proves the full channel-delivery path end to end. It is also the only mode that can make `channelReadiness.ready` true.
+
+## Preflight-only is not safe mode
+
+`GET /api/admin/preflight` and automation flags such as `--preflight-only` are config-only checks. They never touch the sandbox.
+
+Safe mode is stronger than preflight-only because it still runs `ensureRunning` and `chatCompletions`.
 
 ## Launch verification phases
 
-| Phase | What it proves |
-| ----- | -------------- |
-| `preflight` | Config readiness — all deployment requirements are met |
-| `queuePing` | Queue delivery loopback works (Vercel Queues can reach the app) |
-| `ensureRunning` | The sandbox can start from scratch or restore and become ready |
-| `chatCompletions` | The gateway can answer a real completions request |
-| `wakeFromSleep` | The stop-and-wake path works (snapshot, stop, restore) |
-| `restorePrepared` | A fresh reusable restore target is sealed and verified |
+| Phase | Runs in safe mode | Runs in destructive mode | What it proves |
+| ----- | ----------------- | ------------------------ | -------------- |
+| `preflight` | yes | yes | Config readiness — deployment requirements are met |
+| `queuePing` | yes | yes | Queue delivery loopback works |
+| `ensureRunning` | yes | yes | The sandbox can start from scratch or restore and become ready |
+| `chatCompletions` | yes | yes | The gateway can answer a real completions request |
+| `wakeFromSleep` | no | yes | The stop-and-wake path works |
+| `restorePrepared` | no | yes | A fresh reusable restore target is sealed and verified |
+
+## Example safe mode result
+
+```json
+{
+  "ok": true,
+  "mode": "safe",
+  "phases": [
+    { "id": "preflight", "status": "pass" },
+    { "id": "queuePing", "status": "pass" },
+    { "id": "ensureRunning", "status": "pass" },
+    { "id": "chatCompletions", "status": "pass" },
+    { "id": "wakeFromSleep", "status": "skip" },
+    { "id": "restorePrepared", "status": "skip" }
+  ]
+}
+```
 
 ## Fields to inspect on failure
 

@@ -8,28 +8,36 @@ Channels are a first-class part of the product. They depend on durable state (Up
 
 ## Before you connect a channel
 
-Run destructive launch verification before connecting Slack or Telegram. This is the step that proves the sandbox can boot, answer completions, stop, and wake back up — the full path that channel delivery depends on.
+There are two different gates here:
 
-Before connecting, your deployment needs:
+1. **Config gate** — can the app save channel credentials and expose a valid webhook URL?
+2. **Operational gate** — has the deployment proven the full delivery path for real traffic?
+
+Before the admin panel can save Slack or Telegram config, the deployment needs:
 
 - **A resolvable public HTTPS origin.** The app must be able to build a canonical webhook URL. If it cannot, channel connect is blocked.
 - **AI Gateway auth available.** On Vercel deployments, this means OIDC. If AI Gateway auth is `unavailable`, channel connect is blocked.
-- **Upstash Redis configured.** Channels rely on durable state for webhook queues and session history. On Vercel deployments, missing Upstash is a hard blocker. In local/non-Vercel environments it is a warning only.
-- **Destructive launch verification passed.** Destructive launch verification is the step that proves the full channel pipeline, not just the deployment config.
+- **Upstash Redis configured.** Channels rely on durable state for webhook queues and session history. On Vercel deployments, missing Upstash is a hard blocker. In local or non-Vercel environments it is a warning only.
 
-If any hard blocker is present, the channel config route returns HTTP 409 with a `CHANNEL_CONNECT_BLOCKED` error and a machine-readable list of issues.
+If any of those hard blockers are present, the channel config route returns HTTP 409 with a `CHANNEL_CONNECT_BLOCKED` error and a machine-readable list of issues.
+
+Destructive launch verification is a separate operational proof step. It is what proves queue delivery, sandbox boot or restore, real completions, wake-from-sleep, and restore-target sealing. The app does not currently use `channelReadiness.ready` as a save-time blocker; it is the signal that tells operators whether the current deployment is truly channel-ready.
 
 ## Preflight vs channel readiness
 
-These are two different questions, and the difference matters.
+These checks answer different questions.
 
-Preflight tells you whether a channel can be connected. Channel readiness tells you whether the deployment has already proven the real delivery path.
+**Preflight** answers: "Is the deployment configured well enough to expose a channel webhook?" It is config-only. It checks origin resolution, store availability, auth, and webhook prerequisites without touching the sandbox.
 
-**Preflight** is a config-readiness check. It runs without touching the sandbox. It answers: "Is the webhook URL resolvable? Is the store configured? Is AI Gateway auth present?" Preflight is a config-readiness check. It does not prove the sandbox can complete a real channel delivery.
+**Safe launch verification** answers: "Can the deployment boot or restore the sandbox and get a real completion right now?" It runs `preflight`, `queuePing`, `ensureRunning`, and `chatCompletions`.
 
-**Channel readiness** is a persisted result that records whether the current deployment has passed the full destructive launch verification path — sandbox boot, chat completions, wake from sleep, and restore-target sealing. A deployment is channel-ready only after destructive launch verification passes and `channelReadiness.ready` is `true`.
+**Destructive launch verification** answers: "Can the deployment survive the full delivery path, including stop, wake-from-sleep, and restore-target preparation?" It adds `wakeFromSleep` and `restorePrepared`. This is the only mode that can make `channelReadiness.ready` true.
 
-Operators should run destructive launch verification before treating a deployment as channel-ready. Safe-mode verification only checks config and queue delivery; it does not exercise the sandbox lifecycle that channels depend on.
+The operator rule is simple:
+
+- Use **preflight** to see whether channel setup is blocked by config.
+- Use **safe mode** to prove the live runtime path without testing sleep and restore.
+- Use **destructive mode** before calling the deployment channel-ready.
 
 ## Slack
 
@@ -103,7 +111,7 @@ The admin panel shows a channel as blocked when deployment prerequisites are sti
 
 ### Preflight passes but channel still is not trusted
 
-This means the full runtime path has not been verified yet. Preflight only checks config. Run destructive launch verification to prove the sandbox can boot, answer completions, and wake from sleep. Once it passes, `channelReadiness.ready` becomes `true` for the current deployment.
+This means config looks good, but the current deployment has not yet proven the full delivery path. Preflight only checks config. Safe mode proves boot or restore plus a real completion, but destructive launch verification is still required before `channelReadiness.ready` becomes `true`.
 
 ### Slack works but Telegram registration fails on a protected deployment
 
