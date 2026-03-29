@@ -25,3 +25,5 @@ Display URL (Telegram):  https://app.example.com/api/channels/telegram/webhook
 ```
 
 In code: use `buildPublicUrl()` only for outbound delivery or registration URLs that may need the bypass secret. Use `buildPublicDisplayUrl()` for admin JSON, UI, diagnostics, docs examples, and any operator-visible surface.
+
+For the full channel setup and readiness guide, see [Channels and Webhooks](channels-and-webhooks.md).

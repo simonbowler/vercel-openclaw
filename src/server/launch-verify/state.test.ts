@@ -214,6 +214,49 @@ test("getCurrentDeploymentId returns deterministic local fallback", () => {
 });
 
 // ---------------------------------------------------------------------------
+// restorePrepared readiness gating
+// ---------------------------------------------------------------------------
+
+test("isChannelReady returns false when restorePrepared phase is skipped (safe-mode shape)", () => {
+  const phases: LaunchVerificationPhase[] = [
+    { id: "preflight", status: "pass", durationMs: 10, message: "ok" },
+    { id: "queuePing", status: "pass", durationMs: 10, message: "ok" },
+    { id: "ensureRunning", status: "pass", durationMs: 10, message: "ok" },
+    { id: "chatCompletions", status: "pass", durationMs: 10, message: "ok" },
+    { id: "wakeFromSleep", status: "pass", durationMs: 10, message: "ok" },
+    { id: "restorePrepared", status: "skip", durationMs: 0, message: "Not run in safe mode." },
+  ];
+
+  const payload = makeDestructivePayload({ phases });
+  assert.equal(isChannelReady(payload), false);
+});
+
+test("isChannelReady returns false when restorePrepared phase is missing entirely", () => {
+  const phases: LaunchVerificationPhase[] = [
+    { id: "preflight", status: "pass", durationMs: 10, message: "ok" },
+    { id: "queuePing", status: "pass", durationMs: 10, message: "ok" },
+    { id: "ensureRunning", status: "pass", durationMs: 10, message: "ok" },
+    { id: "chatCompletions", status: "pass", durationMs: 10, message: "ok" },
+    { id: "wakeFromSleep", status: "pass", durationMs: 10, message: "ok" },
+  ];
+
+  const payload = makeDestructivePayload({ phases });
+  assert.equal(isChannelReady(payload), false);
+});
+
+test("writeChannelReadiness records failingPhaseId=restorePrepared when restorePrepared fails", async () => {
+  const phases = makeAllPassPhases();
+  phases[5] = { id: "restorePrepared", status: "fail", durationMs: 10, message: "restore target stale", error: "not reusable" };
+
+  const payload = makeDestructivePayload({ phases, ok: false });
+  const readiness = await writeChannelReadiness(payload);
+
+  assert.equal(readiness.ready, false);
+  assert.equal(readiness.failingPhaseId, "restorePrepared");
+  assert.equal(readiness.wakeFromSleepPassed, true);
+});
+
+// ---------------------------------------------------------------------------
 // Safe mode payload through writeChannelReadiness
 // ---------------------------------------------------------------------------
 

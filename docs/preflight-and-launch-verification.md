@@ -11,7 +11,7 @@ Preflight is a config-readiness check. It runs without touching the sandbox and 
 - Is cron authentication configured?
 - Are channel prerequisites met (webhook URLs resolvable, store available)?
 
-Preflight does **not** prove that the sandbox can boot and answer a real request. It only proves the deployment is configured correctly.
+Preflight is a config-readiness check. It does not prove the sandbox can complete a real channel delivery. It only proves the deployment is configured correctly.
 
 ## What launch verification proves
 
@@ -69,7 +69,9 @@ When launch verification reports `ok: false`, these fields explain why:
 - **Preflight channel checks** tell you whether a channel *can* be connected (webhook URL resolvable, store available, AI Gateway auth present).
 - **Channel readiness** tells you whether the full pipeline *has been verified* for this deployment (sandbox boots, completions work, wake-from-sleep works).
 
-`channelReadiness.ready` is only `true` after destructive launch verification passes every phase for the current deployment.
+`channelReadiness.ready` is only `true` after destructive launch verification passes every phase for the current deployment. A deployment is channel-ready only after destructive launch verification passes and `channelReadiness.ready` is `true`.
+
+Run destructive launch verification before connecting Slack or Telegram.
 
 ## Example launch verification result
 
@@ -96,5 +98,6 @@ When launch verification reports `ok: false`, these fields explain why:
 
 ## Where to read next
 
+- [Channels and Webhooks](channels-and-webhooks.md) — how to connect Slack and Telegram after verification passes
 - [API Reference](api-reference.md) — full request and response shapes for preflight and launch verification
 - [Sandbox Lifecycle and Restore](lifecycle-and-restore.md) — the lifecycle states and restore mechanics that launch verification exercises

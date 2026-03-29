@@ -72,7 +72,11 @@ npm run dev                      # http://localhost:3000
 
 | Document | Contents |
 | -------- | -------- |
+| [Architecture](docs/architecture.md) | System overview and subsystem map |
+| [Sandbox Lifecycle and Restore](docs/lifecycle-and-restore.md) | State transitions, snapshots, restore behavior |
+| [Preflight and Launch Verification](docs/preflight-and-launch-verification.md) | Deployment readiness and runtime verification |
+| [Channels and Webhooks](docs/channels-and-webhooks.md) | Slack/Telegram setup, readiness, protection behavior |
 | [Environment Variables](docs/environment-variables.md) | Full env var reference |
-| [API Reference](docs/api-reference.md) | Machine-readable endpoints, payloads, automation contracts |
-| [Deployment Protection](docs/deployment-protection.md) | Bypass secrets, webhook URL behavior |
+| [API Reference](docs/api-reference.md) | Endpoint and payload reference |
+| [Deployment Protection](docs/deployment-protection.md) | Bypass secret behavior and display-safe URLs |
 | [Contributing](CONTRIBUTING.md) | Architecture, routes, testing, development workflows |

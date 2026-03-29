@@ -1306,6 +1306,114 @@ test("launch-verify POST: new code reads failingChannelIds as canonical field", 
 });
 
 // ===========================================================================
+// restorePrepared readiness gating: destructive mode
+// ===========================================================================
+
+test("launch-verify POST: destructive preflight-fail includes restorePrepared skip and channelReadiness.ready=false", async () => {
+  await withHarness(async () => {
+    makePreflightFail();
+
+    const route = getAdminLaunchVerifyRoute();
+    const req = buildAuthPostRequest(
+      "/api/admin/launch-verify?mode=destructive",
+      "{}",
+    );
+    const result = await callRoute(route.POST, req);
+    await drainAfterCallbacks();
+
+    const body = result.json as LaunchVerificationPayload & {
+      channelReadiness: ChannelReadiness;
+    };
+    assert.equal(body.mode, "destructive");
+
+    // restorePrepared phase must be present even when skipped
+    const restorePreparedPhase = body.phases.find((p) => p.id === "restorePrepared");
+    assert.ok(restorePreparedPhase, "expected restorePrepared phase in destructive response");
+    assert.equal(restorePreparedPhase.status, "skip");
+
+    // channelReadiness must be false because restorePrepared did not pass
+    assert.equal(body.channelReadiness.ready, false);
+  });
+});
+
+test("launch-verify POST: safe mode skips restorePrepared and channelReadiness.ready=false", async () => {
+  await withHarness(async (h) => {
+    process.env.NEXT_PUBLIC_APP_URL = "https://test.example";
+
+    await h.driveToRunning();
+
+    h.fakeFetch.on("POST", /v1\/chat\/completions/, () => {
+      return Response.json({
+        choices: [{ message: { content: "launch-verify-ok" } }],
+      });
+    });
+
+    const route = getAdminLaunchVerifyRoute();
+    const req = buildAuthPostRequest(
+      "/api/admin/launch-verify",
+      JSON.stringify({ mode: "safe" }),
+    );
+    const result = await callRoute(route.POST, req);
+    await drainAfterCallbacks();
+
+    const body = result.json as LaunchVerificationPayload & {
+      channelReadiness: ChannelReadiness;
+    };
+    assert.equal(body.mode, "safe");
+
+    // restorePrepared must be present but skipped in safe mode
+    const restorePreparedPhase = body.phases.find((p) => p.id === "restorePrepared");
+    assert.ok(restorePreparedPhase, "expected restorePrepared phase");
+    assert.equal(restorePreparedPhase.status, "skip");
+
+    // channelReadiness.ready must be false — safe mode cannot satisfy the readiness gate
+    assert.equal(body.channelReadiness.ready, false);
+  });
+});
+
+test("launch-verify POST: destructive response runtime includes restoreAttestation and restorePlan", async () => {
+  await withHarness(async (h) => {
+    process.env.NEXT_PUBLIC_APP_URL = "https://test.example";
+
+    await h.driveToRunning();
+
+    h.fakeFetch.on("POST", /v1\/chat\/completions/, () => {
+      return Response.json({
+        choices: [{ message: { content: "launch-verify-ok" } }],
+      });
+    });
+
+    const route = getAdminLaunchVerifyRoute();
+    const req = buildAuthPostRequest(
+      "/api/admin/launch-verify",
+      JSON.stringify({ mode: "safe" }),
+    );
+    const result = await callRoute(route.POST, req);
+    await drainAfterCallbacks();
+
+    const body = result.json as LaunchVerificationPayload;
+    assert.ok(body.runtime, "expected runtime in response");
+
+    const runtime = body.runtime as LaunchVerificationRuntime;
+    // These fields must always be present in runtime output
+    assert.ok("restorePreparedStatus" in runtime, "runtime must include restorePreparedStatus");
+    assert.ok("restorePreparedReason" in runtime, "runtime must include restorePreparedReason");
+    assert.ok("restoreAttestation" in runtime, "runtime must include restoreAttestation");
+    assert.ok("restorePlan" in runtime, "runtime must include restorePlan");
+
+    // restoreAttestation shape
+    assert.ok(runtime.restoreAttestation, "restoreAttestation must not be null");
+    assert.equal(typeof runtime.restoreAttestation.reusable, "boolean");
+    assert.equal(typeof runtime.restoreAttestation.needsPrepare, "boolean");
+    assert.ok(Array.isArray(runtime.restoreAttestation.reasons));
+
+    // restorePlan shape
+    assert.ok(runtime.restorePlan, "restorePlan must not be null");
+    assert.ok(Array.isArray(runtime.restorePlan.actions));
+  });
+});
+
+// ===========================================================================
 // Restore attestation: WhatsApp-inclusive hash
 // ===========================================================================
 

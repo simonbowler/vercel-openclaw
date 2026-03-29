@@ -51,3 +51,4 @@ The enforcement plane is the actual Vercel Sandbox plus its network policy. The 
 
 - [Sandbox Lifecycle and Restore](lifecycle-and-restore.md) — how the sandbox moves through states and how restores work
 - [Preflight and Launch Verification](preflight-and-launch-verification.md) — how the app proves it is correctly deployed and operational
+- [Channels and Webhooks](channels-and-webhooks.md) — Slack and Telegram setup, readiness, and webhook behavior

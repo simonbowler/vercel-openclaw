@@ -542,6 +542,176 @@ test("legacy snapshot restore leaves a runnable worker-sandbox launcher in the r
   }
 });
 
+test("restored launcher round-trips binary image payload unchanged through the worker-sandbox route", async () => {
+  const h = createScenarioHarness();
+  try {
+    await h.mutateMeta((meta) => {
+      meta.status = "stopped";
+      meta.snapshotId = "snap-legacy-binary-compat";
+      meta.gatewayToken = "test-gw-token";
+      meta.snapshotAssetSha256 = null;
+      meta.snapshotDynamicConfigHash = null;
+      meta.snapshotConfigHash = null;
+      meta.lastRestoreMetrics = null;
+      meta.sandboxId = null;
+      meta.portUrls = null;
+    });
+
+    h.fakeFetch.onGet(/fake\.vercel\.run/, () =>
+      new Response('<div id="openclaw-app">ready</div>', { status: 200 }),
+    );
+
+    const callbacks: Array<() => Promise<void> | void> = [];
+    await ensureSandboxRunning({
+      origin: "https://test.example.com",
+      reason: "restore-binary-compat",
+      schedule(cb) {
+        callbacks.push(cb);
+      },
+    });
+
+    assert.equal(callbacks.length, 1);
+    await callbacks[0]!();
+
+    const restoredHandle = h.controller.lastCreated()!;
+    const scriptFile = restoredHandle.writtenFiles.find(
+      (file) => file.path === OPENCLAW_WORKER_SANDBOX_SCRIPT_PATH,
+    );
+    const configFile = restoredHandle.writtenFiles.find(
+      (file) => file.path === OPENCLAW_CONFIG_PATH,
+    );
+
+    assert.ok(scriptFile, "restore should rewrite worker-sandbox script");
+    assert.ok(configFile, "restore should rewrite openclaw.json");
+
+    const before = await getInitializedMeta();
+    const createCountBefore = h.controller.eventsOfKind("create").length;
+
+    const route = getWorkerSandboxRoute();
+
+    // PNG magic bytes + a small arbitrary payload
+    const imageBytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4,
+    ]);
+
+    const requestBody = {
+      task: "process-image",
+      files: [
+        {
+          path: "/workspace/input.png",
+          contentBase64: imageBytes.toString("base64"),
+        },
+      ],
+      command: {
+        cmd: "bash",
+        args: ["-lc", "cp /workspace/input.png /workspace/output.png"],
+      },
+      capturePaths: ["/workspace/output.png"],
+      vcpus: 1,
+      sandboxTimeoutMs: 300_000,
+    };
+
+    // Simulate the cp command: copy input.png bytes to output.png in writtenFiles
+    h.controller.defaultResponders.unshift((cmd) => {
+      if (cmd !== "bash") return undefined;
+      const handle = h.controller.lastCreated();
+      if (!handle) return undefined;
+      const inputFile = handle.writtenFiles.find(
+        (f) => f.path === "/workspace/input.png",
+      );
+      if (!inputFile) return undefined;
+      handle.writtenFiles.push({
+        path: "/workspace/output.png",
+        content: inputFile.content,
+      });
+      return {
+        exitCode: 0,
+        output: async () => "",
+      };
+    });
+
+    let seenBody: string | null = null;
+
+    const scriptRun = await runWorkerSandboxScriptForTest({
+      scriptContent: scriptFile.content.toString("utf8"),
+      gatewayToken: before.gatewayToken,
+      configJson: configFile.content.toString("utf8"),
+      requestJson: JSON.stringify(requestBody),
+      fetchImpl: async (input, init) => {
+        const url =
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.toString()
+              : input.url;
+        const headers = new Headers(init?.headers);
+        seenBody =
+          typeof init?.body === "string" ? init.body : null;
+        return route.POST(
+          new Request(url, {
+            method: init?.method ?? "GET",
+            headers,
+            body: init?.body,
+          }),
+        );
+      },
+    });
+
+    assert.equal(scriptRun.exitCode, 0);
+    assert.equal(scriptRun.stderr.length, 0);
+
+    // The launcher must forward JSON.stringify(requestBody) unchanged
+    assert.equal(
+      seenBody,
+      JSON.stringify(requestBody),
+      "launcher should post the unchanged binary request JSON",
+    );
+
+    const body = JSON.parse(
+      scriptRun.stdout.join("\n"),
+    ) as WorkerSandboxExecuteResponse;
+    assert.equal(body.ok, true);
+    assert.equal(body.task, "process-image");
+    assert.equal(body.exitCode, 0);
+    assert.equal(body.capturedFiles.length, 1);
+    assert.equal(body.capturedFiles[0]!.path, "/workspace/output.png");
+
+    // The captured output bytes must exactly match the original input bytes
+    const capturedBytes = Buffer.from(
+      body.capturedFiles[0]!.contentBase64,
+      "base64",
+    );
+    assert.deepEqual(
+      capturedBytes,
+      imageBytes,
+      "captured /workspace/output.png bytes must exactly match input image bytes",
+    );
+
+    // Singleton metadata must not change
+    const after = await getInitializedMeta();
+    assert.equal(after.status, before.status, "status must not change");
+    assert.equal(
+      after.sandboxId,
+      before.sandboxId,
+      "sandboxId must not change",
+    );
+    assert.equal(
+      after.snapshotId,
+      before.snapshotId,
+      "snapshotId must not change",
+    );
+
+    // Exactly one additional child sandbox create event
+    assert.equal(
+      h.controller.eventsOfKind("create").length,
+      createCountBefore + 1,
+      "restored OpenClaw should spawn exactly one child sandbox",
+    );
+  } finally {
+    h.teardown();
+  }
+});
+
 test("worker-sandbox launcher exits clearly when restored config has no allowed origin", async () => {
   let fetchCalled = false;
   const result = await runWorkerSandboxScriptForTest({
