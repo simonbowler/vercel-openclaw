@@ -138,8 +138,15 @@ const NATIVE_HANDLER_POLL_INTERVAL_MS = 1_000;
 const NATIVE_HANDLER_POLL_TIMEOUT_MS = 30_000;
 
 /**
- * Poll the native channel handler until it's reachable.  The gateway (port
- * 3000) may be ready before the Telegram handler (port 8787) starts listening.
+ * Wait for the native channel handler to be fully ready.
+ *
+ * The Telegram provider on port 8787 starts AFTER the gateway on port 3000.
+ * The Vercel proxy may return 502/503 before the handler is listening, and
+ * the handler's HTTP server may accept connections before the message
+ * processing pipeline is fully initialized.
+ *
+ * Strategy: poll until we get a non-proxy-error response (< 500), then wait
+ * an additional stabilization period for the provider to finish initializing.
  */
 async function waitForNativeHandler(
   channel: ChannelName,
@@ -166,13 +173,21 @@ async function waitForNativeHandler(
         body: JSON.stringify({ update_id: 0 }),
         signal: AbortSignal.timeout(5_000),
       });
-      // Any HTTP response (even 400/401) means the handler is listening
-      logInfo("channels.native_handler_ready", { channel, status: probe.status });
-      return;
+      // 502/503 from the Vercel proxy means the handler isn't listening yet.
+      // Only accept responses that come from the actual handler (< 500).
+      if (probe.status < 500) {
+        logInfo("channels.native_handler_ready", { channel, status: probe.status });
+        // The HTTP server accepts connections before the Telegram provider
+        // finishes initializing.  Wait for the provider to fully start
+        // (setWebhook, dedup init, etc.) before forwarding the real message.
+        await new Promise((r) => setTimeout(r, 5_000));
+        return;
+      }
+      logInfo("channels.native_handler_proxy_error", { channel, status: probe.status });
     } catch {
-      // Connection refused — handler not yet listening
-      await new Promise((r) => setTimeout(r, NATIVE_HANDLER_POLL_INTERVAL_MS));
+      // Connection refused or timeout — handler not yet listening
     }
+    await new Promise((r) => setTimeout(r, NATIVE_HANDLER_POLL_INTERVAL_MS));
   }
   logWarn("channels.native_handler_poll_timeout", { channel, timeoutMs: NATIVE_HANDLER_POLL_TIMEOUT_MS });
 }
