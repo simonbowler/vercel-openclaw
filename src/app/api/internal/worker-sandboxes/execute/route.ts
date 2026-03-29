@@ -90,7 +90,7 @@ function validateExecuteRequest(body: unknown): { ok: true; value: WorkerSandbox
 
   if (
     body.sandboxTimeoutMs !== undefined &&
-    (!Number.isFinite(body.sandboxTimeoutMs) || body.sandboxTimeoutMs <= 0)
+    (!Number.isFinite(body.sandboxTimeoutMs) || (body.sandboxTimeoutMs as number) <= 0)
   ) {
     return { ok: false, message: "`sandboxTimeoutMs` must be a positive number." };
   }
@@ -177,7 +177,8 @@ export async function POST(request: Request): Promise<Response> {
       capturedFiles,
     };
 
-    return Response.json(response, { status: response.ok ? 200 : 500 });
+    // Transport succeeded even if the child command returned non-zero.
+    return Response.json(response, { status: 200 });
   } catch (error) {
     const response: WorkerSandboxExecuteResponse = {
       ok: false,

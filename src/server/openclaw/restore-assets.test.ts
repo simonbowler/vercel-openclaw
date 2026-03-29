@@ -5,6 +5,7 @@ import {
   buildDynamicRestoreFiles,
   buildRestoreAssetManifest,
   buildStaticRestoreFiles,
+  buildWorkerSandboxRestoreFiles,
   OPENCLAW_RESTORE_ASSET_MANIFEST_PATH,
 } from "@/server/openclaw/restore-assets";
 import {
@@ -166,6 +167,19 @@ test("dynamic restore files omit whatsapp when config is undefined", () => {
   };
 
   assert.equal(config.channels?.whatsapp, undefined);
+});
+
+// --- buildWorkerSandboxRestoreFiles ---
+
+test("worker sandbox restore files contain exactly the goal-critical pair", () => {
+  const files = buildWorkerSandboxRestoreFiles();
+  assert.deepStrictEqual(
+    files.map((file) => file.path),
+    [OPENCLAW_WORKER_SANDBOX_SKILL_PATH, OPENCLAW_WORKER_SANDBOX_SCRIPT_PATH],
+  );
+  for (const file of files) {
+    assert.ok(file.content.length > 0, `${file.path} should be non-empty`);
+  }
 });
 
 // --- manifest path ---

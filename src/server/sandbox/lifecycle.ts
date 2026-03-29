@@ -41,6 +41,7 @@ import {
   buildDynamicRestoreFiles,
   buildRestoreAssetManifest,
   buildStaticRestoreFiles,
+  buildWorkerSandboxRestoreFiles,
   type RestoreAssetManifest,
 } from "@/server/openclaw/restore-assets";
 import { buildRestoreDecision } from "@/server/sandbox/restore-attestation";
@@ -2658,6 +2659,14 @@ async function restoreSandboxFromSnapshot(
         configHash: currentConfigHash,
         snapshotConfigHash: latest.snapshotConfigHash,
         sandboxId: sandbox.sandboxId,
+      });
+    }
+    if (!skippedStaticAssetSync) {
+      const workerSandboxFiles = buildWorkerSandboxRestoreFiles();
+      await sandbox.writeFiles(workerSandboxFiles);
+      logInfo("sandbox.restore.worker_sandbox_assets_preloaded", {
+        sandboxId: sandbox.sandboxId,
+        paths: workerSandboxFiles.map((file) => file.path),
       });
     }
     const assetSyncMs = Date.now() - assetSyncStart;

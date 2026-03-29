@@ -343,6 +343,135 @@ test("worker-sandbox execute stops sandbox on command failure", async () => {
   }
 });
 
+test("worker-sandbox execute returns structured result when child command exits non-zero", async () => {
+  const h = createScenarioHarness();
+  try {
+    h.controller.defaultResponders.unshift((cmd) => {
+      if (cmd !== "bash") {
+        return undefined;
+      }
+      return {
+        exitCode: 7,
+        output: async (stream?: "stdout" | "stderr" | "both") => {
+          if (stream === "stdout") return "partial output\n";
+          if (stream === "stderr") return "boom\n";
+          return "partial output\nboom\n";
+        },
+      };
+    });
+
+    const route = getRoute();
+    const token = await buildWorkerSandboxBearerToken();
+
+    const req = buildPostRequest(
+      "/api/internal/worker-sandboxes/execute",
+      JSON.stringify({
+        task: "non-zero-exit",
+        command: { cmd: "bash", args: ["-lc", "echo partial output; echo boom >&2; exit 7"] },
+      }),
+      { authorization: `Bearer ${token}` },
+    );
+
+    const result = await callRoute(route.POST, req);
+    assert.equal(result.status, 200);
+
+    const body = result.json as WorkerSandboxExecuteResponse;
+    assert.equal(body.ok, false);
+    assert.equal(body.task, "non-zero-exit");
+    assert.equal(body.exitCode, 7);
+    assert.equal(body.stdout, "partial output\n");
+    assert.equal(body.stderr, "boom\n");
+    assert.equal(h.controller.eventsOfKind("stop").length, 1);
+  } finally {
+    h.teardown();
+  }
+});
+
+test("worker-sandbox execute returns captured files when they exist", async () => {
+  const h = createScenarioHarness();
+  try {
+    h.controller.defaultResponders.unshift((cmd) => {
+      if (cmd !== "bash") {
+        return undefined;
+      }
+      const handle = h.controller.lastCreated();
+      if (!handle) {
+        throw new Error("Expected sandbox handle before responder runs");
+      }
+      handle.writtenFiles.push({
+        path: "/workspace/output.txt",
+        content: Buffer.from("captured payload", "utf8"),
+      });
+      return {
+        exitCode: 0,
+        output: async (stream?: "stdout" | "stderr" | "both") => {
+          if (stream === "stdout") return "";
+          if (stream === "stderr") return "";
+          return "";
+        },
+      };
+    });
+
+    const route = getRoute();
+    const token = await buildWorkerSandboxBearerToken();
+
+    const req = buildPostRequest(
+      "/api/internal/worker-sandboxes/execute",
+      JSON.stringify({
+        task: "capture-success",
+        command: { cmd: "bash", args: ["-lc", "printf captured payload > /workspace/output.txt"] },
+        capturePaths: ["/workspace/output.txt"],
+      }),
+      { authorization: `Bearer ${token}` },
+    );
+
+    const result = await callRoute(route.POST, req);
+    assert.equal(result.status, 200);
+
+    const body = result.json as WorkerSandboxExecuteResponse;
+    assert.equal(body.ok, true);
+    assert.equal(body.capturedFiles.length, 1);
+    assert.equal(body.capturedFiles[0]!.path, "/workspace/output.txt");
+    assert.equal(
+      Buffer.from(body.capturedFiles[0]!.contentBase64, "base64").toString("utf8"),
+      "captured payload",
+    );
+  } finally {
+    h.teardown();
+  }
+});
+
+test("worker-sandbox execute passes command.env through to runCommand", async () => {
+  const h = createScenarioHarness();
+  try {
+    const route = getRoute();
+    const token = await buildWorkerSandboxBearerToken();
+
+    const req = buildPostRequest(
+      "/api/internal/worker-sandboxes/execute",
+      JSON.stringify({
+        task: "env-pass-through",
+        command: {
+          cmd: "bash",
+          args: ["-lc", "echo $INPUT_PATH"],
+          env: { INPUT_PATH: "/workspace/input.png" },
+        },
+      }),
+      { authorization: `Bearer ${token}` },
+    );
+
+    const result = await callRoute(route.POST, req);
+    assert.equal(result.status, 200);
+
+    const handle = h.controller.lastCreated()!;
+    assert.deepEqual(handle.commands[0]?.env, {
+      INPUT_PATH: "/workspace/input.png",
+    });
+  } finally {
+    h.teardown();
+  }
+});
+
 test("worker-sandbox execute returns structured error when sandbox create fails", async () => {
   const h = createScenarioHarness();
   try {

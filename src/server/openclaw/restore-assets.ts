@@ -71,6 +71,13 @@ export type RestoreAssetManifest = {
   staticPaths: string[];
 };
 
+export function buildWorkerSandboxRestoreFiles(): { path: string; content: Buffer }[] {
+  return [
+    { path: OPENCLAW_WORKER_SANDBOX_SKILL_PATH, content: Buffer.from(buildWorkerSandboxSkill()) },
+    { path: OPENCLAW_WORKER_SANDBOX_SCRIPT_PATH, content: Buffer.from(buildWorkerSandboxScript()) },
+  ];
+}
+
 export function buildStaticRestoreFiles(): { path: string; content: Buffer }[] {
   return [
     { path: OPENCLAW_FORCE_PAIR_SCRIPT_PATH, content: Buffer.from(buildForcePairScript()) },
@@ -114,8 +121,7 @@ export function buildStaticRestoreFiles(): { path: string; content: Buffer }[] {
     { path: OPENCLAW_REASONING_SCRIPT_PATH, content: Buffer.from(buildReasoningScript()) },
     { path: OPENCLAW_COMPARE_SKILL_PATH, content: Buffer.from(buildCompareSkill()) },
     { path: OPENCLAW_COMPARE_SCRIPT_PATH, content: Buffer.from(buildCompareScript()) },
-    { path: OPENCLAW_WORKER_SANDBOX_SKILL_PATH, content: Buffer.from(buildWorkerSandboxSkill()) },
-    { path: OPENCLAW_WORKER_SANDBOX_SCRIPT_PATH, content: Buffer.from(buildWorkerSandboxScript()) },
+    ...buildWorkerSandboxRestoreFiles(),
   ];
 }
 
