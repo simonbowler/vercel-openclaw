@@ -11,6 +11,7 @@ Start here if you want to understand how the app works in practice.
 - [Environment Variables](environment-variables.md)
 - [Deployment Protection](deployment-protection.md)
 - [API Reference](api-reference.md)
+- [Architecture Tradeoffs](architecture-tradeoffs.md)
 
 ## Reading order
 
@@ -21,3 +22,4 @@ Start here if you want to understand how the app works in practice.
 5. **Environment Variables** — every variable the app reads and when each one matters
 6. **Deployment Protection** — how Vercel Deployment Protection interacts with channel webhooks
 7. **API Reference** — request and response shapes for the admin and automation surfaces
+8. **Architecture Tradeoffs** — why the codebase is shaped the way it is, alternatives explored, and what you give up with each approach

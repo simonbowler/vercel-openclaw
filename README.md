@@ -79,4 +79,5 @@ npm run dev                      # http://localhost:3000
 | [Environment Variables](docs/environment-variables.md) | Full env var reference |
 | [API Reference](docs/api-reference.md) | Endpoint and payload reference |
 | [Deployment Protection](docs/deployment-protection.md) | Bypass secret behavior and display-safe URLs |
+| [Architecture Tradeoffs](docs/architecture-tradeoffs.md) | Why the codebase is shaped this way, alternatives explored |
 | [Contributing](CONTRIBUTING.md) | Architecture, routes, testing, development workflows |
