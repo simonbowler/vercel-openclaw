@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import type { ChannelName } from "@/shared/channels";
 import type { OperationContext, SingleMeta } from "@/shared/types";
 import {
@@ -513,6 +514,87 @@ export function isSafeFilename(name: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(name) && !name.startsWith(".");
 }
 
+/** Accept only normalized absolute paths under /workspace/. */
+export function isSafeWorkspaceAbsolutePath(value: string): boolean {
+  if (!value.startsWith("/workspace/")) {
+    return false;
+  }
+  const normalized = path.posix.normalize(value);
+  if (normalized !== value || !normalized.startsWith("/workspace/")) {
+    return false;
+  }
+
+  const relativePath = normalized.slice("/workspace/".length);
+  if (!relativePath) {
+    return false;
+  }
+
+  return relativePath.split("/").every(isSafeFilename);
+}
+
+/**
+ * Resolve an exact absolute sandbox path into a `kind: "data"` binary source.
+ * Only accepts paths that pass `isSafeWorkspaceAbsolutePath`.
+ */
+export async function resolveExactSandboxPathFromSandbox(
+  sandbox: { readFileToBuffer(opts: { path: string }): Promise<Buffer | null> },
+  absolutePath: string,
+): Promise<Extract<ReplyBinarySource, { kind: "data" }> | null> {
+  if (!isSafeWorkspaceAbsolutePath(absolutePath)) {
+    return null;
+  }
+  try {
+    const buffer = await sandbox.readFileToBuffer({ path: absolutePath });
+    if (!buffer || buffer.length === 0) {
+      return null;
+    }
+    if (buffer.length > MAX_SANDBOX_MEDIA_BYTES) {
+      logWarn("channels.sandbox_media_too_large", {
+        path: absolutePath,
+        sizeBytes: buffer.length,
+        maxBytes: MAX_SANDBOX_MEDIA_BYTES,
+      });
+      return null;
+    }
+    const filename = path.posix.basename(absolutePath);
+    const mimeType = inferMimeTypeFromFilename(filename);
+    const base64 = buffer.toString("base64");
+    logInfo("channels.sandbox_media_resolved", {
+      filename,
+      path: absolutePath,
+      sizeBytes: buffer.length,
+      mimeType,
+    });
+    return { kind: "data", mimeType, base64, filename };
+  } catch (error) {
+    logWarn("channels.sandbox_media_resolve_failed", {
+      error: formatError(error),
+      path: absolutePath,
+      reason: "read_failed",
+    });
+    return null;
+  }
+}
+
+/**
+ * Unified resolver: bare filenames go through candidate-dir fan-out,
+ * normalized `/workspace/*` paths resolve directly, everything else
+ * is rejected.
+ */
+export async function resolveSandboxUrlSource(
+  sandbox: { readFileToBuffer(opts: { path: string }): Promise<Buffer | null> },
+  reference: string,
+): Promise<Extract<ReplyBinarySource, { kind: "data" }> | null> {
+  if (isSafeFilename(reference)) {
+    return resolveFilenameFromSandbox(sandbox, reference);
+  }
+  if (isSafeWorkspaceAbsolutePath(reference)) {
+    return resolveExactSandboxPathFromSandbox(sandbox, reference);
+  }
+  logWarn("channels.sandbox_media_unsafe_filename", { filename: reference });
+  return null;
+}
+
 export function inferMimeTypeFromFilename(filename: string): string {
   const lower = filename.toLowerCase();
   // Images
@@ -636,13 +718,8 @@ export async function resolveSandboxMedia(
         out.push(image);
         continue;
       }
-      const filename = image.url;
-      if (!isSafeFilename(filename)) {
-        logWarn("channels.sandbox_media_unsafe_filename", { filename });
-        out.push(image);
-        continue;
-      }
-      const resolved = await resolveFilenameFromSandbox(sandbox, filename);
+      const reference = image.url;
+      const resolved = await resolveSandboxUrlSource(sandbox, reference);
       if (resolved) {
         out.push({ ...resolved, alt: image.alt });
       } else {
@@ -661,13 +738,8 @@ export async function resolveSandboxMedia(
         out.push(entry);
         continue;
       }
-      const filename = entry.source.url;
-      if (!isSafeFilename(filename)) {
-        logWarn("channels.sandbox_media_unsafe_filename", { filename });
-        out.push(entry);
-        continue;
-      }
-      const resolved = await resolveFilenameFromSandbox(sandbox, filename);
+      const reference = entry.source.url;
+      const resolved = await resolveSandboxUrlSource(sandbox, reference);
       if (resolved) {
         const source: ReplyBinarySource = { ...resolved, alt: entry.source.alt };
         out.push({ ...entry, source } as ReplyMedia);
