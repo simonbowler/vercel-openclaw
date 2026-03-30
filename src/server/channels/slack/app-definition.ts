@@ -64,9 +64,14 @@ export function buildSlackManifest(webhookUrl: string): Record<string, unknown> 
         messages_tab_enabled: true,
         messages_tab_read_only_enabled: false,
       },
+      assistant_view: {
+        assistant_description:
+          "OpenClaw AI assistant — ask questions, run tasks, and manage your workspace.",
+        suggested_prompts: [],
+      },
       bot_user: {
         display_name: "OpenClaw",
-        always_online: false,
+        always_online: true,
       },
       slash_commands: [
         {
