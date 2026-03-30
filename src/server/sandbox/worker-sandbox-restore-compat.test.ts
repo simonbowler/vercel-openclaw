@@ -18,7 +18,6 @@ import {
 } from "@/server/openclaw/config";
 import {
   buildRestoreAssetManifest,
-  buildRestoreRuntimeEnv,
 } from "@/server/openclaw/restore-assets";
 import { ensureSandboxRunning } from "@/server/sandbox/lifecycle";
 import { getInitializedMeta } from "@/server/store/store";
@@ -763,15 +762,13 @@ test("worker-sandbox launcher exits clearly when restored config has no allowed 
 });
 
 test("restore runtime env gives the worker-sandbox script the current deployment origin", async () => {
-  const restoreEnv = buildRestoreRuntimeEnv({
-    gatewayToken: "restore-gateway-token",
-    proxyOrigin: "https://current.example.com",
-  });
-
-  const encodedConfig = restoreEnv.OPENCLAW_CONFIG_JSON_B64;
-  assert.ok(encodedConfig);
-
-  const configJson = Buffer.from(encodedConfig, "base64").toString("utf8");
+  // Config is delivered via writeFiles (buildDynamicRestoreFiles) not env vars,
+  // so we build it directly here to test the worker script integration.
+  const { buildGatewayConfig } = await import("@/server/openclaw/config");
+  const configJson = buildGatewayConfig(
+    undefined,
+    "https://current.example.com",
+  );
 
   let requestedUrl: string | null = null;
   let authorizationHeader: string | null = null;

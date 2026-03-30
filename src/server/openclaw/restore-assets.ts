@@ -167,29 +167,18 @@ export function buildDynamicRestoreFiles(options: {
 
 export type RestoreRuntimeEnvOptions = {
   gatewayToken: string;
-  proxyOrigin: string;
   apiKey?: string;
-  telegramBotToken?: string;
-  telegramWebhookSecret?: string;
-  slackCredentials?: { botToken: string; signingSecret: string };
-  whatsappConfig?: WhatsAppGatewayConfig;
 };
 
 export function buildRestoreRuntimeEnv(
   options: RestoreRuntimeEnvOptions,
 ): Record<string, string> {
-  const configJson = buildGatewayConfig(
-    options.apiKey,
-    options.proxyOrigin,
-    options.telegramBotToken,
-    options.slackCredentials,
-    options.telegramWebhookSecret,
-    options.whatsappConfig,
-  );
-
+  // Config JSON is NOT passed via env — the Sandbox API enforces a 4096 byte
+  // env payload limit and the base64-encoded config exceeds it.  The config
+  // is delivered via writeFiles() (buildDynamicRestoreFiles) when the hash
+  // changes, or already baked into the snapshot when it matches.
   const env: Record<string, string> = {
     OPENCLAW_GATEWAY_TOKEN: options.gatewayToken,
-    OPENCLAW_CONFIG_JSON_B64: Buffer.from(configJson, "utf8").toString("base64"),
   };
 
   if (options.apiKey) {

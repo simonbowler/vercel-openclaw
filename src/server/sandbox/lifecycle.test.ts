@@ -1466,7 +1466,7 @@ test("restoreSandboxFromSnapshot passes gateway token via env even without API k
   });
 });
 
-test("restoreSandboxFromSnapshot passes current origin via OPENCLAW_CONFIG_JSON_B64 in restore env", async () => {
+test("restoreSandboxFromSnapshot writes config via writeFiles, not env", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
@@ -1475,6 +1475,8 @@ test("restoreSandboxFromSnapshot passes current origin via OPENCLAW_CONFIG_JSON_
       meta.status = "stopped";
       meta.snapshotId = "snap-restore-origin";
       meta.gatewayToken = "test-gw-token";
+      // Use null snapshotDynamicConfigHash to force a config write
+      meta.snapshotDynamicConfigHash = null;
     });
 
     globalThis.fetch = async () =>
@@ -1485,22 +1487,26 @@ test("restoreSandboxFromSnapshot passes current origin via OPENCLAW_CONFIG_JSON_
         tokenOverride: "my-gateway-key",
       });
 
-      // The restore env should contain the base64-encoded gateway config
-      // with the current origin baked in.
+      // Config should NOT be in the create-time env (would exceed 4096 byte limit)
       assert.ok(handle.createEnv, "Sandbox.create should receive env");
-      const encoded = handle.createEnv.OPENCLAW_CONFIG_JSON_B64;
-      assert.ok(encoded, "Restore env should contain OPENCLAW_CONFIG_JSON_B64");
+      assert.equal(
+        handle.createEnv.OPENCLAW_CONFIG_JSON_B64,
+        undefined,
+        "Config should not be passed via env (exceeds sandbox API 4096 byte limit)",
+      );
 
-      const config = JSON.parse(
-        Buffer.from(encoded, "base64").toString("utf8"),
-      ) as {
+      // Config should be written via writeFiles instead
+      const configFile = handle.writtenFiles.find(
+        (f) => f.path === OPENCLAW_CONFIG_PATH,
+      );
+      assert.ok(configFile, "Config should be written via writeFiles");
+      const config = JSON.parse(configFile.content.toString("utf8")) as {
         gateway?: { controlUi?: { allowedOrigins?: string[] } };
       };
-
       assert.deepStrictEqual(
         config.gateway?.controlUi?.allowedOrigins,
         ["https://test.example.com"],
-        "Restore env config should use the current origin passed to ensureSandboxRunning",
+        "Written config should use the current origin passed to ensureSandboxRunning",
       );
     } finally {
       globalThis.fetch = originalFetch;

@@ -192,27 +192,14 @@ test("worker sandbox restore files contain exactly the goal-critical pair", () =
 
 // --- buildRestoreRuntimeEnv ---
 
-test("buildRestoreRuntimeEnv encodes current proxy origin into OPENCLAW_CONFIG_JSON_B64", () => {
+test("buildRestoreRuntimeEnv does not include config JSON in env (exceeds 4096 byte limit)", () => {
   const env = buildRestoreRuntimeEnv({
     gatewayToken: "gw-token",
-    proxyOrigin: "https://current.example.com",
   });
 
   assert.equal(env.OPENCLAW_GATEWAY_TOKEN, "gw-token");
-
-  const encoded = env.OPENCLAW_CONFIG_JSON_B64;
-  assert.ok(encoded);
-
-  const config = JSON.parse(
-    Buffer.from(encoded, "base64").toString("utf8"),
-  ) as {
-    gateway?: { controlUi?: { allowedOrigins?: string[] } };
-  };
-
-  assert.deepStrictEqual(config.gateway?.controlUi?.allowedOrigins, [
-    "https://current.example.com",
-  ]);
-
+  assert.equal(env.OPENCLAW_CONFIG_JSON_B64, undefined,
+    "Config must not be passed via env — sandbox API enforces 4096 byte env limit");
   assert.equal(env.AI_GATEWAY_API_KEY, undefined);
   assert.equal(env.OPENAI_API_KEY, undefined);
   assert.equal(env.OPENAI_BASE_URL, undefined);
@@ -222,7 +209,6 @@ test("buildRestoreRuntimeEnv includes AI gateway env when apiKey is present", ()
   const env = buildRestoreRuntimeEnv({
     gatewayToken: "gw-token",
     apiKey: "test-ai-key",
-    proxyOrigin: "https://current.example.com",
   });
 
   assert.equal(env.AI_GATEWAY_API_KEY, "test-ai-key");

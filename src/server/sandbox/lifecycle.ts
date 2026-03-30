@@ -2579,14 +2579,7 @@ async function restoreSandboxFromSnapshot(
 
     const restoreEnv = buildRestoreRuntimeEnv({
       gatewayToken: latest.gatewayToken,
-      proxyOrigin: origin,
       apiKey: freshApiKey,
-      telegramBotToken: latest.channels.telegram?.botToken,
-      telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
-      slackCredentials: slackConfig
-        ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret }
-        : undefined,
-      whatsappConfig: toWhatsAppGatewayConfig(latest.channels.whatsapp),
     });
 
     const sandboxCreateStart = Date.now();
@@ -2707,9 +2700,9 @@ async function restoreSandboxFromSnapshot(
     });
     logPhase("mutateMeta_booting", { ms: elapsedSince("mutateMeta3"), sandboxId: sandbox.sandboxId, status: "booting" });
 
-    // Config, credentials, and firewall policy are all passed via create-time
-    // env.  The fast-restore script reads them from env and writes locally.
-    // No per-command env needed — everything is in the sandbox env.
+    // Config is written via writeFiles() above (or baked into the snapshot).
+    // Gateway token and API key are passed via create-time env.
+    // The fast-restore script reads credentials from env and config from disk.
     const READINESS_TIMEOUT_SECONDS = 30;
     const bootOverlapStart = Date.now();
     let firewallSyncMs = 0;
