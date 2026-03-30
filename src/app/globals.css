@@ -2498,6 +2498,14 @@ html body[data-scroll-locked] {
   line-height: 1.4;
 }
 
+.status-fact-warn {
+  border-color: var(--warning, #b45309);
+}
+
+.status-fact-warn dd {
+  color: var(--warning, #b45309);
+}
+
 .status-secondary-details {
   margin-top: 16px;
   border: 1px solid var(--border);

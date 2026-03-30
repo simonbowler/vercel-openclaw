@@ -1,5 +1,14 @@
 import type { PublicChannelState } from "@/shared/channel-admin-state";
-import type { RestorePreparedStatus, RestorePreparedReason } from "@/shared/types";
+import type {
+  RestorePreparedStatus,
+  RestorePreparedReason,
+  RestorePhaseMetrics,
+  RestoreOracleState,
+} from "@/shared/types";
+import type {
+  RestoreTargetAttestation,
+  RestoreTargetPlan,
+} from "@/shared/launch-verification";
 
 export type DomainCategory = "npm" | "curl" | "git" | "dns" | "fetch" | "unknown";
 
@@ -91,6 +100,19 @@ export type StatusPayload = {
     runtimeDynamicConfigHash: string | null;
     snapshotAssetSha256: string | null;
     runtimeAssetSha256: string | null;
+    attestation?: RestoreTargetAttestation;
+    plan?: RestoreTargetPlan;
+    oracle?: RestoreOracleState;
+  };
+  lifecycle: {
+    lastRestoreMetrics: RestorePhaseMetrics | null;
+    restoreHistory: RestorePhaseMetrics[];
+    lastTokenRefreshAt: number | null;
+    lastTokenSource: "oidc" | "api-key" | null;
+    lastTokenExpiresAt: number | null;
+    lastTokenRefreshError: string | null;
+    consecutiveTokenRefreshFailures: number;
+    breakerOpenUntil: number | null;
   };
   user: {
     sub: string;

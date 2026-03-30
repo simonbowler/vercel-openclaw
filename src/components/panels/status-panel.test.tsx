@@ -3,6 +3,10 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { StatusPayload, RunAction } from "@/components/admin-types";
+import {
+  DEFAULT_STATUS_LIFECYCLE,
+  DEFAULT_STATUS_RESTORE_TARGET,
+} from "@/components/status-payload-defaults";
 import type { ChannelConnectability } from "@/shared/channel-connectability";
 
 import { getStatusRequestPath } from "../admin-shell";
@@ -11,13 +15,6 @@ import {
   getAutoSleepDisplay,
   StatusPanel,
 } from "./status-panel";
-
-type LifecycleAwareStatus = StatusPayload & {
-  lifecycle?: {
-    restoreHistory?: unknown[];
-  };
-  snapshotHistory?: unknown[];
-};
 
 function makeConnectability(
   channel: ChannelConnectability["channel"],
@@ -90,10 +87,16 @@ const CHANNELS: StatusPayload["channels"] = {
   },
 };
 
+const DEFAULT_RESTORE_TARGET: StatusPayload["restoreTarget"] =
+  DEFAULT_STATUS_RESTORE_TARGET;
+
+const DEFAULT_LIFECYCLE: StatusPayload["lifecycle"] =
+  DEFAULT_STATUS_LIFECYCLE;
+
 const RUN_ACTION: RunAction = async () => true;
 const CHECK_HEALTH = async () => {};
 
-function makeStatus(overrides: Partial<LifecycleAwareStatus> = {}): LifecycleAwareStatus {
+function makeStatus(overrides: Partial<StatusPayload> = {}): StatusPayload {
   return {
     authMode: "admin-secret",
     storeBackend: "upstash",
@@ -124,21 +127,14 @@ function makeStatus(overrides: Partial<LifecycleAwareStatus> = {}): LifecycleAwa
       wouldBlock: [],
     },
     channels: CHANNELS,
-    restoreTarget: {
-      restorePreparedStatus: "unknown",
-      restorePreparedReason: null,
-      restorePreparedAt: null,
-      snapshotDynamicConfigHash: null,
-      runtimeDynamicConfigHash: null,
-      snapshotAssetSha256: null,
-      runtimeAssetSha256: null,
-    },
+    restoreTarget: DEFAULT_RESTORE_TARGET,
+    lifecycle: DEFAULT_LIFECYCLE,
     user: { sub: "admin", name: "Admin" },
     ...overrides,
   };
 }
 
-function renderPanel(status: LifecycleAwareStatus, pendingAction: string | null = null): string {
+function renderPanel(status: StatusPayload, pendingAction: string | null = null): string {
   return renderToStaticMarkup(
     <StatusPanel
       status={status}
@@ -158,7 +154,6 @@ test("StatusPanel renders first-run callout and create action when sandbox is un
       snapshotId: null,
       gatewayReady: false,
       timeoutRemainingMs: null,
-      lifecycle: { restoreHistory: [] },
     }),
   );
 
@@ -190,7 +185,6 @@ test("StatusPanel renders first-run setup progress detail", () => {
           { ts: Date.now(), stream: "stdout", text: "npm notice added 1 package" },
         ],
       },
-      lifecycle: { restoreHistory: [] },
     }),
   );
 
@@ -204,7 +198,6 @@ test("StatusPanel renders restore action when errored with a snapshot", () => {
   const html = renderPanel(
     makeStatus({
       status: "error",
-      lifecycle: { restoreHistory: [{ totalMs: 1000 }] },
     }),
   );
 
@@ -235,10 +228,9 @@ test("StatusPanel renders minute-only auto-sleep and gateway check metadata", ()
   assert.ok(html.includes("Gateway"));
   assert.ok(html.includes("Unknown"));
   assert.ok(html.includes("Checked 2m ago"));
-  assert.ok(!html.includes("Last keepalive"));
 });
 
-test("StatusPanel renders past estimated sleep warning when timeout is expired", () => {
+test("StatusPanel shows stopped layout (no auto-sleep card) when timeout is expired", () => {
   const html = renderPanel(
     makeStatus({
       timeoutRemainingMs: 0,
@@ -246,8 +238,10 @@ test("StatusPanel renders past estimated sleep warning when timeout is expired",
     }),
   );
 
-  assert.ok(html.includes("Past estimated sleep time"));
-  assert.ok(html.includes("sandbox may be asleep"));
+  // When asleep, auto-sleep is not shown — the panel uses the stopped layout
+  assert.ok(!html.includes("Auto-sleep"), "auto-sleep should not appear in stopped layout");
+  // But the badge shows asleep
+  assert.ok(html.includes("Asleep"));
 });
 
 test("StatusPanel shows asleep badge and restart action after estimated timeout elapses", () => {
@@ -331,4 +325,116 @@ test("deriveEffectiveStatus returns asleep only for expired estimated running st
   assert.equal(deriveEffectiveStatus("running", 0, "live"), "running");
   assert.equal(deriveEffectiveStatus("stopped", 0, "estimated"), "stopped");
   assert.equal(deriveEffectiveStatus("running", null, "estimated"), "running");
+});
+
+test("StatusPanel shows channel summary when channels are configured", () => {
+  const html = renderPanel(
+    makeStatus({
+      channels: {
+        ...CHANNELS,
+        slack: { ...CHANNELS.slack, configured: true },
+        telegram: { ...CHANNELS.telegram, configured: true },
+      },
+    }),
+  );
+
+  assert.ok(html.includes("Channels"));
+  assert.ok(html.includes("Slack, Telegram"));
+});
+
+test("StatusPanel shows restore estimate from lifecycle metrics", () => {
+  const html = renderPanel(
+    makeStatus({
+      status: "stopped",
+      lifecycle: {
+        ...DEFAULT_LIFECYCLE,
+        lastRestoreMetrics: {
+          sandboxCreateMs: 2000,
+          tokenWriteMs: 100,
+          assetSyncMs: 500,
+          startupScriptMs: 300,
+          forcePairMs: 200,
+          firewallSyncMs: 100,
+          localReadyMs: 3000,
+          publicReadyMs: 1000,
+          totalMs: 8200,
+          skippedStaticAssetSync: false,
+          assetSha256: "abc",
+          vcpus: 2,
+          recordedAt: Date.now(),
+        },
+      },
+    }),
+  );
+
+  assert.ok(html.includes("~8s on 2 vCPUs"));
+});
+
+test("StatusPanel shows last active time when stopped", () => {
+  const html = renderPanel(
+    makeStatus({
+      status: "stopped",
+      lastKeepaliveAt: Date.now() - 120_000,
+    }),
+  );
+
+  assert.ok(html.includes("Last active"));
+  assert.ok(html.includes("2m ago"));
+});
+
+test("StatusPanel shows token health warning when failures exist", () => {
+  const html = renderPanel(
+    makeStatus({
+      status: "stopped",
+      lifecycle: {
+        ...DEFAULT_LIFECYCLE,
+        consecutiveTokenRefreshFailures: 3,
+        breakerOpenUntil: null,
+      },
+    }),
+  );
+
+  assert.ok(html.includes("Token health"));
+  assert.ok(html.includes("3 consecutive failures"));
+});
+
+test("StatusPanel shows firewall mode when running and not disabled", () => {
+  const html = renderPanel(
+    makeStatus({
+      firewall: {
+        mode: "enforcing",
+        allowlist: ["example.com", "api.example.com"],
+        learned: [],
+        events: [],
+        updatedAt: 0,
+        lastIngestedAt: null,
+        learningStartedAt: null,
+        commandsObserved: 0,
+        wouldBlock: [],
+      },
+    }),
+  );
+
+  assert.ok(html.includes("Firewall"));
+  assert.ok(html.includes("Enforcing"));
+  assert.ok(html.includes("2 domains"));
+});
+
+test("StatusPanel shows sandbox ID when running", () => {
+  const html = renderPanel(makeStatus());
+
+  assert.ok(html.includes("Sandbox"));
+  assert.ok(html.includes("sbx-test"));
+});
+
+test("StatusPanel hides auto-sleep card when stopped", () => {
+  const html = renderPanel(
+    makeStatus({
+      status: "stopped",
+      timeoutRemainingMs: null,
+      timeoutSource: "none",
+    }),
+  );
+
+  assert.ok(!html.includes("Auto-sleep"));
 });

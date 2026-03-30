@@ -116,6 +116,12 @@ function formatDurationMinutes(ms: number): string {
   return `${hours}h ${String(minutes).padStart(2, "0")}m`;
 }
 
+function formatDurationSeconds(ms: number): string {
+  if (ms < 1_000) return `${ms}ms`;
+  const seconds = Math.round(ms / 1_000);
+  return `${seconds}s`;
+}
+
 function formatRelativeTime(timestamp: number): string {
   const delta = Date.now() - timestamp;
   if (delta < 5_000) return "just now";
@@ -171,39 +177,159 @@ export function deriveEffectiveStatus(
   return status;
 }
 
-type StatusFact = { label: string; value: string; detail?: string };
+// ---------------------------------------------------------------------------
+// Fact builders — stopped vs running
+// ---------------------------------------------------------------------------
 
-function getPrimaryStatusFacts(status: StatusPayload): StatusFact[] {
-  const facts: StatusFact[] = [
-    {
-      label: "Gateway",
-      value: formatGatewayStatus(status.gatewayStatus),
-      detail:
-        status.gatewayCheckedAt != null
-          ? `Checked ${formatRelativeTime(status.gatewayCheckedAt)}`
-          : undefined,
-    },
-    {
-      label: "Restore point",
-      value: status.snapshotId ? "Available" : "None",
-    },
-    {
-      label: "Auto-sleep",
-      value: getAutoSleepDisplay(status, status.timeoutRemainingMs),
-      detail:
-        status.timeoutSource === "none"
-          ? undefined
-          : `Target ${Math.round(status.sleepAfterMs / 60_000)}m`,
-    },
-  ];
-  if (status.status !== "running") {
-    return facts.filter((fact) => fact.label !== "Gateway");
+type StatusFact = { label: string; value: string; detail?: string; warn?: boolean };
+
+const EMPTY_LIFECYCLE: NonNullable<StatusPayload["lifecycle"]> = {
+  lastRestoreMetrics: null,
+  restoreHistory: [],
+  lastTokenRefreshAt: null,
+  lastTokenSource: null,
+  lastTokenExpiresAt: null,
+  lastTokenRefreshError: null,
+  consecutiveTokenRefreshFailures: 0,
+  breakerOpenUntil: null,
+};
+
+function getChannelSummary(channels: StatusPayload["channels"]): StatusFact | null {
+  const items: string[] = [];
+  if (channels.slack.configured) items.push("Slack");
+  if (channels.telegram.configured) items.push("Telegram");
+  if (channels.discord.configured) items.push("Discord");
+  if (channels.whatsapp.configured) items.push("WhatsApp");
+  if (items.length === 0) return null;
+  return { label: "Channels", value: items.join(", ") };
+}
+
+function getTokenHealthFact(lifecycle: NonNullable<StatusPayload["lifecycle"]>): StatusFact | null {
+  if (lifecycle.consecutiveTokenRefreshFailures > 0) {
+    const msg = lifecycle.breakerOpenUntil && lifecycle.breakerOpenUntil > Date.now()
+      ? `Paused (${lifecycle.consecutiveTokenRefreshFailures} failures)`
+      : `${lifecycle.consecutiveTokenRefreshFailures} consecutive failures`;
+    return { label: "Token health", value: msg, warn: true };
   }
+  if (lifecycle.lastTokenSource) {
+    return { label: "Token", value: lifecycle.lastTokenSource.toUpperCase() };
+  }
+  return null;
+}
+
+function getRestoreEstimate(lifecycle: NonNullable<StatusPayload["lifecycle"]>): string | null {
+  const metrics = lifecycle.lastRestoreMetrics;
+  if (!metrics) return null;
+  const time = formatDurationSeconds(metrics.totalMs);
+  return `~${time} on ${metrics.vcpus} vCPU${metrics.vcpus !== 1 ? "s" : ""}`;
+}
+
+function getRestoreReadiness(restoreTarget: StatusPayload["restoreTarget"]): StatusFact | null {
+  if (!restoreTarget.attestation) return null;
+  const att = restoreTarget.attestation;
+  if (att.reusable) return { label: "Restore readiness", value: "Pre-warmed" };
+  if (att.needsPrepare) {
+    return {
+      label: "Restore readiness",
+      value: "Needs preparation",
+      detail: att.reasons.join("; "),
+      warn: true,
+    };
+  }
+  return null;
+}
+
+function getStoppedFacts(status: StatusPayload): StatusFact[] {
+  const facts: StatusFact[] = [];
+  const lifecycle = status.lifecycle ?? EMPTY_LIFECYCLE;
+
+  // Restore point + speed estimate
+  const estimate = getRestoreEstimate(lifecycle);
+  facts.push({
+    label: "Restore point",
+    value: status.snapshotId ? "Available" : "None",
+    detail: estimate ?? undefined,
+  });
+
+  // Restore readiness
+  const readiness = getRestoreReadiness(status.restoreTarget);
+  if (readiness) facts.push(readiness);
+
+  // Last active
+  if (status.lastKeepaliveAt) {
+    facts.push({
+      label: "Last active",
+      value: formatRelativeTime(status.lastKeepaliveAt),
+    });
+  }
+
+  // Channel summary
+  const channelFact = getChannelSummary(status.channels);
+  if (channelFact) facts.push(channelFact);
+
+  // Token health (warn only)
+  const tokenFact = getTokenHealthFact(lifecycle);
+  if (tokenFact?.warn) facts.push(tokenFact);
+
   return facts;
 }
 
-function getSecondaryStatusFacts(status: StatusPayload): StatusFact[] {
-  return [
+function getRunningFacts(status: StatusPayload): StatusFact[] {
+  const facts: StatusFact[] = [];
+  const lifecycle = status.lifecycle ?? EMPTY_LIFECYCLE;
+
+  // Gateway
+  facts.push({
+    label: "Gateway",
+    value: formatGatewayStatus(status.gatewayStatus),
+    detail:
+      status.gatewayCheckedAt != null
+        ? `Checked ${formatRelativeTime(status.gatewayCheckedAt)}`
+        : undefined,
+  });
+
+  // Auto-sleep
+  facts.push({
+    label: "Auto-sleep",
+    value: getAutoSleepDisplay(status, status.timeoutRemainingMs),
+    detail:
+      status.timeoutSource === "none"
+        ? undefined
+        : `Target ${Math.round(status.sleepAfterMs / 60_000)}m`,
+  });
+
+  // Sandbox ID
+  if (status.sandboxId) {
+    facts.push({
+      label: "Sandbox",
+      value: status.sandboxId,
+    });
+  }
+
+  // Channel summary
+  const channelFact = getChannelSummary(status.channels);
+  if (channelFact) facts.push(channelFact);
+
+  // Token health
+  const tokenFact = getTokenHealthFact(status.lifecycle);
+  if (tokenFact) facts.push(tokenFact);
+
+  // Firewall
+  if (status.firewall.mode !== "disabled") {
+    const mode = status.firewall.mode === "enforcing" ? "Enforcing" : "Learning";
+    const domainCount = status.firewall.learned.length + status.firewall.allowlist.length;
+    facts.push({
+      label: "Firewall",
+      value: mode,
+      detail: domainCount > 0 ? `${domainCount} domain${domainCount !== 1 ? "s" : ""}` : undefined,
+    });
+  }
+
+  return facts;
+}
+
+function getSecondaryFacts(status: StatusPayload): StatusFact[] {
+  const facts: StatusFact[] = [
     { label: "Auth", value: status.authMode },
     {
       label: "Store",
@@ -212,7 +338,15 @@ function getSecondaryStatusFacts(status: StatusPayload): StatusFact[] {
         : `${status.storeBackend} (memory only)`,
     },
   ];
+  if (status.sandboxId && status.status !== "running") {
+    facts.push({ label: "Sandbox ID", value: status.sandboxId });
+  }
+  return facts;
 }
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
 
 export function StatusPanel({
   status,
@@ -287,6 +421,12 @@ export function StatusPanel({
   const activeStepIndex = getSetupStepIndex(setupProgress);
   const setupFailed = setupProgress?.phase === "failed";
 
+  const isRunning = lifecycleStatus === "running" && effectiveStatus !== "asleep";
+  const primaryFacts = isRunning
+    ? getRunningFacts(status)
+    : getStoppedFacts(status);
+  const secondaryFacts = getSecondaryFacts(status);
+
   return (
     <article className="panel-card">
       <div className="panel-head">
@@ -298,8 +438,8 @@ export function StatusPanel({
       </div>
 
       <dl className="metrics-grid">
-        {getPrimaryStatusFacts(status).map((fact) => (
-          <div key={fact.label}>
+        {primaryFacts.map((fact) => (
+          <div key={fact.label} className={fact.warn ? "status-fact-warn" : undefined}>
             <dt>{fact.label}</dt>
             <dd>{fact.value}</dd>
             {fact.detail ? (
@@ -309,17 +449,19 @@ export function StatusPanel({
         ))}
       </dl>
 
-      <details className="status-secondary-details">
-        <summary>Environment details</summary>
-        <dl className="status-secondary-grid">
-          {getSecondaryStatusFacts(status).map((fact) => (
-            <div key={fact.label}>
-              <dt>{fact.label}</dt>
-              <dd>{fact.value}</dd>
-            </div>
-          ))}
-        </dl>
-      </details>
+      {secondaryFacts.length > 0 ? (
+        <details className="status-secondary-details">
+          <summary>Environment details</summary>
+          <dl className="status-secondary-grid">
+            {secondaryFacts.map((fact) => (
+              <div key={fact.label}>
+                <dt>{fact.label}</dt>
+                <dd>{fact.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      ) : null}
 
       {firstRunCallout ? (
         <div className="status-callout">

@@ -1,0 +1,58 @@
+import type { StatusPayload } from "@/components/admin-types";
+
+export const DEFAULT_STATUS_RESTORE_TARGET: StatusPayload["restoreTarget"] = {
+  restorePreparedStatus: "unknown",
+  restorePreparedReason: null,
+  restorePreparedAt: null,
+  snapshotDynamicConfigHash: null,
+  runtimeDynamicConfigHash: null,
+  snapshotAssetSha256: null,
+  runtimeAssetSha256: null,
+  attestation: {
+    desiredDynamicConfigHash: "test-dynamic-config-hash",
+    desiredAssetSha256: "test-asset-hash",
+    snapshotDynamicConfigHash: null,
+    runtimeDynamicConfigHash: null,
+    snapshotAssetSha256: null,
+    runtimeAssetSha256: null,
+    restorePreparedStatus: "unknown",
+    restorePreparedReason: null,
+    restorePreparedAt: null,
+    runtimeConfigFresh: null,
+    snapshotConfigFresh: null,
+    runtimeAssetsFresh: null,
+    snapshotAssetsFresh: null,
+    reusable: false,
+    needsPrepare: false,
+    reasons: [],
+  },
+  plan: {
+    schemaVersion: 1,
+    status: "ready",
+    blocking: false,
+    reasons: [],
+    actions: [],
+  },
+  oracle: {
+    status: "idle",
+    pendingReason: null,
+    lastEvaluatedAt: null,
+    lastStartedAt: null,
+    lastCompletedAt: null,
+    lastBlockedReason: null,
+    lastError: null,
+    consecutiveFailures: 0,
+    lastResult: null,
+  },
+};
+
+export const DEFAULT_STATUS_LIFECYCLE: NonNullable<StatusPayload["lifecycle"]> = {
+  lastRestoreMetrics: null,
+  restoreHistory: [],
+  lastTokenRefreshAt: null,
+  lastTokenSource: null,
+  lastTokenExpiresAt: null,
+  lastTokenRefreshError: null,
+  consecutiveTokenRefreshFailures: 0,
+  breakerOpenUntil: null,
+};

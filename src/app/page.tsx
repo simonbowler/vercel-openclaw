@@ -8,6 +8,8 @@ import {
 import { getInitializedMeta, getStore } from "@/server/store/store";
 import { getPublicChannelState } from "@/server/channels/state";
 import { computeWouldBlock } from "@/server/firewall/state";
+import { buildRestoreTargetAttestation } from "@/server/sandbox/restore-attestation";
+import { buildRestoreTargetPlan } from "@/server/sandbox/restore-attestation";
 import { getSandboxSleepConfig } from "@/server/sandbox/timeout";
 import type { StatusPayload } from "@/components/admin-types";
 
@@ -37,6 +39,12 @@ async function getInitialStatus(): Promise<StatusPayload | null> {
     });
 
     const sleepConfig = getSandboxSleepConfig();
+    const restoreAttestation = buildRestoreTargetAttestation(meta);
+    const restorePlan = buildRestoreTargetPlan({
+      attestation: restoreAttestation,
+      status: meta.status,
+      sandboxId: meta.sandboxId,
+    });
 
     return {
       authMode,
@@ -66,6 +74,20 @@ async function getInitialStatus(): Promise<StatusPayload | null> {
         runtimeDynamicConfigHash: meta.runtimeDynamicConfigHash,
         snapshotAssetSha256: meta.snapshotAssetSha256,
         runtimeAssetSha256: meta.runtimeAssetSha256,
+        attestation: restoreAttestation,
+        plan: restorePlan,
+        oracle: meta.restoreOracle,
+      },
+      lifecycle: {
+        lastRestoreMetrics: meta.lastRestoreMetrics ?? null,
+        restoreHistory: (meta.restoreHistory ?? []).slice(0, 5),
+        lastTokenRefreshAt: meta.lastTokenRefreshAt,
+        lastTokenSource: meta.lastTokenSource ?? null,
+        lastTokenExpiresAt: meta.lastTokenExpiresAt ?? null,
+        lastTokenRefreshError: meta.lastTokenRefreshError ?? null,
+        consecutiveTokenRefreshFailures:
+          meta.consecutiveTokenRefreshFailures ?? 0,
+        breakerOpenUntil: meta.breakerOpenUntil ?? null,
       },
       user: { sub: "admin", name: "Admin" },
     };

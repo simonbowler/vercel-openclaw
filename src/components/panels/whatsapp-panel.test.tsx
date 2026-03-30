@@ -3,6 +3,10 @@ import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import type { RequestJson, RunAction, StatusPayload } from "@/components/admin-types";
+import {
+  DEFAULT_STATUS_LIFECYCLE,
+  DEFAULT_STATUS_RESTORE_TARGET,
+} from "@/components/status-payload-defaults";
 import type { ChannelConnectability } from "@/shared/channel-connectability";
 
 import {
@@ -137,14 +141,9 @@ function makeStatus(
       },
     },
     restoreTarget: {
-      restorePreparedStatus: "unknown",
-      restorePreparedReason: null,
-      restorePreparedAt: null,
-      snapshotDynamicConfigHash: null,
-      runtimeDynamicConfigHash: null,
-      snapshotAssetSha256: null,
-      runtimeAssetSha256: null,
+      ...DEFAULT_STATUS_RESTORE_TARGET,
     },
+    lifecycle: DEFAULT_STATUS_LIFECYCLE,
     user: { sub: "admin", name: "Admin" },
   };
 }
