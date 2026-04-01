@@ -558,7 +558,8 @@ _ready=0
 _deadline=\$(( \$(date +%s) + _ready_timeout ))
 while [ "\$(date +%s)" -lt "\$_deadline" ]; do
   _attempts=\$((_attempts + 1))
-  if curl -s -f --max-time 1 http://localhost:${OPENCLAW_PORT}/ 2>/dev/null | grep -q 'openclaw-app'; then
+  _http_code=\$(curl -s -o /dev/null -w '%{http_code}' --max-time 1 http://localhost:${OPENCLAW_PORT}/ 2>/dev/null || true)
+  if [ "\$_http_code" -gt 0 ] 2>/dev/null && [ "\$_http_code" -lt 600 ] 2>/dev/null; then
     _ready=1
     break
   fi
