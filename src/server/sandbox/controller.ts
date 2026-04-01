@@ -22,6 +22,8 @@ export type SnapshotResult = {
 };
 
 export type CreateParams = {
+  name?: string;
+  persistent?: boolean;
   ports?: number[];
   timeout?: number;
   resources?: { vcpus: number };

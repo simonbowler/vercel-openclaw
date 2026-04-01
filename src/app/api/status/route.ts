@@ -117,10 +117,15 @@ export async function GET(request: Request): Promise<Response> {
       ? await readSetupProgress(responseMeta.id, responseMeta.lifecycleAttemptId)
       : null;
 
+    const sandboxSdkVersion = await import("@vercel/sandbox/package.json", { with: { type: "json" } })
+      .then((m) => (m.default as { version?: string }).version ?? null)
+      .catch(() => null);
+
     const response = Response.json({
       authMode: getAuthMode(),
       storeBackend: getStore().name,
       persistentStore: getStore().name !== "memory",
+      sandboxSdkVersion,
       status: responseMeta.status,
       sandboxId: responseMeta.sandboxId,
       snapshotId: responseMeta.snapshotId,

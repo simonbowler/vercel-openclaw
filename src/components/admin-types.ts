@@ -66,6 +66,7 @@ export type StatusPayload = {
   authMode: "admin-secret" | "sign-in-with-vercel";
   storeBackend: string;
   persistentStore: boolean;
+  sandboxSdkVersion?: string | null;
   status: string;
   sandboxId: string | null;
   snapshotId: string | null;

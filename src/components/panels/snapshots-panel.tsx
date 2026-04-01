@@ -181,6 +181,10 @@ export function SnapshotsPanel({
           <dt>History</dt>
           <dd>{loading ? "\u2026" : snapshots.length}</dd>
         </div>
+        <div>
+          <dt>SDK version</dt>
+          <dd>{status.sandboxSdkVersion ?? "unknown"}</dd>
+        </div>
       </dl>
 
       {/* Snapshot list — fixed min-height avoids CLS when count changes */}
