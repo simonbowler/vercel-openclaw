@@ -2280,7 +2280,6 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
     const vcpus = getSandboxVcpus();
     const sleepAfterMs = getSandboxSleepAfterMs();
     // Sandbox names must be lowercase alphanumeric + hyphens.
-    // Derive a stable name from the instance ID.
     const sandboxName = `oc-${current.id.replace(/[^a-z0-9-]/gi, "-").toLowerCase()}`;
     logInfo("sandbox.create.params", ctx({
       sandboxName,
@@ -2289,30 +2288,37 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
       vcpus,
       sleepAfterMs,
     }));
-    progress.appendLine("system", `Creating persistent sandbox: ${sandboxName}`);
+
+    // Try get() first (auto-resumes stopped persistent sandbox in one call).
+    // Fall back to create() only if the sandbox doesn't exist yet.
     let sandbox;
     try {
-      sandbox = await getSandboxController().create({
-        name: sandboxName,
-        persistent: true,
-        ports: SANDBOX_PORTS,
-        timeout: sleepAfterMs,
-        resources: { vcpus },
-        ...(await buildRuntimeEnv()),
-      });
-    } catch (createErr) {
-      const apiJson = (createErr as { json?: unknown }).json;
-      const apiText = (createErr as { text?: unknown }).text;
-      logError("sandbox.create.failed", ctx({
-        sandboxName,
-        error: createErr instanceof Error ? createErr.message : String(createErr),
-        ...(apiJson ? { apiJson } : {}),
-        ...(apiText ? { apiText } : {}),
-      }));
-      progress.appendLine("system", `Create failed: ${createErr instanceof Error ? createErr.message : String(createErr)}`);
-      throw createErr;
+      progress.appendLine("system", `Resuming persistent sandbox: ${sandboxName}`);
+      sandbox = await getSandboxController().get({ sandboxId: sandboxName });
+      progress.appendLine("system", `Resumed: ${sandbox.sandboxId} status=${sandbox.status}`);
+    } catch {
+      progress.appendLine("system", `No existing sandbox — creating: ${sandboxName}`);
+      try {
+        sandbox = await getSandboxController().create({
+          name: sandboxName,
+          persistent: true,
+          ports: SANDBOX_PORTS,
+          timeout: sleepAfterMs,
+          resources: { vcpus },
+          ...(await buildRuntimeEnv()),
+        });
+        progress.appendLine("system", `Created: ${sandbox.sandboxId}`);
+      } catch (createErr) {
+        const apiJson = (createErr as { json?: unknown }).json;
+        logError("sandbox.create.failed", ctx({
+          sandboxName,
+          error: createErr instanceof Error ? createErr.message : String(createErr),
+          ...(apiJson ? { apiJson } : {}),
+        }));
+        progress.appendLine("system", `Create failed: ${createErr instanceof Error ? createErr.message : String(createErr)}`);
+        throw createErr;
+      }
     }
-    progress.appendLine("system", `Sandbox ready: ${sandbox.sandboxId} (name=${sandboxName}) status=${sandbox.status} timeout=${sandbox.timeout}`);
 
     logInfo("sandbox.status_transition", ctx({ from: "creating", to: "setup", sandboxId: sandbox.sandboxId, sandboxStatus: sandbox.status, vcpus, sleepAfterMs }));
     await mutateMeta((meta) => {
@@ -2322,17 +2328,13 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
       meta.lastAccessedAt = Date.now();
     });
 
-    // Check if this is a resumed persistent sandbox (already has openclaw installed)
-    progress.appendLine("system", "Checking if sandbox has openclaw installed...");
-    let versionCheck;
-    try {
-      versionCheck = await sandbox.runCommand(OPENCLAW_BIN, ["--version"]);
-    } catch (verErr) {
-      progress.appendLine("system", `Version check threw: ${verErr instanceof Error ? verErr.message : String(verErr)}`);
-      // Treat as fresh sandbox
-      versionCheck = { exitCode: 1, output: async () => "" };
-    }
-    const isResumed = versionCheck.exitCode === 0;
+    // Detect resumed persistent sandbox by checking if the openclaw binary
+    // exists on disk (sub-ms stat) instead of running it (loads 577MB package).
+    const whichCheck = await sandbox.runCommand("bash", [
+      "-c", `test -x "$(command -v ${OPENCLAW_BIN} 2>/dev/null)" && echo yes || echo no`,
+    ]);
+    const isResumed = (await whichCheck.output("stdout")).trim() === "yes";
+    progress.appendLine("system", isResumed ? "Persistent sandbox resumed" : "Fresh sandbox");
 
     if (isResumed) {
       // Resumed persistent sandbox — run fast restore (update config/tokens, restart gateway)
