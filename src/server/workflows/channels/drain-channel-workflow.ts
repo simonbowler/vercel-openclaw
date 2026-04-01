@@ -321,6 +321,53 @@ async function buildExistingBootHandle(
       };
     }
   }
+  if (typeof bootMessageId === "string" && channel === "slack") {
+    const meta = await getInitializedMeta();
+    const slackConfig = meta.channels.slack;
+    const slackPayload = payload as { event?: { channel?: string } } | null;
+    const slackChannel = slackPayload?.event?.channel;
+    if (slackConfig && slackChannel) {
+      const token = slackConfig.botToken;
+      return {
+        async update(text: string) {
+          try {
+            await fetch("https://slack.com/api/chat.update", {
+              method: "POST",
+              headers: {
+                authorization: `Bearer ${token}`,
+                "content-type": "application/json",
+              },
+              body: JSON.stringify({ channel: slackChannel, ts: bootMessageId, text }),
+              signal: AbortSignal.timeout(5_000),
+            });
+          } catch (error) {
+            logWarn("channels.slack_boot_message_update_failed", {
+              bootMessageTs: bootMessageId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
+        async clear() {
+          try {
+            await fetch("https://slack.com/api/chat.delete", {
+              method: "POST",
+              headers: {
+                authorization: `Bearer ${token}`,
+                "content-type": "application/json",
+              },
+              body: JSON.stringify({ channel: slackChannel, ts: bootMessageId }),
+              signal: AbortSignal.timeout(5_000),
+            });
+          } catch (error) {
+            logWarn("channels.slack_boot_message_cleanup_failed", {
+              bootMessageTs: bootMessageId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
+      };
+    }
+  }
   if (typeof bootMessageId === "string" && channel === "whatsapp") {
     const meta = await getInitializedMeta();
     const waConfig = meta.channels.whatsapp;

@@ -11,6 +11,9 @@ import { extractRequestId, logInfo, logWarn } from "@/server/log";
 import { createOperationContext, withOperationContext } from "@/server/observability/operation-context";
 import { getSandboxDomain, reconcileStaleRunningStatus } from "@/server/sandbox/lifecycle";
 import { getInitializedMeta, getStore } from "@/server/store/store";
+const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
+const SLACK_BOOT_MESSAGE_TIMEOUT_MS = 5_000;
+
 const SLACK_FORWARD_HEADERS = [
   "x-slack-signature",
   "x-slack-request-timestamp",
@@ -311,9 +314,47 @@ export async function POST(request: Request): Promise<Response> {
     }));
   }
 
+  // Send "Waking up" boot message from the webhook route (before workflow)
+  // so the user gets immediate feedback. The message ts is passed to the
+  // workflow so the step can update/delete it during processing.
+  let bootMessageTs: string | null = null;
+  if (effectiveMeta.status !== "running" && eventInfo.channel) {
+    try {
+      const resp = await fetch(SLACK_POST_MESSAGE_URL, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${config.botToken}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          channel: eventInfo.channel,
+          ...(eventInfo.threadTs ? { thread_ts: eventInfo.threadTs } : {}),
+          text: "🦞 Waking up\u2026 one moment.",
+        }),
+        signal: AbortSignal.timeout(SLACK_BOOT_MESSAGE_TIMEOUT_MS),
+      });
+      if (resp.ok) {
+        const body = await resp.json() as { ok?: boolean; ts?: string };
+        if (body.ok && body.ts) {
+          bootMessageTs = body.ts;
+        }
+      }
+      if (bootMessageTs) {
+        logInfo("channels.slack_boot_message_sent", withOperationContext(op, {
+          channel: eventInfo.channel,
+          bootMessageTs,
+        }));
+      }
+    } catch (err) {
+      logWarn("channels.slack_boot_message_failed", withOperationContext(op, {
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    }
+  }
+
   try {
     const origin = getPublicOrigin(request);
-    await slackWebhookWorkflowRuntime.start(drainChannelWorkflow, ["slack", payload, origin, requestId ?? null]);
+    await slackWebhookWorkflowRuntime.start(drainChannelWorkflow, ["slack", payload, origin, requestId ?? null, bootMessageTs]);
     logInfo("channels.slack_workflow_started", withOperationContext(op, {
       ...eventInfo,
     }));
