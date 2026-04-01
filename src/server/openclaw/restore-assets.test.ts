@@ -11,7 +11,6 @@ import {
 } from "@/server/openclaw/restore-assets";
 import {
   OPENCLAW_CONFIG_PATH,
-  OPENCLAW_FAST_RESTORE_READINESS_SCRIPT_PATH,
   OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
   OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
   OPENCLAW_STARTUP_SCRIPT_PATH,
@@ -59,7 +58,6 @@ test("static restore files include startup, force-pair, and restart scripts", ()
   const paths = buildStaticRestoreFiles().map((f) => f.path);
 
   assert.ok(paths.includes(OPENCLAW_STARTUP_SCRIPT_PATH));
-  assert.ok(paths.includes(OPENCLAW_FAST_RESTORE_READINESS_SCRIPT_PATH));
   assert.ok(paths.includes(OPENCLAW_FORCE_PAIR_SCRIPT_PATH));
   assert.ok(paths.includes(OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH));
   assert.ok(paths.includes(OPENCLAW_EMBEDDINGS_SKILL_PATH));

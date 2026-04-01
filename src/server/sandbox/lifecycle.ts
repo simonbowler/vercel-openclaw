@@ -24,13 +24,10 @@ import { applyFirewallPolicyToSandbox, toNetworkPolicy } from "@/server/firewall
 import { logError, logInfo, logWarn } from "@/server/log";
 import { setupOpenClaw, CommandFailedError, waitForGatewayReady } from "@/server/openclaw/bootstrap";
 import {
-  buildGatewayLaunchCommand,
-  buildGatewayLaunchEnv,
   computeGatewayConfigHash,
   GATEWAY_CONFIG_HASH_VERSION,
   OPENCLAW_AI_GATEWAY_API_KEY_PATH,
   OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
-  OPENCLAW_FAST_RESTORE_READINESS_SCRIPT_PATH,
   OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
   OPENCLAW_GATEWAY_TOKEN_PATH,
   OPENCLAW_LOG_FILE,
@@ -91,55 +88,6 @@ export function CRON_JOBS_KEY(): string {
 }
 const CRON_JOBS_PATH = `${OPENCLAW_STATE_DIR}/cron/jobs.json`;
 const CRON_JOBS_MAX_BYTES = 256 * 1024; // 256 KB size cap for store value
-
-/**
- * Kill the existing gateway, then launch a fresh one via detached runCommand.
- * Reads the gateway token from metadata and resolves the API key from the
- * environment.  Returns the result of the kill step.
- */
-async function killAndLaunchGateway(
-  sandbox: SandboxHandle,
-  options?: { gatewayToken?: string; apiKey?: string },
-): Promise<void> {
-  // Step 1: Kill existing gateway (non-detached, safe).
-  const killResult = await sandbox.runCommand("bash", [
-    OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
-  ]);
-  if (killResult.exitCode !== 0) {
-    const output = await killResult.output("both").catch(() => "");
-    logWarn("sandbox.gateway_kill_nonzero", {
-      sandboxId: sandbox.sandboxId,
-      exitCode: killResult.exitCode,
-      output: output.slice(0, 300),
-    });
-    throw new CommandFailedError({
-      command: "gateway-kill",
-      exitCode: killResult.exitCode,
-      output,
-    });
-  }
-
-  // Resolve credentials — caller can provide them or we read from meta/env.
-  let gatewayToken = options?.gatewayToken;
-  let apiKey = options?.apiKey;
-  if (!gatewayToken) {
-    const meta = await getInitializedMeta();
-    gatewayToken = meta.gatewayToken;
-  }
-  if (apiKey === undefined) {
-    apiKey = await getAiGatewayBearerTokenOptional() ?? undefined;
-  }
-
-  // Step 2: Launch gateway in detached mode.
-  const launchCmd = buildGatewayLaunchCommand();
-  const launchEnv = buildGatewayLaunchEnv({ gatewayToken, apiKey });
-  await sandbox.runCommand({
-    cmd: launchCmd.cmd,
-    args: launchCmd.args,
-    env: launchEnv,
-    detached: true,
-  });
-}
 
 /** Build a structured cron record from raw jobs JSON. Returns null if invalid. */
 function buildCronRecord(
@@ -826,14 +774,21 @@ export async function syncGatewayConfigToSandbox(): Promise<{ synced: boolean; r
       filePaths: files.map((f) => f.path),
     });
 
-    // Kill the existing gateway and launch a fresh one via detached mode
-    // so new HTTP route handlers are registered.
-    try {
-      await killAndLaunchGateway(sandbox, { apiKey });
-    } catch (err) {
+    // Restart the gateway so new HTTP route handlers are registered.
+    // Without this, hot-reload restarts the channel provider but does not
+    // wire up new routes like /slack/events.
+    const restartResult = await sandbox.runCommand("env", [
+      "-u", "AI_GATEWAY_API_KEY",
+      "-u", "OPENAI_API_KEY",
+      "bash", OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
+    ]);
+
+    if (restartResult.exitCode !== 0) {
+      const output = await restartResult.output("both").catch(() => "");
       logWarn("sandbox.config_sync_restart_failed", {
         sandboxId,
-        error: err instanceof Error ? err.message : String(err),
+        exitCode: restartResult.exitCode,
+        output: output.slice(0, 300),
       });
       return { synced: true, reason: "config_written_restart_failed" };
     }
@@ -980,10 +935,22 @@ export async function ensureRunningSandboxDynamicConfigFresh(input: {
     return { verified: false, changed: false, reason: "rewrite-failed" };
   }
 
-  // Kill the existing gateway and launch a fresh one via detached mode
-  // so it picks up the new config.
+  // Restart the gateway so it picks up the new config.
   try {
-    await killAndLaunchGateway(sandbox, { apiKey });
+    const restartResult = await sandbox.runCommand("env", [
+      "-u", "AI_GATEWAY_API_KEY",
+      "-u", "OPENAI_API_KEY",
+      "bash", OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
+    ]);
+    if (restartResult.exitCode !== 0) {
+      const output = await restartResult.output("both").catch(() => "");
+      logWarn("sandbox.config_reconcile.restart_nonzero", {
+        sandboxId,
+        exitCode: restartResult.exitCode,
+        output: output.slice(0, 300),
+      });
+      return { verified: false, changed: true, reason: "restart-failed" };
+    }
     logInfo("sandbox.config_reconcile.checkpoint_after_restart", { sandboxId });
   } catch (error) {
     logWarn("sandbox.config_reconcile.restart_failed", {
@@ -1976,12 +1943,35 @@ async function refreshAiGatewayToken(sandbox: SandboxHandle, sandboxId: string):
 
   logInfo("sandbox.token_refresh.token_written", { sandboxId });
 
-  // Kill the old gateway and launch a fresh one in detached mode with the
-  // updated token.  Unlike the full startup script, this does NOT delete
-  // paired.json or set up shell hooks.
-  await killAndLaunchGateway(sandbox, { apiKey: freshToken });
+  // Use the dedicated restart script which reads token files from disk, kills
+  // the old gateway, and starts a fresh one — without touching pairing state
+  // or shell hooks.  Unset baked-in env vars so the script reads the freshly-
+  // written files instead of stale env values.
+  const restartResult = await sandbox.runCommand("env", [
+    "-u", "AI_GATEWAY_API_KEY",
+    "-u", "OPENAI_API_KEY",
+    "bash", OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
+  ]);
 
-  logInfo("sandbox.token_refresh.gateway_restarted", { sandboxId });
+  const restartOutput = await restartResult.output("both").catch(() => "");
+
+  if (restartResult.exitCode !== 0) {
+    logWarn("sandbox.token_refresh.restart_failed", {
+      sandboxId,
+      exitCode: restartResult.exitCode,
+      output: restartOutput.slice(0, 300),
+    });
+    throw new CommandFailedError({
+      command: "restart-openclaw-gateway",
+      exitCode: restartResult.exitCode,
+      output: restartOutput,
+    });
+  }
+
+  logInfo("sandbox.token_refresh.gateway_restarted", {
+    sandboxId,
+    output: restartOutput.slice(0, 200),
+  });
 
   // Wait for the gateway to become healthy before returning.
   // Without this, the caller's immediate forwardToGateway() hits a dead gateway.
@@ -2778,60 +2768,8 @@ async function restoreSandboxFromSnapshot(
     {
       const t0 = Date.now();
       logInfo("sandbox.restore.fast_restore_start", { sandboxId: sandbox.sandboxId });
-
-      // Step 1: Run config/token prep (no gateway launch).
-      const prepResult = await sandbox.runCommand("bash", [
-        OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
-      ]);
-      if (prepResult.exitCode !== 0) {
-        const prepStdout = await prepResult.output("stdout").catch(() => "");
-        let prepStderr = "";
-        let prepStderrUnavailable = false;
-        try {
-          prepStderr = await prepResult.output("stderr");
-        } catch {
-          prepStderrUnavailable = true;
-        }
-
-        startupScriptMs = Date.now() - t0;
-        logStateSnapshot({
-          event: "sandbox.restore.fast_restore_failed",
-          level: "error",
-          meta: next,
-          op,
-          extra: {
-            sandboxId: sandbox.sandboxId,
-            exitCode: prepResult.exitCode,
-            stdoutHead: prepStdout.slice(0, 500),
-            stderrHead: prepStderr.slice(0, 500),
-            stderrUnavailable: prepStderrUnavailable,
-            startupScriptMs,
-          },
-        });
-
-        throw new CommandFailedError({
-          command: "fast-restore-script",
-          exitCode: prepResult.exitCode,
-          output: [prepStdout, prepStderr].filter(Boolean).join("\n"),
-        });
-      }
-
-      // Step 2: Launch gateway in detached mode.
-      const launchCmd = buildGatewayLaunchCommand();
-      const launchEnv = buildGatewayLaunchEnv({
-        gatewayToken: latest.gatewayToken,
-        apiKey: freshApiKey,
-      });
-      await sandbox.runCommand({
-        cmd: launchCmd.cmd,
-        args: launchCmd.args,
-        env: launchEnv,
-        detached: true,
-      });
-
-      // Step 3: Run readiness polling loop inside the sandbox.
       const restoreResult = await sandbox.runCommand("bash", [
-        OPENCLAW_FAST_RESTORE_READINESS_SCRIPT_PATH,
+        OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
         String(READINESS_TIMEOUT_SECONDS),
       ]);
 
@@ -2983,8 +2921,8 @@ async function restoreSandboxFromSnapshot(
             path: CRON_JOBS_PATH,
             content: Buffer.from(storedRecord.jobsJson),
           }]);
-          // Kill and relaunch gateway so cron module re-reads the restored jobs.
-          await killAndLaunchGateway(sandbox);
+          // Restart gateway so cron module re-reads the restored jobs.
+          await sandbox.runCommand("bash", [OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH]);
           // Wait for the restarted gateway to become ready.
           await pollUntil({
             label: "cron-restore-gateway-ready",

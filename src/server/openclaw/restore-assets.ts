@@ -3,7 +3,6 @@ import { createHash } from "node:crypto";
 import type { WhatsAppGatewayConfig } from "@/server/openclaw/config";
 import {
   buildFastRestoreScript,
-  buildFastRestoreReadinessScript,
   buildForcePairScript,
   buildGatewayConfig,
   buildGatewayRestartScript,
@@ -36,7 +35,6 @@ import {
   OPENCLAW_BUILTIN_IMAGE_GEN_SKILL_PATH,
   OPENCLAW_CONFIG_PATH,
   OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
-  OPENCLAW_FAST_RESTORE_READINESS_SCRIPT_PATH,
   OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
   OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
   OPENCLAW_IMAGE_GEN_SCRIPT_PATH,
@@ -91,7 +89,6 @@ export function buildStaticRestoreFiles(): { path: string; content: Buffer }[] {
     { path: OPENCLAW_FORCE_PAIR_SCRIPT_PATH, content: Buffer.from(buildForcePairScript()) },
     { path: OPENCLAW_STARTUP_SCRIPT_PATH, content: Buffer.from(buildStartupScript()) },
     { path: OPENCLAW_FAST_RESTORE_SCRIPT_PATH, content: Buffer.from(buildFastRestoreScript()) },
-    { path: OPENCLAW_FAST_RESTORE_READINESS_SCRIPT_PATH, content: Buffer.from(buildFastRestoreReadinessScript()) },
     { path: OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH, content: Buffer.from(buildGatewayRestartScript()) },
     { path: OPENCLAW_IMAGE_GEN_SKILL_PATH, content: Buffer.from(buildImageGenSkill()) },
     { path: OPENCLAW_IMAGE_GEN_SCRIPT_PATH, content: Buffer.from(buildImageGenScript()) },

@@ -19,7 +19,6 @@ import type {
 } from "@/server/sandbox/controller";
 import {
   OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
-  OPENCLAW_FAST_RESTORE_READINESS_SCRIPT_PATH,
 } from "@/server/openclaw/config";
 
 // ---------------------------------------------------------------------------
@@ -68,7 +67,7 @@ function writeToStream(stream: Writable | undefined, text: string): void {
 
 export class FakeSandboxHandle implements SandboxHandle {
   sandboxId: string;
-  commands: Array<{ cmd: string; args?: string[]; env?: Record<string, string>; detached?: boolean }> = [];
+  commands: Array<{ cmd: string; args?: string[]; env?: Record<string, string> }> = [];
   writtenFiles: Array<{ path: string; content: Buffer }> = [];
   networkPolicies: NetworkPolicy[] = [];
   extendedTimeouts: number[] = [];
@@ -123,10 +122,9 @@ export class FakeSandboxHandle implements SandboxHandle {
     const cmd = typeof commandOrOpts === "string" ? commandOrOpts : commandOrOpts.cmd;
     const cmdArgs = typeof commandOrOpts === "string" ? args : commandOrOpts.args;
     const cmdEnv = typeof commandOrOpts === "object" ? commandOrOpts.env : undefined;
-    const cmdDetached = typeof commandOrOpts === "object" ? commandOrOpts.detached : undefined;
     const stdout = typeof commandOrOpts === "object" ? commandOrOpts.stdout : undefined;
     const stderr = typeof commandOrOpts === "object" ? commandOrOpts.stderr : undefined;
-    this.commands.push({ cmd, args: cmdArgs, env: cmdEnv, detached: cmdDetached });
+    this.commands.push({ cmd, args: cmdArgs, env: cmdEnv });
     this.eventLog.push({
       kind: "command",
       sandboxId: this.sandboxId,
@@ -144,21 +142,8 @@ export class FakeSandboxHandle implements SandboxHandle {
       }
     }
 
-    // Default: fast-restore prep script (config/token writing only)
+    // Default: fast-restore script with stream-aware output
     if (cmd === "bash" && cmdArgs?.[0] === OPENCLAW_FAST_RESTORE_SCRIPT_PATH) {
-      const stderrEvents = '{"event":"fast_restore.config_ready"}';
-      writeToStream(stdout, "");
-      writeToStream(stderr, stderrEvents);
-      return {
-        exitCode: 0,
-        output: async (stream?: "stdout" | "stderr" | "both") => {
-          if (stream === "stderr") return stderrEvents;
-          return "";
-        },
-      };
-    }
-    // Default: fast-restore readiness script with stream-aware output
-    if (cmd === "bash" && cmdArgs?.[0] === OPENCLAW_FAST_RESTORE_READINESS_SCRIPT_PATH) {
       const stdoutJson = '{"ready":true,"attempts":3,"readyMs":150}';
       const stderrEvents = '{"event":"fast_restore.complete"}';
       writeToStream(stdout, stdoutJson);

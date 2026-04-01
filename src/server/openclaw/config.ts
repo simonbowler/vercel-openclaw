@@ -55,7 +55,6 @@ export const OPENCLAW_BUILTIN_IMAGE_GEN_SCRIPT_PATH = `${OPENCLAW_PKG_DIR}/skill
 export const OPENCLAW_LOG_FILE = "/tmp/openclaw.log";
 export const OPENCLAW_STARTUP_SCRIPT_PATH = "/vercel/sandbox/.on-restore.sh";
 export const OPENCLAW_FAST_RESTORE_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/.fast-restore.sh`;
-export const OPENCLAW_FAST_RESTORE_READINESS_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/.fast-restore-readiness.sh`;
 export const OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH = `${OPENCLAW_STATE_DIR}/.restart-gateway.sh`;
 
 function readBooleanEnv(name: string, defaultValue = false): boolean {
@@ -97,54 +96,54 @@ function buildGatewayPortProfileShell(): string {
   ].join("\n");
 }
 
-/** Shell fragment that kills any existing gateway process. */
-function buildGatewayKillShell(): string {
-  return 'pkill -f "openclaw.gateway" 2>/dev/null; true';
-}
-
 /**
- * Returns the command and args for launching the openclaw gateway.
- * Used by callers that invoke `runCommand({ detached: true })`.
+ * Shell fragment that reads the gateway token and AI gateway key from disk
+ * (or env fallback) and exports the variables needed by the openclaw gateway.
+ * Exits non-zero when the gateway token is missing or empty.
  */
-export function buildGatewayLaunchCommand(): { cmd: string; args: string[] } {
-  return {
-    cmd: OPENCLAW_BIN,
-    args: ["gateway", "--port", String(OPENCLAW_PORT), "--bind", "loopback"],
-  };
+function buildGatewayEnvShell(): string {
+  return [
+    `gateway_token="$(cat "${OPENCLAW_GATEWAY_TOKEN_PATH}" 2>/dev/null || true)"`,
+    'if [ -z "$gateway_token" ]; then',
+    '  echo \'{"event":"gateway_env.error","reason":"empty_gateway_token"}\' >&2',
+    "  exit 1",
+    "fi",
+    'if [ -z "${AI_GATEWAY_API_KEY:-}" ]; then',
+    `  ai_gateway_api_key="$(cat "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}" 2>/dev/null || true)"`,
+    "else",
+    '  ai_gateway_api_key="$AI_GATEWAY_API_KEY"',
+    "fi",
+    `export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}"`,
+    `export OPENCLAW_GATEWAY_PORT="${OPENCLAW_PORT}"`,
+    'export OPENCLAW_GATEWAY_TOKEN="$gateway_token"',
+    'if [ -n "$ai_gateway_api_key" ]; then',
+    '  export AI_GATEWAY_API_KEY="$ai_gateway_api_key"',
+    '  export OPENAI_API_KEY="$ai_gateway_api_key"',
+    `  export OPENAI_BASE_URL="${AI_GATEWAY_BASE_URL}"`,
+    "fi",
+  ].join("\n");
+}
+
+/** Shell fragment that kills any existing gateway and starts a fresh one.
+ *  Uses the shell variables exported by buildGatewayEnvShell() so the
+ *  conditional API-key logic is honoured. */
+function buildGatewayLaunchShell(): string {
+  return [
+    'pkill -f "openclaw.gateway" || true',
+    `setsid ${OPENCLAW_BIN} gateway --port ${OPENCLAW_PORT} --bind loopback >> ${OPENCLAW_LOG_FILE} 2>&1 &`,
+  ].join("\n");
 }
 
 /**
- * Returns the environment variables needed for the openclaw gateway as a JS
- * object.  Used by callers that invoke `runCommand({ detached: true })` so
- * env can be passed directly instead of shell `export` statements.
- */
-export function buildGatewayLaunchEnv(options: {
-  gatewayToken: string;
-  apiKey?: string;
-}): Record<string, string> {
-  const env: Record<string, string> = {
-    OPENCLAW_CONFIG_PATH,
-    OPENCLAW_GATEWAY_PORT: String(OPENCLAW_PORT),
-    OPENCLAW_GATEWAY_TOKEN: options.gatewayToken,
-  };
-  if (options.apiKey) {
-    env.AI_GATEWAY_API_KEY = options.apiKey;
-    env.OPENAI_API_KEY = options.apiKey;
-    env.OPENAI_BASE_URL = AI_GATEWAY_BASE_URL;
-  }
-  return env;
-}
-
-/**
- * Lightweight script that kills the existing gateway without touching pairing
- * state or shell hooks.  After running this script, callers launch the
- * gateway via `runCommand({ detached: true })` with `buildGatewayLaunchCommand()`
- * and `buildGatewayLaunchEnv()`.
+ * Lightweight script that restarts the gateway without touching pairing state
+ * or shell hooks.  Used by token refresh to avoid the side effects of the
+ * full startup script.
  */
 export function buildGatewayRestartScript(): string {
   return `#!/bin/bash
 set -euo pipefail
-${buildGatewayKillShell()}
+${buildGatewayEnvShell()}
+${buildGatewayLaunchShell()}
 `;
 }
 
@@ -469,7 +468,8 @@ export function buildStartupScript(): string {
 set -euo pipefail
 mkdir -p "${OPENCLAW_STATE_DIR}/devices"
 rm -f "${OPENCLAW_STATE_DIR}/devices/paired.json" "${OPENCLAW_STATE_DIR}/devices/pending.json"
-${buildGatewayKillShell()}
+${buildGatewayEnvShell()}
+${buildGatewayLaunchShell()}
 _learning_log=/tmp/shell-commands-for-learning.log
 touch "$_learning_log"
 ${buildGatewayPortProfileShell()}
@@ -523,20 +523,22 @@ if [ -n "\${AI_GATEWAY_API_KEY:-}" ]; then
 else
   ai_gateway_api_key="$(cat "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}" 2>/dev/null || true)"
 fi
-echo '{"event":"fast_restore.config_ready"}' >&2
-`;
-}
-
-/**
- * Readiness polling script run after the gateway is launched via detached
- * runCommand.  Emits a JSON readiness report to stdout and performs
- * post-ready cleanup (stale pairing, host-scheduler skill, shell profile).
- *
- * Accepts an optional timeout argument (seconds, default 30).
- */
-export function buildFastRestoreReadinessScript(): string {
-  return `#!/bin/bash
-set -euo pipefail
+ai_gateway_base_url="https://ai-gateway.vercel.sh/v1"
+export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}"
+export OPENCLAW_GATEWAY_TOKEN="\$gateway_token"
+if [ -n "$ai_gateway_api_key" ]; then
+  export AI_GATEWAY_API_KEY="$ai_gateway_api_key"
+  export OPENAI_API_KEY="$ai_gateway_api_key"
+  export OPENAI_BASE_URL="$ai_gateway_base_url"
+fi
+# Start gateway immediately — no pkill needed (snapshots have no running
+# processes) and no Telegram webhook delete needed before boot.
+echo '{"event":"fast_restore.start_gateway"}' >&2
+# Always use Node for the gateway — Bun's WebSocket implementation does not
+# expose socket._socket.remoteAddress, which causes isLocalClient to return
+# false and blocks device auto-pairing for local CLI/tool connections (cron,
+# gateway status, etc.).
+setsid ${OPENCLAW_BIN} gateway --port ${OPENCLAW_PORT} --bind loopback >> ${OPENCLAW_LOG_FILE} 2>&1 &
 echo '{"event":"fast_restore.readiness_loop"}' >&2
 case "\${1:-}" in ''|*[!0-9]*) _ready_timeout=30 ;; *) _ready_timeout=\$1 ;; esac
 _ready_start=\$(date +%s%N 2>/dev/null || echo 0)

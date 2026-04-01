@@ -44,7 +44,6 @@ import {
   OPENCLAW_BIN,
   OPENCLAW_CONFIG_PATH,
   OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
-  OPENCLAW_FAST_RESTORE_READINESS_SCRIPT_PATH,
   OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
   OPENCLAW_GATEWAY_TOKEN_PATH,
   OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
@@ -1534,24 +1533,12 @@ test("restoreSandboxFromSnapshot runs bash fast-restore-script and checks exit c
         tokenOverride: "test-key",
       });
 
-      // Should have the prep script (no timeout arg)
-      const prepCmd = handle.commands.find(
+      // Should have a "bash" command with the fast-restore script path + timeout arg
+      const bashCmd = handle.commands.find(
         (c) => c.cmd === "bash" && c.args?.[0] === OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
       );
-      assert.ok(prepCmd, "Should run bash with fast-restore prep script path");
-
-      // Should have a detached gateway launch
-      const gatewayCmd = handle.commands.find(
-        (c) => c.detached === true && c.args?.includes("gateway"),
-      );
-      assert.ok(gatewayCmd, "Should launch gateway in detached mode");
-
-      // Should have the readiness script with timeout arg
-      const readinessCmd = handle.commands.find(
-        (c) => c.cmd === "bash" && c.args?.[0] === OPENCLAW_FAST_RESTORE_READINESS_SCRIPT_PATH,
-      );
-      assert.ok(readinessCmd, "Should run bash with fast-restore readiness script path");
-      assert.ok(readinessCmd?.args?.[1], "Should pass readiness timeout argument");
+      assert.ok(bashCmd, "Should run bash with fast-restore script path");
+      assert.ok(bashCmd?.args?.[1], "Should pass readiness timeout argument");
 
       // Should NOT have a separate force-pair step — it's inlined
       const forcePairCmd = handle.commands.find(
@@ -2400,19 +2387,13 @@ test("[lifecycle] ensureFreshGatewayToken: writes token then runs startup script
         "Token value should be passed as argument",
       );
 
-      // Step 2: gateway kill via dedicated restart script
-      const killCmd = handle.commands.find(
-        (c) => c.cmd === "bash" && c.args?.includes(OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH),
+      // Step 2: gateway restart via env -> dedicated restart script
+      const restartCmd = handle.commands.find(
+        (c) => c.cmd === "env" && c.args?.includes("bash") && c.args?.includes(OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH),
       );
-      assert.ok(killCmd, "Should kill gateway via dedicated restart script");
+      assert.ok(restartCmd, "Should restart gateway via dedicated restart script");
 
-      // Step 3: detached gateway launch
-      const launchCmd = handle.commands.find(
-        (c) => c.detached === true && c.args?.includes("gateway"),
-      );
-      assert.ok(launchCmd, "Should launch gateway in detached mode");
-
-      // Step 4: metadata updated
+      // Step 3: metadata updated
       const meta = await getInitializedMeta();
       assert.ok(
         meta.lastTokenRefreshAt !== null && meta.lastTokenRefreshAt > Date.now() - 5000,
@@ -2481,11 +2462,11 @@ test("[lifecycle] ensureFreshGatewayToken: restart failure does not corrupt meta
         meta.lastTokenSource = "oidc";
       });
 
-      // Pre-create the handle with a failing gateway kill script
+      // Pre-create the handle with a failing restart script
       const handle = new FakeSandboxHandle("sbx-restart-fail", fake.events);
       handle.responders.push((cmd, args) => {
-        if (cmd === "bash" && args?.includes(OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH)) {
-          return { exitCode: 255, output: async () => "gateway kill failed" };
+        if (cmd === "env" && args?.includes("bash") && args?.includes(OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH)) {
+          return { exitCode: 255, output: async () => "gateway restart failed" };
         }
         return undefined;
       });
@@ -2605,11 +2586,11 @@ test("[lifecycle] ensureFreshGatewayToken: skips restart when token on disk matc
 
       await ensureFreshGatewayToken();
 
-      // Should NOT have run the kill script (no gateway restart)
-      const killCmd = handle.commands.find(
-        (c) => c.cmd === "bash" && c.args?.includes(OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH),
+      // Should NOT have run the restart script (no gateway restart)
+      const restartCmd = handle.commands.find(
+        (c) => c.cmd === "env" && c.args?.includes("bash") && c.args?.includes(OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH),
       );
-      assert.equal(killCmd, undefined, "Should not restart gateway when token unchanged");
+      assert.equal(restartCmd, undefined, "Should not restart gateway when token unchanged");
 
       // But lastTokenRefreshAt should still be updated
       const meta = await getInitializedMeta();

@@ -4,11 +4,8 @@ import { isPinnedPackageSpec } from "@/server/deployment-contract";
 import type { WhatsAppGatewayConfig } from "@/server/openclaw/config";
 import {
   buildFastRestoreScript,
-  buildFastRestoreReadinessScript,
   buildForcePairScript,
   buildGatewayConfig,
-  buildGatewayLaunchCommand,
-  buildGatewayLaunchEnv,
   buildGatewayRestartScript,
   buildImageGenScript,
   buildImageGenSkill,
@@ -43,7 +40,6 @@ import {
   OPENCLAW_BIN,
   OPENCLAW_CONFIG_PATH,
   OPENCLAW_FAST_RESTORE_SCRIPT_PATH,
-  OPENCLAW_FAST_RESTORE_READINESS_SCRIPT_PATH,
   OPENCLAW_FORCE_PAIR_SCRIPT_PATH,
   OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
   OPENCLAW_GATEWAY_TOKEN_PATH,
@@ -309,10 +305,6 @@ export async function setupOpenClaw(
       content: Buffer.from(buildFastRestoreScript()),
     },
     {
-      path: OPENCLAW_FAST_RESTORE_READINESS_SCRIPT_PATH,
-      content: Buffer.from(buildFastRestoreReadinessScript()),
-    },
-    {
       path: OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
       content: Buffer.from(buildGatewayRestartScript()),
     },
@@ -456,22 +448,6 @@ export async function setupOpenClaw(
     stderr: progress?.makeWritable("stderr"),
   });
   await assertCommandSuccess("bash startup-script", startupResult);
-
-  // Launch the gateway in detached mode — the startup script only kills
-  // existing processes and sets up shell hooks, it no longer backgrounds
-  // the gateway via setsid/&.
-  const launchCmd = buildGatewayLaunchCommand();
-  const launchEnv = buildGatewayLaunchEnv({
-    gatewayToken: options.gatewayToken,
-    apiKey: options.apiKey,
-  });
-  await sandbox.runCommand({
-    cmd: launchCmd.cmd,
-    args: launchCmd.args,
-    env: launchEnv,
-    detached: true,
-  });
-
   progress?.setPhase("waiting-for-gateway", "Waiting for OpenClaw to respond");
   await waitForGatewayReady(sandbox);
 

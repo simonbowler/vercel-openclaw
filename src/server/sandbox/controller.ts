@@ -40,7 +40,6 @@ export type RunCommandOptions = {
   cmd: string;
   args?: string[];
   env?: Record<string, string>;
-  detached?: boolean;
   signal?: AbortSignal;
   stdout?: Writable;
   stderr?: Writable;
@@ -90,9 +89,9 @@ export interface SandboxController {
 
 function wrapSandbox(sandbox: Sandbox): SandboxHandle {
   return {
-    sandboxId: sandbox.name,
+    sandboxId: sandbox.sandboxId,
     get timeout() {
-      return sandbox.timeout ?? 0;
+      return sandbox.timeout;
     },
     get status() {
       return sandbox.status;
@@ -107,7 +106,6 @@ function wrapSandbox(sandbox: Sandbox): SandboxHandle {
           cmd: commandOrOpts.cmd,
           args: commandOrOpts.args ?? [],
           env: commandOrOpts.env,
-          detached: commandOrOpts.detached,
           signal: commandOrOpts.signal,
           stdout: commandOrOpts.stdout,
           stderr: commandOrOpts.stderr,
@@ -161,7 +159,7 @@ const realController: SandboxController = {
   },
   async get(params) {
     const { Sandbox: SandboxClass } = await import("@vercel/sandbox");
-    const sandbox = await SandboxClass.get({ name: params.sandboxId });
+    const sandbox = await SandboxClass.get(params);
     return wrapSandbox(sandbox);
   },
 };
