@@ -601,12 +601,17 @@ export async function waitForGatewayReady(
     try {
       const result = await sandbox.runCommand("curl", [
         "-s",
-        "-f",
         "--max-time",
         "5",
+        "-w",
+        "\n__HTTP_STATUS:%{http_code}",
         "http://localhost:3000/",
       ]);
-      const body = await result.output("stdout");
+      const rawBody = await result.output("stdout");
+      // Strip the status line appended by -w
+      const statusMatch = rawBody.match(/__HTTP_STATUS:(\d+)/);
+      const httpStatus = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+      const body = rawBody.replace(/\n?__HTTP_STATUS:\d+$/, "");
       let stderr = "";
       try {
         stderr = await result.output("stderr");
@@ -615,15 +620,19 @@ export async function waitForGatewayReady(
       }
       lastProbe = {
         exitCode: result.exitCode,
+        httpStatus,
         bodyBytes: body.length,
         bodyHead: body.slice(0, 500),
         stderrHead: stderr.slice(0, 400),
         hasOpenclawMarker: body.includes("openclaw-app"),
       };
-      if (result.exitCode === 0 && body.includes("openclaw-app")) {
+      // Accept any HTTP response that contains the openclaw marker,
+      // even non-200 status (e.g. 500 during plugin init).
+      if (body.includes("openclaw-app")) {
         logInfo("openclaw.gateway_wait_ok", {
           sandboxId: sandbox.sandboxId,
           attempts: attempt + 1,
+          httpStatus,
         });
         return;
       }
