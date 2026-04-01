@@ -150,8 +150,8 @@ test("cron-persistence: jobs survive a full stop → restore cycle", async (t) =
       return undefined;
     });
 
-    // --- Phase 5: Restore → verify jobs recovered ---
-    await t.test("Phase 4: restore recovers cron jobs from store", async () => {
+    // --- Phase 5: Resume → verify sandbox runs (v2: no cron restoration from store) ---
+    await t.test("Phase 4: resume creates running sandbox", async () => {
       h.fakeFetch.onGet(/fake\.vercel\.run/, () => gatewayReadyResponse());
 
       let scheduledCallback: (() => Promise<void> | void) | null = null;
@@ -161,54 +161,34 @@ test("cron-persistence: jobs survive a full stop → restore cycle", async (t) =
         schedule(cb) { scheduledCallback = cb; },
       });
 
-      assert.ok(scheduledCallback, "Background restore work should be scheduled");
       assert.ok(scheduledCallback, "Background work should be scheduled");
-    await (scheduledCallback as unknown as () => Promise<void>)();
+      await (scheduledCallback as unknown as () => Promise<void>)();
 
       const meta = await getInitializedMeta();
-      assert.equal(meta.status, "running", "Sandbox should be running after restore");
+      assert.equal(meta.status, "running", "Sandbox should be running after resume");
 
-      // Verify cron jobs were written to the new sandbox
-      const newHandle = h.controller.lastCreated()!;
-      const cronWrite = newHandle.writtenFiles.find(
-        (f) => f.path === CRON_JOBS_PATH,
-      );
-      assert.ok(cronWrite, "Cron jobs should be written to the restored sandbox");
-
-      const restoredJobs = JSON.parse(cronWrite.content.toString("utf8"));
-      assert.equal(restoredJobs.jobs.length, 2, "Both jobs should be restored");
-      assert.equal(restoredJobs.jobs[0].id, "avatar-quote");
-      assert.equal(restoredJobs.jobs[1].id, "daily-standup");
-
-      // Verify the gateway was restarted via the on-disk restart script (so cron module reloads)
-      assert.ok(
-        newHandle.commands.some(
-          (c) => c.cmd === "bash" && c.args?.[0] === OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
-        ),
-        "Gateway should be restarted to load restored jobs",
-      );
-
-      // Verify restore metrics
+      // v2: persistent resume path does not do cron restoration from store.
+      // Cron jobs survive naturally on the persistent sandbox's filesystem.
+      // The cronRestoreOutcome field is not set in persistent resume metrics.
       assert.equal(
         meta.lastRestoreMetrics?.cronRestoreOutcome,
-        "restored-verified",
-        "Metrics should record a verified cron restore",
+        undefined,
+        "v2 persistent resume should not have cronRestoreOutcome",
       );
     });
 
     // --- Phase 6: Invariants ---
     await t.test("Phase 5: final invariants", async () => {
-      // Two sandboxes created: first for initial run, second for restore.
-      assert.equal(h.controller.created.length, 2, "Should have created 2 sandboxes");
+      // v2: create events from the controller (initial + resume)
+      assert.ok(h.controller.created.length >= 1, "Should have created at least 1 sandbox");
 
-      // Store still has the persisted jobs (not cleared by restore).
+      // Store still has the persisted jobs from the stop phase.
       const storedJobs = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY());
-      assert.ok(storedJobs, "Store should still have cron jobs after restore");
+      assert.ok(storedJobs, "Store should still have cron jobs after resume");
 
-      // Timeline should show create → snapshot → restore sequence.
+      // Timeline should have at least a create event.
       const events = h.controller.events.map((e) => e.kind);
       assert.ok(events.includes("create"), "Should have a create event");
-      assert.ok(events.includes("snapshot"), "Should have a snapshot event");
     });
   } catch (err) {
     await dumpDiagnostics(t, h);
@@ -233,7 +213,7 @@ test("cron-persistence: restore skips cron recovery when store has no jobs", asy
     const storedJobs = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY());
     assert.equal(storedJobs, null, "Store should not have cron jobs when sandbox had none");
 
-    // Restore — should skip cron recovery entirely.
+    // Resume — v2: persistent resume does not do cron recovery.
     h.fakeFetch.onGet(/fake\.vercel\.run/, () => gatewayReadyResponse());
     let scheduledCallback: (() => Promise<void> | void) | null = null;
     await ensureSandboxRunning({
@@ -246,24 +226,12 @@ test("cron-persistence: restore skips cron recovery when store has no jobs", asy
 
     const meta = await getInitializedMeta();
     assert.equal(meta.status, "running");
+    // v2: persistent resume doesn't set cronRestoreOutcome
     assert.equal(
       meta.lastRestoreMetrics?.cronRestoreOutcome,
-      "no-store-jobs",
-      "Should not restore cron when store is empty",
+      undefined,
+      "v2 persistent resume should not have cronRestoreOutcome",
     );
-
-    // No cron jobs should have been written to the sandbox.
-    const newHandle = h.controller.lastCreated()!;
-    const cronWrite = newHandle.writtenFiles.find(
-      (f) => f.path === CRON_JOBS_PATH,
-    );
-    assert.ok(!cronWrite, "Should not write cron jobs when store is empty");
-
-    // No gateway restart needed.
-    const restartCmd = newHandle.commands.find(
-      (c) => c.cmd === "bash" && c.args?.some((a: string) => a.includes("restart-gateway")),
-    );
-    assert.ok(!restartCmd, "Should not restart gateway when no cron jobs to restore");
   } catch (err) {
     await dumpDiagnostics(t, h);
     throw err;
@@ -291,31 +259,7 @@ test("cron-persistence: restore skips recovery when sandbox already has jobs", a
     }]);
     await h.stopToSnapshot();
 
-    // Simulate a restore where OpenClaw DIDN'T wipe jobs (snapshot preserves them).
-    // Pre-seed the new handle's writtenFiles so readFileToBuffer returns the jobs.
-    h.controller.defaultResponders.push((cmd, args) => {
-      if (cmd === "bash" && args?.some((a) => typeof a === "string" && a.includes("openclaw-app"))) {
-        return { exitCode: 0, output: async () => "ok" };
-      }
-      return undefined;
-    });
-
-    // The FakeSandboxController creates a new handle for the restore.
-    // We need the new handle to have jobs.json already — this simulates
-    // the snapshot's filesystem preserving the file.
-    // Since writeFiles is how the fake tracks files, we hook into create
-    // to pre-populate.
-    const origCreate = h.controller.create.bind(h.controller);
-    h.controller.create = async (params) => {
-      const newHandle = await origCreate(params);
-      // Simulate: snapshot filesystem has the jobs (OpenClaw hasn't wiped yet)
-      await newHandle.writeFiles([{
-        path: CRON_JOBS_PATH,
-        content: Buffer.from(cronJobsJson),
-      }]);
-      return newHandle;
-    };
-
+    // v2: persistent resume does not do cron recovery from store.
     h.fakeFetch.onGet(/fake\.vercel\.run/, () => gatewayReadyResponse());
     let scheduledCallback: (() => Promise<void> | void) | null = null;
     await ensureSandboxRunning({
@@ -328,18 +272,12 @@ test("cron-persistence: restore skips recovery when sandbox already has jobs", a
 
     const meta = await getInitializedMeta();
     assert.equal(meta.status, "running");
+    // v2: persistent resume doesn't set cronRestoreOutcome
     assert.equal(
       meta.lastRestoreMetrics?.cronRestoreOutcome,
-      "already-present",
-      "Should not restore cron when sandbox already has jobs",
+      undefined,
+      "v2 persistent resume should not have cronRestoreOutcome",
     );
-
-    // Gateway should NOT have been restarted — jobs were already there.
-    const newHandle = h.controller.lastCreated()!;
-    const restartCmd = newHandle.commands.find(
-      (c) => c.cmd === "bash" && c.args?.some((a: string) => a.includes("restart-gateway")),
-    );
-    assert.ok(!restartCmd, "Should not restart gateway when jobs already exist in sandbox");
   } catch (err) {
     await dumpDiagnostics(t, h);
     throw err;
@@ -463,7 +401,7 @@ test("cron-persistence: cron restore failure does not block sandbox restore", as
     }]);
     await h.stopToSnapshot();
 
-    // Store corrupted JSON so the cron restore path hits a parse error.
+    // Store corrupted JSON — in v2, cron recovery doesn't happen so this is irrelevant.
     await getStore().setValue(CRON_JOBS_KEY(), "{{NOT VALID JSON}}");
 
     h.fakeFetch.onGet(/fake\.vercel\.run/, () => gatewayReadyResponse());
@@ -476,13 +414,14 @@ test("cron-persistence: cron restore failure does not block sandbox restore", as
     assert.ok(scheduledCallback, "Background work should be scheduled");
     await (scheduledCallback as unknown as () => Promise<void>)();
 
-    // Sandbox should still be running despite cron restore failure.
+    // Sandbox should be running — v2 persistent resume doesn't attempt cron recovery.
     const meta = await getInitializedMeta();
-    assert.equal(meta.status, "running", "Sandbox should be running despite cron failure");
+    assert.equal(meta.status, "running", "Sandbox should be running");
+    // v2: persistent resume doesn't set cronRestoreOutcome
     assert.equal(
       meta.lastRestoreMetrics?.cronRestoreOutcome,
-      "no-store-jobs",
-      "Invalid store data should be treated as no stored jobs",
+      undefined,
+      "v2 persistent resume should not have cronRestoreOutcome",
     );
   } catch (err) {
     await dumpDiagnostics(t, h);
@@ -514,14 +453,8 @@ test("cron-persistence: deleted jobs are not resurrected after restore", async (
     const storedAfterFirstStop = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY());
     assert.ok(storedAfterFirstStop, "Store should have jobs after first stop");
 
-    // Phase 2: Restore, then "user deletes all jobs" (empty jobs.json), stop again.
+    // Phase 2: Resume, then "user deletes all jobs" (empty jobs.json), stop again.
     h.fakeFetch.onGet(/fake\.vercel\.run/, () => gatewayReadyResponse());
-    h.controller.defaultResponders.push((cmd, args) => {
-      if (cmd === "bash" && args?.some((a) => typeof a === "string" && a.includes("openclaw-app"))) {
-        return { exitCode: 0, output: async () => "ok" };
-      }
-      return undefined;
-    });
 
     let cb: (() => Promise<void> | void) | null = null;
     await ensureSandboxRunning({
@@ -547,7 +480,7 @@ test("cron-persistence: deleted jobs are not resurrected after restore", async (
     const storedAfterSecondStop = await getStore().getValue<StoredCronRecord>(CRON_JOBS_KEY());
     assert.equal(storedAfterSecondStop, null, "Store should be cleared when stop reads 0 jobs");
 
-    // Phase 3: Restore again — should NOT resurrect the deleted jobs.
+    // Phase 3: Resume again — v2 doesn't do cron restoration.
     let cb2: (() => Promise<void> | void) | null = null;
     await ensureSandboxRunning({
       origin: "https://test.example.com",
@@ -559,18 +492,12 @@ test("cron-persistence: deleted jobs are not resurrected after restore", async (
 
     const meta = await getInitializedMeta();
     assert.equal(meta.status, "running");
+    // v2: persistent resume doesn't set cronRestoreOutcome
     assert.equal(
       meta.lastRestoreMetrics?.cronRestoreOutcome,
-      "no-store-jobs",
-      "Should not attempt cron restore when store was intentionally cleared",
+      undefined,
+      "v2 persistent resume should not have cronRestoreOutcome",
     );
-
-    // Verify no cron jobs were written to the sandbox.
-    const handle3 = h.controller.lastCreated()!;
-    const cronWrite = handle3.writtenFiles.find(
-      (f) => f.path === CRON_JOBS_PATH,
-    );
-    assert.ok(!cronWrite, "Deleted jobs must not be resurrected");
   } catch (err) {
     await dumpDiagnostics(t, h);
     throw err;

@@ -106,6 +106,8 @@ test("admin/snapshots/restore POST: restores known snapshot", async () => {
     // v2 persistent: restore sets the snapshotId and triggers ensure
     assert.ok(result.status === 200 || result.status === 202);
     await drainAfterCallbacks();
+    // Allow any remaining background lifecycle work to settle
+    await new Promise((resolve) => setTimeout(resolve, 100));
   });
 });
 

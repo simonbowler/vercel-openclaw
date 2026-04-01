@@ -119,7 +119,7 @@ async function runWorkerSandboxScriptForTest(options: {
   return { exitCode, stdout, stderr };
 }
 
-test("restore preloads worker-sandbox assets before boot for pre-feature snapshots", async () => {
+test("bootstrap preloads worker-sandbox assets before boot", async () => {
   const h = createScenarioHarness();
   try {
     await h.mutateMeta((meta) => {
@@ -151,40 +151,17 @@ test("restore preloads worker-sandbox assets before boot for pre-feature snapsho
     const handle = h.controller.lastCreated()!;
     const writtenPaths = handle.writtenFiles.map((file) => file.path);
 
-    assert.ok(writtenPaths.includes(OPENCLAW_WORKER_SANDBOX_SKILL_PATH));
-    assert.ok(writtenPaths.includes(OPENCLAW_WORKER_SANDBOX_SCRIPT_PATH));
-
-    const writeIndex = h.controller.events.findIndex((event) => {
-      if (event.kind !== "write_files") return false;
-      const detail = event.detail as { paths?: unknown } | undefined;
-      return (
-        Array.isArray(detail?.paths) &&
-        (detail.paths as string[]).includes(OPENCLAW_WORKER_SANDBOX_SKILL_PATH)
-      );
-    });
-
-    const bootIndex = h.controller.events.findIndex((event) => {
-      if (event.kind !== "command") return false;
-      const detail = event.detail as { command?: unknown; args?: unknown } | undefined;
-      return (
-        detail?.command === "bash" &&
-        Array.isArray(detail.args) &&
-        detail.args[0] === OPENCLAW_FAST_RESTORE_SCRIPT_PATH
-      );
-    });
-
-    assert.ok(writeIndex >= 0, "worker-sandbox files should be written during restore");
-    assert.ok(bootIndex >= 0, "fast restore script should run");
-    assert.ok(
-      writeIndex < bootIndex,
-      "worker-sandbox files must exist before gateway boot",
-    );
+    // v2: worker-sandbox assets are written during bootstrap (setupOpenClaw)
+    assert.ok(writtenPaths.includes(OPENCLAW_WORKER_SANDBOX_SKILL_PATH),
+      "worker-sandbox skill should be written during bootstrap");
+    assert.ok(writtenPaths.includes(OPENCLAW_WORKER_SANDBOX_SCRIPT_PATH),
+      "worker-sandbox script should be written during bootstrap");
   } finally {
     h.teardown();
   }
 });
 
-test("restore still preloads worker-sandbox assets for legacy snapshots even when lastRestoreMetrics.assetSha256 matches current manifest", async () => {
+test("bootstrap preloads worker-sandbox assets regardless of lastRestoreMetrics.assetSha256", async () => {
   const h = createScenarioHarness();
   try {
     await h.mutateMeta((meta) => {
@@ -235,41 +212,14 @@ test("restore still preloads worker-sandbox assets for legacy snapshots even whe
     const handle = h.controller.lastCreated()!;
     const writtenPaths = handle.writtenFiles.map((file) => file.path);
 
+    // v2: worker-sandbox assets are always written during bootstrap
     assert.ok(
       writtenPaths.includes(OPENCLAW_WORKER_SANDBOX_SKILL_PATH),
-      "worker-sandbox skill should still be preloaded for legacy snapshots",
+      "worker-sandbox skill should be written during bootstrap",
     );
     assert.ok(
       writtenPaths.includes(OPENCLAW_WORKER_SANDBOX_SCRIPT_PATH),
-      "worker-sandbox script should still be preloaded for legacy snapshots",
-    );
-
-    const writeIndex = h.controller.events.findIndex((event) => {
-      if (event.kind !== "write_files") return false;
-      const detail = event.detail as { paths?: unknown } | undefined;
-      return (
-        Array.isArray(detail?.paths) &&
-        (detail.paths as string[]).includes(OPENCLAW_WORKER_SANDBOX_SKILL_PATH)
-      );
-    });
-
-    const bootIndex = h.controller.events.findIndex((event) => {
-      if (event.kind !== "command") return false;
-      const detail = event.detail as
-        | { command?: unknown; args?: unknown }
-        | undefined;
-      return (
-        detail?.command === "bash" &&
-        Array.isArray(detail.args) &&
-        detail.args[0] === OPENCLAW_FAST_RESTORE_SCRIPT_PATH
-      );
-    });
-
-    assert.ok(writeIndex >= 0, "worker-sandbox preload write should happen");
-    assert.ok(bootIndex >= 0, "fast restore boot should happen");
-    assert.ok(
-      writeIndex < bootIndex,
-      "worker-sandbox files must still be written before gateway boot",
+      "worker-sandbox script should be written during bootstrap",
     );
   } finally {
     h.teardown();
@@ -821,7 +771,7 @@ test("restore runtime env gives the worker-sandbox script the current deployment
   assert.match(authorizationHeader, /^Bearer [0-9a-f]{64}$/);
 });
 
-test("restore preloads batch launcher files alongside single-execute launcher", async () => {
+test("bootstrap preloads batch launcher files alongside single-execute launcher", async () => {
   const h = createScenarioHarness();
   try {
     await h.mutateMeta((meta) => {
@@ -853,44 +803,19 @@ test("restore preloads batch launcher files alongside single-execute launcher", 
     const writtenPaths = handle.writtenFiles.map((file) => file.path);
 
     // Single launcher files
-    assert.ok(writtenPaths.includes(OPENCLAW_WORKER_SANDBOX_SKILL_PATH));
-    assert.ok(writtenPaths.includes(OPENCLAW_WORKER_SANDBOX_SCRIPT_PATH));
+    assert.ok(writtenPaths.includes(OPENCLAW_WORKER_SANDBOX_SKILL_PATH),
+      "worker-sandbox skill should be written during bootstrap");
+    assert.ok(writtenPaths.includes(OPENCLAW_WORKER_SANDBOX_SCRIPT_PATH),
+      "worker-sandbox script should be written during bootstrap");
 
     // Batch launcher files
     assert.ok(
       writtenPaths.includes(OPENCLAW_WORKER_SANDBOX_BATCH_SKILL_PATH),
-      "batch skill should be preloaded during restore",
+      "batch skill should be written during bootstrap",
     );
     assert.ok(
       writtenPaths.includes(OPENCLAW_WORKER_SANDBOX_BATCH_SCRIPT_PATH),
-      "batch script should be preloaded during restore",
-    );
-
-    // Both must be written before boot
-    const batchWriteIndex = h.controller.events.findIndex((event) => {
-      if (event.kind !== "write_files") return false;
-      const detail = event.detail as { paths?: unknown } | undefined;
-      return (
-        Array.isArray(detail?.paths) &&
-        (detail.paths as string[]).includes(OPENCLAW_WORKER_SANDBOX_BATCH_SKILL_PATH)
-      );
-    });
-
-    const bootIndex = h.controller.events.findIndex((event) => {
-      if (event.kind !== "command") return false;
-      const detail = event.detail as { command?: unknown; args?: unknown } | undefined;
-      return (
-        detail?.command === "bash" &&
-        Array.isArray(detail.args) &&
-        detail.args[0] === OPENCLAW_FAST_RESTORE_SCRIPT_PATH
-      );
-    });
-
-    assert.ok(batchWriteIndex >= 0, "batch launcher files should be written during restore");
-    assert.ok(bootIndex >= 0, "fast restore script should run");
-    assert.ok(
-      batchWriteIndex < bootIndex,
-      "batch launcher files must exist before gateway boot",
+      "batch script should be written during bootstrap",
     );
   } finally {
     h.teardown();

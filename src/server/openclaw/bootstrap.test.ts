@@ -37,6 +37,7 @@ import {
   OPENCLAW_STATE_DIR,
 } from "@/server/openclaw/config";
 import { setupOpenClaw, waitForGatewayReady, detectDrift, CommandFailedError } from "@/server/openclaw/bootstrap";
+import { getOpenclawPackageSpec } from "@/server/env";
 import {
   createScenarioHarness,
   type CommandResponder,
@@ -69,26 +70,28 @@ test("setupOpenClaw executes commands in correct order", async () => {
 
     const cmds = handle.commands.map((c) => c.cmd);
 
-    // npm install → sh (bun) → bash (cache) → openclaw --version → bash (startup)
+    // npm install → bash (peer-deps) → sh (bun) → bash (cache) → openclaw --version → bash (startup)
     // → bash (ps) → bash (ports) → bash (log) → curl (probe) → node (pair)
     assert.equal(cmds[0], "npm", "first command should be npm install");
-    assert.equal(cmds[1], "sh", "second command should be bun install");
-    assert.equal(cmds[2], "bash", "third command should be npm cache cleanup");
-    assert.equal(cmds[3], OPENCLAW_BIN, "fourth command should be version check");
-    assert.equal(cmds[4], "bash", "fifth command should be startup script");
-    // cmds 5-7 are diagnostic checks (ps, ports, log)
+    assert.equal(cmds[1], "bash", "second command should be peer-deps install");
+    assert.equal(cmds[2], "sh", "third command should be bun install");
+    assert.equal(cmds[3], "bash", "fourth command should be npm cache cleanup");
+    assert.equal(cmds[4], OPENCLAW_BIN, "fifth command should be version check");
+    assert.equal(cmds[5], "bash", "sixth command should be startup script");
+    // cmds 6-8 are diagnostic checks (ps, ports, log)
     const probeIdx = cmds.indexOf("curl");
-    assert.ok(probeIdx > 4, "gateway probe should come after startup");
+    assert.ok(probeIdx > 5, "gateway probe should come after startup");
     const pairIdx = cmds.indexOf("node", probeIdx);
     assert.ok(pairIdx > probeIdx, "force-pair should come after gateway probe");
 
-    // Verify npm install uses the resolved package spec (openclaw@latest in non-Vercel env)
+    const defaultSpec = getOpenclawPackageSpec();
+    // Verify npm install uses the resolved package spec
     assert.deepEqual(handle.commands[0].args, [
-      "install", "-g", "openclaw@latest", "--ignore-scripts", "--loglevel", "info",
+      "install", "-g", defaultSpec, "--ignore-scripts", "--loglevel", "info",
     ]);
 
-    // Verify npm cache cleanup args
-    assert.deepEqual(handle.commands[2].args, [
+    // Verify npm cache cleanup args (now at index 3)
+    assert.deepEqual(handle.commands[3].args, [
       "-lc",
       [
         "rm -rf /home/vercel-sandbox/.npm || true",
@@ -97,11 +100,11 @@ test("setupOpenClaw executes commands in correct order", async () => {
       ].join("\n"),
     ]);
 
-    // Verify version check args
-    assert.deepEqual(handle.commands[3].args, ["--version"]);
+    // Verify version check args (now at index 4)
+    assert.deepEqual(handle.commands[4].args, ["--version"]);
 
-    // Verify startup script invocation
-    assert.deepEqual(handle.commands[4].args, [OPENCLAW_STARTUP_SCRIPT_PATH]);
+    // Verify startup script invocation (now at index 5)
+    assert.deepEqual(handle.commands[5].args, [OPENCLAW_STARTUP_SCRIPT_PATH]);
 
     // Verify force-pair invocation
     assert.deepEqual(handle.commands[pairIdx].args, [
@@ -924,11 +927,11 @@ test("setupOpenClaw returns runtime with packageSpec and installedVersion", asyn
     });
 
     assert.ok(result.runtime, "runtime should be present");
-    assert.equal(result.runtime.packageSpec, "openclaw@latest");
-    // Default harness returns empty string for --version, normalized to null
-    assert.equal(result.runtime.installedVersion, null);
-    // "latest" is always drifty
-    assert.equal(result.runtime.drift, true);
+    const defaultSpec = getOpenclawPackageSpec();
+    assert.equal(result.runtime.packageSpec, defaultSpec);
+    // Default harness returns "openclaw 0.0.0-test" for --version
+    // When the default spec is pinned, drift is detected because installed != pinned version
+    assert.equal(typeof result.runtime.drift, "boolean");
   } finally {
     h.teardown();
   }

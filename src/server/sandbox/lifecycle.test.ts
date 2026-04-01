@@ -887,7 +887,7 @@ test("restoreSandboxFromSnapshot writes all files + manifest on first restore (n
   });
 });
 
-test("restoreSandboxFromSnapshot skips static files on second restore when manifest hash matches", async () => {
+test("persistent resume skips static files when manifest hash matches on disk", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
@@ -902,106 +902,60 @@ test("restoreSandboxFromSnapshot skips static files on second restore when manif
       new Response('<div id="openclaw-app"></div>', { status: 200 });
 
     try {
-      // First restore — writes all files
+      // First resume — writes all files (no manifest on disk)
       const { handle: firstHandle } = await triggerRestore(fake, {
         tokenOverride: "test-ai-key",
       });
-      assert.ok(firstHandle.writtenFiles.length > 0, "First restore should write background asset files");
+      assert.ok(firstHandle.writtenFiles.length > 0, "First resume should write files");
 
-      // Snapshot the sandbox so we can restore again
-      const snap = await firstHandle.snapshot();
-
-      // Reset meta to stopped with the new snapshot, simulating a second restore
-      await mutateMeta((meta) => {
-        meta.status = "stopped";
-        meta.snapshotId = snap.snapshotId;
-        meta.sandboxId = null;
-        meta.portUrls = null;
-      });
-
-      // Second restore — the new sandbox handle will have the manifest from
-      // the first restore's written files because FakeSandboxHandle.readFileToBuffer
-      // reads from writtenFiles. Since the controller creates a new handle,
-      // we need to pre-populate it with the manifest.
-      // The new handle won't have the manifest, so we use a custom controller.
+      // Find the manifest file that was written
       const manifestFile = firstHandle.writtenFiles.find((f) =>
         f.path.includes(".restore-assets-manifest.json"),
       );
-      assert.ok(manifestFile, "Manifest should exist from first restore");
+      assert.ok(manifestFile, "Manifest should exist from first resume");
 
-      // Override the controller to return a handle pre-populated with the manifest
-      const secondFake = new FakeSandboxController();
-      _setSandboxControllerForTesting(secondFake);
+      // Now test the skip path: create a new controller with a pre-registered
+      // handle that already has the manifest on disk (simulating persistent sandbox).
+      const seededFake = new FakeSandboxController();
+      _setSandboxControllerForTesting(seededFake);
 
-      const { handle: secondHandle } = await triggerRestore(secondFake, {
-        tokenOverride: "test-ai-key",
+      // Pre-register a resume handle with the manifest already on disk
+      const seededHandle = preRegisterResumeHandle(seededFake);
+      seededHandle.writtenFiles.push(manifestFile);
+
+      await mutateMeta((meta) => {
+        meta.status = "stopped";
+        meta.sandboxId = null;
+        meta.portUrls = null;
       });
 
-      // Pre-populate the manifest before the restore reads it —
-      // but the handle is already created by triggerRestore. The fake
-      // readFileToBuffer returns null for a fresh handle, so the second
-      // restore will also write all files. To properly test the skip,
-      // we need to seed the handle with the manifest before restore runs.
+      _setAiGatewayTokenOverrideForTesting("test-ai-key");
 
-      // Instead, let's verify the contract: on a fresh handle (no manifest),
-      // we get all 16 files. This is correct because the snapshot sandbox
-      // image would have the manifest file baked in.
-      // Background asset sync writes files since the fake completes instantly.
-      // The key assertion is that credentials are NOT in writtenFiles (via env instead).
-      const credentialWrites = secondHandle.writtenFiles.filter(
+      let scheduledCallback: (() => Promise<void> | void) | null = null;
+      await ensureSandboxRunning({
+        origin: "https://test.example.com",
+        reason: "restore-test",
+        schedule(cb) { scheduledCallback = cb; },
+      });
+
+      assert.ok(scheduledCallback);
+      await (scheduledCallback as () => Promise<void>)();
+
+      _setAiGatewayTokenOverrideForTesting(null);
+
+      // With matching manifest, syncRestoreAssetsIfNeeded skips static files.
+      // Count only writes that happened AFTER the pre-seeded manifest.
+      const writesAfterSeed = seededHandle.writtenFiles.slice(1); // skip pre-seeded manifest
+      const staticWrites = writesAfterSeed.filter((f) =>
+        f.path.includes(".restore-assets-manifest.json"),
+      );
+      assert.equal(staticWrites.length, 0, "Should not re-write manifest when hash matches");
+
+      // Credentials should not be in writtenFiles (passed via env)
+      const credentialWrites = seededHandle.writtenFiles.filter(
         (f) => f.path === OPENCLAW_GATEWAY_TOKEN_PATH || f.path === OPENCLAW_AI_GATEWAY_API_KEY_PATH,
       );
       assert.equal(credentialWrites.length, 0, "Credentials should not be in writtenFiles (passed via env)");
-
-      // Now test the actual skip path: manually seed a handle with the manifest
-      // and trigger a restore that reads it back.
-      const seededHandle = new FakeSandboxHandle("sbx-seeded", []);
-      // Write the manifest so readFileToBuffer will find it
-      seededHandle.writtenFiles.push(manifestFile);
-
-      // Create a controller that returns the seeded handle
-      const seededFake = new FakeSandboxController();
-      // Override create to return the seeded handle
-      const origCreate = seededFake.create.bind(seededFake);
-      seededFake.create = async (params) => {
-        const h = await origCreate(params);
-        // Copy the manifest file to the newly created handle
-        const fh = seededFake.created[seededFake.created.length - 1];
-        fh.writtenFiles.push(manifestFile);
-        return h;
-      };
-
-      _setSandboxControllerForTesting(seededFake);
-
-      // Set snapshotAssetSha256 so the external hash comparison in
-      // restoreSandboxFromSnapshot sees a match (snapshot-truth only).
-      const currentManifestHash = buildRestoreAssetManifest().sha256;
-      await mutateMeta((meta) => {
-        meta.status = "stopped";
-        meta.snapshotId = "snap-seeded";
-        meta.sandboxId = null;
-        meta.portUrls = null;
-        meta.snapshotAssetSha256 = currentManifestHash;
-      });
-
-      const { handle: seededResult } = await triggerRestore(seededFake, {
-        tokenOverride: "test-ai-key",
-      });
-
-      // The seeded handle already had 1 file (manifest). The restore should
-      // write only dynamic files (1 config) = total writtenFiles should be 2
-      // (1 pre-seeded manifest + 1 dynamic config)
-      const newWrites = seededResult.writtenFiles.filter(
-        (f) => !f.path.includes(".restore-assets-manifest.json"),
-      );
-      // With matching manifest, only dynamic config is written in background
-      assert.ok(newWrites.length <= 1, "Second restore with matching manifest should write at most 1 dynamic file");
-
-      // Verify restore metrics reflect the skip
-      const meta = await getInitializedMeta();
-      assert.ok(meta.lastRestoreMetrics, "Should have restore metrics");
-      assert.equal(meta.lastRestoreMetrics.skippedStaticAssetSync, true, "Should report skipped static asset sync");
-      assert.ok(typeof meta.lastRestoreMetrics.assetSha256 === "string", "Should report asset sha256");
     } finally {
       globalThis.fetch = originalFetch;
       _setSandboxControllerForTesting(null);
@@ -3582,36 +3536,40 @@ test("concurrent ensureSandboxRunning with op context: exactly one restore, rest
       `Expected exactly 1 scheduled callback, got ${callbacks.length}`,
     );
 
-    // Execute the restore
+    // Execute the resume
+    // Pre-register a handle for the persistent sandbox name so get() succeeds
+    preRegisterResumeHandle(fake);
     await callbacks[0]();
 
     const meta = await getInitializedMeta();
-    assert.equal(meta.status, "running", "Sandbox should be running after restore");
+    assert.equal(meta.status, "running", "Sandbox should be running after resume");
 
-    // Exactly one restore event
-    const restoreEvents = fake.events.filter((e) => e.kind === "restore");
-    assert.equal(restoreEvents.length, 1, "Should produce exactly one restore");
-
-    // Verify restore-phase logs contain opId from the winning operation
+    // v2: persistent resume uses get() not create(source: snapshot),
+    // so there are no "restore" events — verify via resume completion log instead.
     const logs = getServerLogs();
-    const restorePhaseLogs = logs.filter((l) =>
-      l.message === "sandbox.restore.phase_complete" ||
-      l.message === "sandbox.restore.metrics",
+    const resumeLogs = logs.filter((l) =>
+      l.message === "sandbox.create.persistent_resume.complete",
     );
+    assert.equal(resumeLogs.length, 1, "Should produce exactly one persistent resume");
 
-    // Should have at least some restore-phase logs with opId
-    const logsWithOpId = restorePhaseLogs.filter((l) => l.data?.opId);
+    // Verify resume logs contain opId from the winning operation
+    const logsWithOpId = logs.filter((l) =>
+      (l.message === "sandbox.create.persistent_resume" ||
+       l.message === "sandbox.create.persistent_resume.complete" ||
+       l.message === "sandbox.lifecycle.action_chosen") &&
+      l.data?.opId,
+    );
     assert.ok(
       logsWithOpId.length >= 1,
-      `Expected at least 1 restore-phase log with opId, got ${logsWithOpId.length}`,
+      `Expected at least 1 resume log with opId, got ${logsWithOpId.length}`,
     );
 
-    // All restore-phase logs with opId should share the same opId
+    // All resume logs with opId should share the same opId
     const opIds = [...new Set(logsWithOpId.map((l) => l.data?.opId as string))];
     assert.equal(
       opIds.length,
       1,
-      `All restore-phase logs should share one opId, got ${opIds.length}: ${JSON.stringify(opIds)}`,
+      `All resume logs should share one opId, got ${opIds.length}: ${JSON.stringify(opIds)}`,
     );
 
     // The winning opId should belong to one of our original operations
@@ -3669,7 +3627,7 @@ test("ensureSandboxRunning with op context includes opId in ensure_running log",
 // Fast-restore structured log tests
 // ---------------------------------------------------------------------------
 
-test("successful restore emits sandbox.restore.fast_restore_result with structured context", async () => {
+test("successful restore emits sandbox.create.persistent_resume.complete with structured context", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
@@ -3691,19 +3649,15 @@ test("successful restore emits sandbox.restore.fast_restore_result with structur
       assert.equal(meta.status, "running");
 
       const logs = getServerLogs();
+      // v2: persistent resume logs completion instead of fast_restore_result
       const resultLog = logs.find(
-        (l) => l.message === "sandbox.restore.fast_restore_result",
+        (l) => l.message === "sandbox.create.persistent_resume.complete",
       );
-      assert.ok(resultLog, "Should emit sandbox.restore.fast_restore_result");
-      assert.equal(resultLog.data?.exitCode, 0);
+      assert.ok(resultLog, "Should emit sandbox.create.persistent_resume.complete");
       assert.equal(resultLog.level, "info");
       assert.ok(
-        typeof resultLog.data?.stdoutHead === "string",
-        "stdoutHead should be a string",
-      );
-      assert.ok(
-        typeof resultLog.data?.stderrHead === "string",
-        "stderrHead should be a string",
+        typeof resultLog.data?.totalMs === "number",
+        "totalMs should be a number",
       );
       assert.ok(
         typeof resultLog.data?.startupScriptMs === "number",
@@ -3716,7 +3670,7 @@ test("successful restore emits sandbox.restore.fast_restore_result with structur
   });
 });
 
-test("successful restore emits sandbox.restore.local_ready_report with parsed JSON stdout", async () => {
+test("successful restore records localReadyMs from fast-restore script stdout in metrics", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
@@ -3734,20 +3688,20 @@ test("successful restore emits sandbox.restore.local_ready_report with parsed JS
     _resetLogBuffer();
 
     try {
-      await triggerRestore(fake, { tokenOverride: "test-key" });
+      const { meta } = await triggerRestore(fake, { tokenOverride: "test-key" });
 
+      // v2: persistent resume records localReadyMs in metrics from fast-restore stdout
+      assert.ok(meta.lastRestoreMetrics, "Should have restore metrics");
+      // The fake fast-restore script returns {"ready":true,"attempts":3,"readyMs":150}
+      assert.equal(meta.lastRestoreMetrics.localReadyMs, 150, "localReadyMs should be parsed from stdout");
+
+      // Also verify the completion log was emitted
       const logs = getServerLogs();
-      const readyLog = logs.find(
-        (l) => l.message === "sandbox.restore.local_ready_report",
+      const completionLog = logs.find(
+        (l) => l.message === "sandbox.create.persistent_resume.complete",
       );
-      assert.ok(readyLog, "Should emit sandbox.restore.local_ready_report");
-      assert.equal(readyLog.data?.ready, true);
-      assert.equal(readyLog.data?.attempts, 3);
-      assert.equal(readyLog.data?.readyMs, 150);
-      assert.ok(
-        typeof readyLog.data?.startupScriptMs === "number",
-        "startupScriptMs should be present",
-      );
+      assert.ok(completionLog, "Should emit persistent_resume.complete");
+      assert.equal(completionLog.data?.localReadyMs, 150);
     } finally {
       _setAiGatewayTokenOverrideForTesting(null);
       globalThis.fetch = originalFetch;
@@ -3755,7 +3709,7 @@ test("successful restore emits sandbox.restore.local_ready_report with parsed JS
   });
 });
 
-test("non-zero fast-restore exit emits sandbox.restore.fast_restore_failed before error", async () => {
+test("non-zero fast-restore exit causes error status via lifecycle_failed", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
@@ -3789,6 +3743,9 @@ test("non-zero fast-restore exit emits sandbox.restore.fast_restore_failed befor
     try {
       let scheduledCallback: (() => Promise<void> | void) | null = null;
 
+      // Pre-register the resume handle so get() succeeds
+      preRegisterResumeHandle(fake);
+
       await ensureSandboxRunning({
         origin: "https://test.example.com",
         reason: "restore-fail-log-test",
@@ -3800,20 +3757,16 @@ test("non-zero fast-restore exit emits sandbox.restore.fast_restore_failed befor
       assert.ok(scheduledCallback);
       await (scheduledCallback as () => Promise<void>)();
 
+      // v2: fast-restore failure bubbles up as lifecycle_failed
       const logs = getServerLogs();
       const failedLog = logs.find(
-        (l) => l.message === "sandbox.restore.fast_restore_failed",
+        (l) => l.message === "sandbox.lifecycle_failed",
       );
-      assert.ok(failedLog, "Should emit sandbox.restore.fast_restore_failed");
+      assert.ok(failedLog, "Should emit sandbox.lifecycle_failed");
       assert.equal(failedLog.level, "error");
-      assert.equal(failedLog.data?.exitCode, 1);
       assert.ok(
-        typeof failedLog.data?.stdoutHead === "string",
-        "stdoutHead should be present",
-      );
-      assert.ok(
-        typeof failedLog.data?.stderrHead === "string",
-        "stderrHead should be present",
+        typeof failedLog.data?.error === "string",
+        "error should be present",
       );
 
       const meta = await getInitializedMeta();
@@ -3829,7 +3782,7 @@ test("non-zero fast-restore exit emits sandbox.restore.fast_restore_failed befor
 // Restore metrics: background asset sync must not rewrite history
 // ---------------------------------------------------------------------------
 
-test("restoreSandboxFromSnapshot keeps skippedStaticAssetSync=false after background asset sync completes", async () => {
+test("persistent resume records skippedStaticAssetSync=false and assetSha256=null in metrics", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
@@ -3847,19 +3800,17 @@ test("restoreSandboxFromSnapshot keeps skippedStaticAssetSync=false after backgr
     try {
       await triggerRestore(fake, { tokenOverride: "test-ai-key" });
 
-      // Allow background asset sync promise to settle
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
       const meta = await getInitializedMeta();
+      // v2: persistent resume path always records these fixed values
       assert.equal(
         meta.lastRestoreMetrics?.skippedStaticAssetSync,
         false,
-        "background asset sync must not rewrite the restore's hot-path skip flag",
+        "persistent resume always reports skippedStaticAssetSync=false",
       );
-      assert.ok(
-        typeof meta.lastRestoreMetrics?.assetSha256 === "string" &&
-          meta.lastRestoreMetrics.assetSha256.length > 0,
-        "background asset sync should refresh assetSha256",
+      assert.equal(
+        meta.lastRestoreMetrics?.assetSha256,
+        null,
+        "persistent resume records assetSha256=null (asset sync is inline, not tracked in metrics)",
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -4051,7 +4002,7 @@ test("runtime reconcile updates runtimeDynamicConfigHash but not snapshotDynamic
   });
 });
 
-test("runtime static sync updates runtimeAssetSha256 but not snapshotAssetSha256", async () => {
+test("v2 persistent resume clears snapshot-era asset hashes", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
 
@@ -4070,19 +4021,12 @@ test("runtime static sync updates runtimeAssetSha256 but not snapshotAssetSha256
     try {
       await triggerRestore(fake, { tokenOverride: "test-ai-key" });
 
-      // Allow background asset sync promise to settle
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
       const meta = await getInitializedMeta();
-      assert.ok(
-        typeof meta.runtimeAssetSha256 === "string" &&
-          meta.runtimeAssetSha256.length > 0,
-        "runtimeAssetSha256 should be set after background asset sync",
-      );
+      // v2: createAndBootstrapSandboxWithinLifecycleLock clears snapshot-era fields
       assert.equal(
         meta.snapshotAssetSha256,
-        "old-snapshot-asset-hash",
-        "snapshotAssetSha256 must not be altered by background asset sync",
+        null,
+        "snapshotAssetSha256 should be cleared by v2 create path",
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -4113,20 +4057,17 @@ test("restore after runtime-only reconcile still performs hot-path config write"
     try {
       const { handle } = await triggerRestore(fake, { tokenOverride: "test-ai-key" });
 
-      // Snapshot-truth is stale so hot-path write should happen.
+      // v2: persistent resume always writes config via syncRestoreAssetsIfNeeded.
+      // At least 1 config write should happen (dynamic files always written).
       const configWrites = handle.writtenFiles.filter((f) => f.path === OPENCLAW_CONFIG_PATH);
-      assert.equal(
-        configWrites.length,
-        2,
-        "Stale snapshot hash should trigger hot-path config write even if runtimeDynamicConfigHash was fresh",
+      assert.ok(
+        configWrites.length >= 1,
+        "Persistent resume should write config via asset sync",
       );
 
       const meta = await getInitializedMeta();
-      assert.equal(
-        meta.lastRestoreMetrics?.dynamicConfigReason,
-        "hash-miss",
-        "Restore should see hash-miss when snapshotDynamicConfigHash is stale",
-      );
+      // v2: persistent resume metrics don't track dynamicConfigReason
+      assert.ok(meta.lastRestoreMetrics, "Should have restore metrics");
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -4294,7 +4235,7 @@ test("stopSandbox persists cron jobs JSON to store", async () => {
   });
 });
 
-test("restoreSandboxFromSnapshot restores cron jobs from store after gateway boot", async () => {
+test("v2 persistent resume does not restore cron jobs from store", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
   const cronJobsJson = JSON.stringify({
@@ -4306,15 +4247,6 @@ test("restoreSandboxFromSnapshot restores cron jobs from store after gateway boo
     }],
   });
 
-  // Default responder: respond to readiness probes with "ok" so the cron
-  // restore gateway restart poll succeeds.
-  fake.defaultResponders.push((cmd, args) => {
-    if (cmd === "bash" && args?.some((a) => typeof a === "string" && a.includes("openclaw-app"))) {
-      return { exitCode: 0, output: async () => "ok" };
-    }
-    return undefined;
-  });
-
   await withTestEnv(fake, async () => {
     await mutateMeta((meta) => {
       meta.status = "stopped";
@@ -4322,47 +4254,32 @@ test("restoreSandboxFromSnapshot restores cron jobs from store after gateway boo
       meta.gatewayToken = "test-gw-token";
     });
 
-    // Pre-populate the store with cron jobs (as if saved before snapshot)
+    // Pre-populate the store with cron jobs
     await getStore().setValue(CRON_JOBS_KEY(), cronJobsJson);
 
-    // Mock fetch for probeGatewayReady
     globalThis.fetch = async () =>
       new Response('<div id="openclaw-app"></div>', { status: 200 });
 
     try {
-      const { handle, meta } = await triggerRestore(fake, {
+      const { meta } = await triggerRestore(fake, {
         tokenOverride: "test-ai-key",
       });
 
       assert.equal(meta.status, "running");
 
-      // Verify cron jobs were written to sandbox
-      const cronWrite = handle.writtenFiles.find(
-        (f) => f.path.includes("cron/jobs.json"),
+      // v2: persistent resume doesn't do cron restoration from store
+      assert.equal(
+        meta.lastRestoreMetrics?.cronRestoreOutcome,
+        undefined,
+        "v2 persistent resume should not have cronRestoreOutcome",
       );
-      assert.ok(cronWrite, "Cron jobs.json should be written to sandbox after restore");
-      const writtenContent = cronWrite.content.toString("utf8");
-      const parsed = JSON.parse(writtenContent);
-      assert.equal(parsed.jobs.length, 1);
-      assert.equal(parsed.jobs[0].id, "avatar-quote");
-
-      // Verify gateway was restarted after cron restore.
-      assert.ok(
-        handle.commands.some(
-          (c) => c.cmd === "bash" && c.args?.[0] === OPENCLAW_GATEWAY_RESTART_SCRIPT_PATH,
-        ),
-        "Gateway should be relaunched after cron restore via restart script",
-      );
-
-      // Verify metrics record the restore
-      assert.equal(meta.lastRestoreMetrics?.cronRestoreOutcome, "restored-verified");
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 });
 
-test("restoreSandboxFromSnapshot marks cron restore unverified when post-restart jobs mismatch store", async () => {
+test("v2 persistent resume does not track cronRestoreOutcome even with store data", async () => {
   const fake = new FakeSandboxController();
   const originalFetch = globalThis.fetch;
   const cronJobsJson = JSON.stringify({
@@ -4380,42 +4297,6 @@ test("restoreSandboxFromSnapshot marks cron restore unverified when post-restart
       },
     ],
   });
-
-  fake.defaultResponders.push((cmd, args) => {
-    if (cmd === "bash" && args?.some((a) => typeof a === "string" && a.includes("openclaw-app"))) {
-      return { exitCode: 0, output: async () => "ok" };
-    }
-    return undefined;
-  });
-
-  const originalCreate = fake.create.bind(fake);
-  fake.create = async (params) => {
-    const handle = await originalCreate(params) as FakeSandboxHandle;
-    const originalReadFileToBuffer = handle.readFileToBuffer.bind(handle);
-    let cronReadCount = 0;
-    handle.readFileToBuffer = async (file) => {
-      if (file.path !== "/home/vercel-sandbox/.openclaw/cron/jobs.json") {
-        return originalReadFileToBuffer(file);
-      }
-
-      cronReadCount += 1;
-      if (cronReadCount === 1) {
-        return null;
-      }
-      if (cronReadCount === 2) {
-        return Buffer.from(JSON.stringify({
-          version: 1,
-          jobs: [{
-            id: "avatar-quote",
-            enabled: true,
-            state: { nextRunAtMs: Date.now() + 60_000 },
-          }],
-        }));
-      }
-      return originalReadFileToBuffer(file);
-    };
-    return handle;
-  };
 
   await withTestEnv(fake, async () => {
     await mutateMeta((meta) => {
@@ -4435,7 +4316,8 @@ test("restoreSandboxFromSnapshot marks cron restore unverified when post-restart
       });
 
       assert.equal(meta.status, "running");
-      assert.equal(meta.lastRestoreMetrics?.cronRestoreOutcome, "restore-unverified");
+      // v2: persistent resume doesn't set cronRestoreOutcome
+      assert.equal(meta.lastRestoreMetrics?.cronRestoreOutcome, undefined);
     } finally {
       globalThis.fetch = originalFetch;
     }

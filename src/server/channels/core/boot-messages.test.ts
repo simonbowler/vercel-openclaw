@@ -309,7 +309,7 @@ test("boot-messages: updates message on status transition", async () => {
       // Simulate status transitions
       await new Promise((r) => setTimeout(r, 100));
       await mutateMeta((meta) => {
-        meta.status = "restoring";
+        meta.status = "creating";
       });
       await new Promise((r) => setTimeout(r, 100));
       await mutateMeta((meta) => {
@@ -335,7 +335,7 @@ test("boot-messages: updates message on status transition", async () => {
       // Check that we see restoring and booting messages
       const updateTexts = updates.map((e) => e.text).join("|");
       assert.ok(
-        updateTexts.includes("Restoring") || updateTexts.includes("Starting"),
+        updateTexts.includes("Creating") || updateTexts.includes("Starting"),
         `should have status transitions in: ${updateTexts}`,
       );
     } finally {

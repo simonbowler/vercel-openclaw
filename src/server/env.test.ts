@@ -254,9 +254,11 @@ test("local dev returns placeholder session secret", () => {
 
 // --- getOpenclawPackageSpec ---
 
-test("getOpenclawPackageSpec defaults to openclaw@latest when env var is unset", () => {
+test("getOpenclawPackageSpec defaults to pinned version when env var is unset", () => {
   withEnv({ OPENCLAW_PACKAGE_SPEC: undefined }, () => {
-    assert.equal(getOpenclawPackageSpec(), "openclaw@latest");
+    const spec = getOpenclawPackageSpec();
+    assert.ok(spec.startsWith("openclaw@"), "should start with openclaw@");
+    assert.notEqual(spec, "openclaw@latest", "default should no longer be @latest");
   });
 });
 
@@ -266,7 +268,7 @@ test("getOpenclawPackageSpec returns explicit value when set", () => {
   });
 });
 
-test("getOpenclawPackageSpec logs warning on Vercel when falling back to @latest", async () => {
+test("getOpenclawPackageSpec logs warning on Vercel when falling back to default", async () => {
   const { _resetLogBuffer, getServerLogs } = await import("@/server/log");
   _resetLogBuffer();
   withEnv(
@@ -276,13 +278,13 @@ test("getOpenclawPackageSpec logs warning on Vercel when falling back to @latest
     },
     () => {
       const spec = getOpenclawPackageSpec();
-      assert.equal(spec, "openclaw@latest");
+      assert.ok(spec.startsWith("openclaw@"), "should start with openclaw@");
       const warns = getServerLogs().filter(
         (e) => e.message === "env.openclaw_package_spec_fallback",
       );
       assert.equal(warns.length, 1, "expected one fallback warning log");
       const data = warns[0]!.data as Record<string, unknown>;
-      assert.equal(data.resolved, "openclaw@latest");
+      assert.equal(data.resolved, spec);
     },
   );
 });

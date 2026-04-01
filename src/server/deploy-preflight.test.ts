@@ -550,7 +550,7 @@ test("preflight checks do not include launch-verification (config-only guarantee
   );
 });
 
-test("preflight warns when OPENCLAW_PACKAGE_SPEC is missing on Vercel", async () => {
+test("preflight passes when OPENCLAW_PACKAGE_SPEC is missing on Vercel (default is pinned)", async () => {
   await withEnv(
     {
       VERCEL: "1",
@@ -568,22 +568,21 @@ test("preflight warns when OPENCLAW_PACKAGE_SPEC is missing on Vercel", async ()
         new Request("https://app.example.com/api/admin/preflight"),
       );
 
-      // Package-spec should be a warn check on Vercel (not a blocker)
+      // Default package-spec is now pinned, so check should pass on Vercel
       const specCheck = payload.checks.find(
         (c) => c.id === "openclaw-package-spec",
       );
       assert.ok(specCheck, "expected openclaw-package-spec check on Vercel");
-      assert.equal(specCheck.status, "warn");
+      assert.equal(specCheck.status, "pass");
 
-      // Preflight should still pass (missing package-spec is only a warning)
-      assert.equal(payload.ok, true, "missing package-spec on Vercel should not block preflight");
+      // Preflight should pass
+      assert.equal(payload.ok, true, "pinned default package-spec should not block preflight");
 
-      // The action should be recommended, not required
+      // No action needed since the default is pinned
       const specAction = payload.actions.find(
         (a) => a.id === "configure-openclaw-package-spec",
       );
-      assert.ok(specAction, "expected configure-openclaw-package-spec action");
-      assert.equal(specAction.status, "recommended");
+      assert.equal(specAction, undefined, "no action needed when default is pinned");
     },
   );
 });
