@@ -162,7 +162,23 @@ export async function processChannelStep(
     const forwardStartedAt = Date.now();
     console.log(`[DIAG] Phase 2: forwarding to native handler channel=${channel}`);
 
+    // For Telegram, the native handler on port 8787 may not be ready yet
+    // even though the gateway on port 3000 is running.  The Telegram
+    // provider takes ~2-4s after gateway boot to register its webhook
+    // route.  Poll with a lightweight probe first so the real payload
+    // isn't swallowed by the base server's generic 200 handler.
     if (channel === "telegram") {
+      const { OPENCLAW_TELEGRAM_WEBHOOK_PORT } = await import("@/server/openclaw/config");
+      const probeResult = await waitForTelegramNativeHandler(
+        getSandboxDomain,
+        OPENCLAW_TELEGRAM_WEBHOOK_PORT,
+        readyMeta.channels?.telegram?.webhookSecret ?? null,
+      );
+      diag.telegramProbeAttempts = probeResult.attempts;
+      diag.telegramProbeWaitMs = probeResult.waitMs;
+      diag.telegramProbeLastStatus = probeResult.lastStatus;
+      console.log(`[DIAG] Telegram native handler probe done: attempts=${probeResult.attempts} waitMs=${probeResult.waitMs} lastStatus=${probeResult.lastStatus}`);
+
       retryingResult = await forwardToNativeHandlerWithRetry(
         channel as ChannelName,
         payload,
@@ -266,6 +282,76 @@ export async function processChannelStep(
 }
 
 const NATIVE_HANDLER_TIMEOUT_ERROR = "native_handler_timeout";
+
+const TELEGRAM_PROBE_MAX_ATTEMPTS = 20;
+const TELEGRAM_PROBE_INTERVAL_MS = 500;
+const TELEGRAM_PROBE_TIMEOUT_MS = 15_000;
+
+type TelegramProbeResult = {
+  ready: boolean;
+  attempts: number;
+  waitMs: number;
+  lastStatus: number | null;
+};
+
+/**
+ * Poll the Telegram native handler on port 8787 until the webhook route
+ * is registered.  The gateway starts a base HTTP server on 8787 immediately,
+ * but the Telegram provider takes 2-4 seconds to register the
+ * `/telegram-webhook` path.  During that window the base server returns
+ * a generic 200 for POST requests, silently swallowing the payload.
+ *
+ * We send a GET to `/telegram-webhook` — the registered handler returns
+ * 401 (missing secret header), while the base server returns 404.
+ * When we see 401, the handler is ready and we can forward the real payload.
+ */
+async function waitForTelegramNativeHandler(
+  getSandboxDomain: (port?: number) => Promise<string>,
+  port: number,
+  webhookSecret: string | null,
+): Promise<TelegramProbeResult> {
+  const startedAt = Date.now();
+  const deadline = startedAt + TELEGRAM_PROBE_TIMEOUT_MS;
+  let lastStatus: number | null = null;
+
+  for (let attempt = 1; attempt <= TELEGRAM_PROBE_MAX_ATTEMPTS && Date.now() < deadline; attempt++) {
+    try {
+      const sandboxUrl = await getSandboxDomain(port);
+      // Send a POST with an invalid secret — if the Telegram handler is
+      // registered it returns 401 (secret mismatch).  The base server
+      // returns 404 (path not found) or 200 (generic catch-all).
+      const resp = await fetch(`${sandboxUrl}/telegram-webhook`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(webhookSecret ? { "x-telegram-bot-api-secret-token": "probe-invalid-secret" } : {}),
+        },
+        body: JSON.stringify({ probe: true }),
+        signal: AbortSignal.timeout(3_000),
+      });
+      lastStatus = resp.status;
+
+      // 401 = Telegram handler is registered and rejecting our invalid secret.
+      // This means the real forward with the correct secret will be accepted.
+      if (resp.status === 401) {
+        console.log(`[DIAG] telegram_probe: ready at attempt=${attempt} status=401 waitMs=${Date.now() - startedAt}`);
+        return { ready: true, attempts: attempt, waitMs: Date.now() - startedAt, lastStatus: 401 };
+      }
+
+      console.log(`[DIAG] telegram_probe: attempt=${attempt} status=${resp.status} (not ready)`);
+    } catch (err) {
+      console.log(`[DIAG] telegram_probe: attempt=${attempt} error=${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    if (attempt < TELEGRAM_PROBE_MAX_ATTEMPTS && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, TELEGRAM_PROBE_INTERVAL_MS));
+    }
+  }
+
+  console.log(`[DIAG] telegram_probe: TIMEOUT after ${Date.now() - startedAt}ms lastStatus=${lastStatus}`);
+  // Timed out — proceed anyway and let the retrying forward handle it.
+  return { ready: false, attempts: TELEGRAM_PROBE_MAX_ATTEMPTS, waitMs: Date.now() - startedAt, lastStatus };
+}
 
 /**
  * Minimal adapter that satisfies runWithBootMessages type requirements.
