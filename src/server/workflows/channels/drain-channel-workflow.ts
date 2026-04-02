@@ -323,13 +323,19 @@ const RETRYING_FORWARD_TIMEOUT_MS = 30_000;
 
 /**
  * Collapsed probe + forward: sends the real payload directly to the native
- * handler, retrying only on proxy-level failures (502/503/504) and fetch
- * exceptions. This replaces the separate waitForNativeHandler + forwardToNativeHandler
- * two-step path for Telegram, eliminating one network round-trip per wake.
+ * handler, retrying on proxy-level failures (502/503/504), fetch exceptions,
+ * and handler-not-ready responses (401/404).
+ *
+ * 401/404 are retried because the native handler (e.g. Telegram on port 8787)
+ * may be listening at the TCP level but not yet have its webhook routes and
+ * secret validation fully initialized.  The gateway boots port 3000 first;
+ * the Telegram webhook listener on 8787 registers its path a few seconds
+ * later.  During that window the handler returns 401 (secret check against
+ * an uninitialized route) or 404 (path not yet registered).
  *
  * Duplicate-safety: retries ONLY happen when the handler definitely did not
- * process the request. Any response < 502 (including 500) is treated as
- * "handler received the request" and is never retried.
+ * process the request. Any response that is 2xx, 3xx, or 4xx (other than
+ * 401/404) is treated as "handler received the request" and is never retried.
  */
 async function forwardToNativeHandlerWithRetry(
   channel: ChannelName,
@@ -346,14 +352,17 @@ async function forwardToNativeHandlerWithRetry(
       const result = await forwardToNativeHandler(channel, payload, meta, getSandboxDomain);
 
       // Proxy-level failures (502/503/504): handler not listening yet. Safe to retry.
-      if (result.status >= 502) {
-        const entry = { attempt, reason: "proxy-error" as const, status: result.status };
+      // Handler-not-ready (401/404): native handler is listening at TCP level
+      // but webhook route or secret validation is not yet initialized.
+      if (result.status >= 502 || result.status === 401 || result.status === 404) {
+        const reason = result.status >= 502 ? "proxy-error" : "handler-not-ready";
+        const entry = { attempt, reason, status: result.status };
         retries.push(entry);
         logInfo("channels.native_forward_retry", {
           channel,
           attempt,
           status: result.status,
-          reason: "proxy-error",
+          reason,
         });
         if (attempt < RETRYING_FORWARD_MAX_ATTEMPTS && Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, RETRYING_FORWARD_RETRY_INTERVAL_MS));
@@ -361,8 +370,8 @@ async function forwardToNativeHandlerWithRetry(
         continue;
       }
 
-      // Any direct handler response (< 502): do NOT retry regardless of status.
-      // This includes 200 (success), 4xx (client error), 500 (server error).
+      // Any other direct handler response: do NOT retry regardless of status.
+      // This includes 200 (success), other 4xx (client error), 500 (server error).
       const totalMs = Date.now() - startedAt;
       logInfo("channels.retrying_forward_complete", {
         channel,

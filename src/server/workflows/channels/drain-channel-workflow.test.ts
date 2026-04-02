@@ -507,9 +507,11 @@ test("processChannelStep forward captures Telegram webhook secret and correct po
   // Verify the forward received the right data
   assert.equal(capturedChannel, "telegram");
   assert.deepStrictEqual(capturedPayload, telegramUpdate);
-  assert.equal(capturedMeta?.sandboxId, "sbx-tg-forward");
-  assert.equal(capturedMeta?.channels.telegram?.webhookSecret, "secret-123");
-  assert.ok(capturedMeta?.portUrls?.["8787"], "portUrls should include port 8787");
+  assert.ok(capturedMeta, "meta should be captured");
+  const meta = capturedMeta as SingleMeta;
+  assert.equal(meta.sandboxId, "sbx-tg-forward");
+  assert.equal(meta.channels.telegram?.webhookSecret, "secret-123");
+  assert.ok(meta.portUrls?.["8787"], "portUrls should include port 8787");
   assert.ok(capturedGetSandboxDomain, "getSandboxDomain should be passed");
 });
 
