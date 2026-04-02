@@ -193,17 +193,14 @@ async function runCycle(cycle, vcpus) {
       ensureWaitedMs: ensureResult.body.waitedMs,
     };
     emitJsonl(result);
-    const hotSpareTag =
-      metrics.hotSpareHit != null
-        ? ` hotSpareHit=${metrics.hotSpareHit} hotSparePromotionMs=${metrics.hotSparePromotionMs ?? 0}` +
-          (metrics.hotSpareRejectReason ? ` hotSpareReject=${metrics.hotSpareRejectReason}` : "")
-        : "";
     log(
       `cycle=${cycle} — done totalMs=${metrics.totalMs} wallMs=${totalWallMs} ` +
         `create=${metrics.sandboxCreateMs} startup=${metrics.startupScriptMs} ` +
         `pair=${metrics.forcePairMs} fw=${metrics.firewallSyncMs} ` +
-        `localReady=${metrics.localReadyMs} publicReady=${metrics.publicReadyMs}` +
-        hotSpareTag,
+        `localReady=${metrics.localReadyMs} publicReady=${metrics.publicReadyMs} ` +
+        `hotSpareHit=${metrics.hotSpareHit ?? "n/a"} ` +
+        `hotSparePromotionMs=${metrics.hotSparePromotionMs ?? 0} ` +
+        `hotSpareRejectReason=${metrics.hotSpareRejectReason ?? "none"}`,
     );
     return result;
   } catch (err) {
@@ -230,6 +227,54 @@ function percentile(sorted, p) {
   return sorted[Math.max(0, idx)];
 }
 
+function computeNumericStats(values) {
+  const sorted = values
+    .filter((v) => typeof v === "number" && Number.isFinite(v))
+    .sort((a, b) => a - b);
+  return {
+    count: sorted.length,
+    min: sorted[0] ?? null,
+    max: sorted[sorted.length - 1] ?? null,
+    p50: percentile(sorted, 50),
+    p95: percentile(sorted, 95),
+    mean: sorted.length
+      ? Math.round(sorted.reduce((a, b) => a + b, 0) / sorted.length)
+      : null,
+  };
+}
+
+function computeHotSpareStats(records) {
+  const considered = records.filter((r) => {
+    const hotSpareHit = r.restoreMetrics?.hotSpareHit;
+    return hotSpareHit === true || hotSpareHit === false;
+  });
+  const hits = considered.filter(
+    (r) => r.restoreMetrics.hotSpareHit === true,
+  );
+  const misses = considered.filter(
+    (r) => r.restoreMetrics.hotSpareHit !== true,
+  );
+  const rejectReasons = {};
+  for (const record of misses) {
+    const reason = record.restoreMetrics.hotSpareRejectReason ?? "none";
+    rejectReasons[reason] = (rejectReasons[reason] ?? 0) + 1;
+  }
+  return {
+    consideredCount: considered.length,
+    hitCount: hits.length,
+    missCount: misses.length,
+    hitRate: considered.length
+      ? Number((hits.length / considered.length).toFixed(4))
+      : null,
+    promotionMs: computeNumericStats(
+      hits
+        .map((r) => r.restoreMetrics.hotSparePromotionMs)
+        .filter((v) => typeof v === "number" && Number.isFinite(v)),
+    ),
+    rejectReasons,
+  };
+}
+
 function computeStats(results) {
   const PHASES = [
     "sandboxCreateMs",
@@ -241,7 +286,6 @@ function computeStats(results) {
     "localReadyMs",
     "publicReadyMs",
     "totalMs",
-    "hotSparePromotionMs",
   ];
 
   const byVcpu = {};
@@ -256,42 +300,15 @@ function computeStats(results) {
   for (const [vcpuKey, records] of Object.entries(byVcpu)) {
     const phaseStats = {};
     for (const phase of PHASES) {
-      const values = records
-        .map((r) => r.restoreMetrics[phase])
-        .filter((v) => typeof v === "number")
-        .sort((a, b) => a - b);
-      phaseStats[phase] = {
-        count: values.length,
-        min: values[0] ?? null,
-        max: values[values.length - 1] ?? null,
-        p50: percentile(values, 50),
-        p95: percentile(values, 95),
-        mean: values.length
-          ? Math.round(values.reduce((a, b) => a + b, 0) / values.length)
-          : null,
-      };
+      phaseStats[phase] = computeNumericStats(
+        records.map((r) => r.restoreMetrics[phase]),
+      );
     }
-    // Hot-spare hit rate (only meaningful when variant=hot-spare)
-    const hotSpareHits = records.filter(
-      (r) => r.restoreMetrics.hotSpareHit === true,
-    ).length;
-    const hotSpareMisses = records.filter(
-      (r) => r.restoreMetrics.hotSpareHit === false,
-    ).length;
-    const hotSpareReasons = records
-      .map((r) => r.restoreMetrics.hotSpareRejectReason)
-      .filter(Boolean);
-
     summary[vcpuKey] = {
       vcpus: vcpuKey,
       cycles: records.length,
       phases: phaseStats,
-      hotSpare: {
-        hits: hotSpareHits,
-        misses: hotSpareMisses,
-        unknown: records.length - hotSpareHits - hotSpareMisses,
-        rejectReasons: [...new Set(hotSpareReasons)],
-      },
+      hotSpare: computeHotSpareStats(records),
     };
   }
 
@@ -371,14 +388,19 @@ async function main() {
           `${phase.padEnd(20)} ${pad(s.p50)}  ${pad(s.p95)}  ${pad(s.min)}  ${pad(s.max)}  ${pad(s.mean)}\n`,
         );
       }
-      if (stats.hotSpare && (stats.hotSpare.hits > 0 || stats.hotSpare.misses > 0)) {
-        process.stderr.write(
-          `\nHot-spare: ${stats.hotSpare.hits} hits, ${stats.hotSpare.misses} misses` +
-            (stats.hotSpare.rejectReasons.length
-              ? ` (rejects: ${stats.hotSpare.rejectReasons.join(", ")})`
-              : "") +
-            "\n",
-        );
+      const hotSpare = stats.hotSpare;
+      process.stderr.write(
+        `\nHot spare hits=${hotSpare.hitCount}/${hotSpare.consideredCount} ` +
+          `rate=${hotSpare.hitRate ?? "—"} ` +
+          `promo_p50=${hotSpare.promotionMs.p50 ?? "—"} ` +
+          `promo_p95=${hotSpare.promotionMs.p95 ?? "—"}\n`,
+      );
+      const rejectSummary = Object.entries(hotSpare.rejectReasons)
+        .sort((a, b) => b[1] - a[1])
+        .map(([reason, count]) => `${reason}=${count}`)
+        .join(" ");
+      if (rejectSummary) {
+        process.stderr.write(`Reject reasons ${rejectSummary}\n`);
       }
     }
     process.stderr.write(`\nTotal results: ${allResults.length}, failures: ${failures}\n`);
