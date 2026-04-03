@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { VList, type VListHandle } from "virtua";
-import type { LogEntry, LogLevel, LogSource } from "@/shared/types";
+import type { LogEntry, LogLevel, LogSource, SingleStatus } from "@/shared/types";
 import type { StatusPayload } from "@/components/admin-types";
+import { isSandboxLogReadableStatus, isSandboxLifecyclePending } from "@/shared/sandbox/log-visibility";
 
 type LogsPanelProps = {
   active: boolean;
@@ -46,17 +47,14 @@ export function LogsPanel({ active, status }: LogsPanelProps) {
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const vlistRef = useRef<VListHandle>(null);
 
-  const sandboxStatus = status.status;
+  const sandboxStatus = status.status as SingleStatus;
   const isRunning = sandboxStatus === "running";
-  const isBooting =
-    sandboxStatus === "booting" ||
-    sandboxStatus === "setup" ||
-    sandboxStatus === "creating" ||
-    sandboxStatus === "restoring";
+  const canFetchLogs = isSandboxLogReadableStatus(sandboxStatus);
+  const isBooting = isSandboxLifecyclePending(sandboxStatus);
   const isStopped = sandboxStatus === "stopped";
 
   const fetchLogs = useCallback(async () => {
-    if (!active || !isRunning) return;
+    if (!active || !canFetchLogs) return;
     setLoading(true);
     try {
       const res = await fetch("/api/admin/logs", {
@@ -72,7 +70,7 @@ export function LogsPanel({ active, status }: LogsPanelProps) {
     } finally {
       setLoading(false);
     }
-  }, [active, isRunning]);
+  }, [active, canFetchLogs]);
 
   useEffect(() => {
     if (!active) return;
@@ -80,7 +78,7 @@ export function LogsPanel({ active, status }: LogsPanelProps) {
   }, [active, fetchLogs]);
 
   useEffect(() => {
-    if (!active || !live || !isRunning) return;
+    if (!active || !live || !canFetchLogs) return;
 
     const interval = window.setInterval(() => {
       void fetchLogs();
@@ -89,7 +87,7 @@ export function LogsPanel({ active, status }: LogsPanelProps) {
     return () => {
       window.clearInterval(interval);
     };
-  }, [active, live, isRunning, fetchLogs]);
+  }, [active, live, canFetchLogs, fetchLogs]);
 
   // Auto-scroll to bottom when live and new logs arrive
   useEffect(() => {
@@ -128,12 +126,13 @@ export function LogsPanel({ active, status }: LogsPanelProps) {
   }, []);
 
   const emptyMessage = (() => {
-    if (isBooting) return "Sandbox is starting up -- logs will appear once it's running.";
+    if (sandboxStatus === "creating") return "Sandbox is being created -- logs will appear once setup begins.";
+    if (isBooting) return "Sandbox is starting up -- logs may appear as setup progresses.";
     if (isStopped) return "Sandbox is stopped. Start it from the Status tab to see logs.";
     if (sandboxStatus === "error") return "Sandbox is in an error state. Check the Status tab.";
     if (sandboxStatus === "uninitialized") return "Sandbox has not been created yet. Use the Status tab to get started.";
-    if (isRunning && logs.length === 0) return "No logs collected yet. They will appear shortly.";
-    if (isRunning && filtered.length === 0) return "No logs matching current filters.";
+    if (canFetchLogs && logs.length === 0) return "No logs collected yet. They will appear shortly.";
+    if (canFetchLogs && filtered.length === 0) return "No logs matching current filters.";
     return "No logs available.";
   })();
 
@@ -152,7 +151,7 @@ export function LogsPanel({ active, status }: LogsPanelProps) {
         </button>
       </div>
 
-      {!isRunning && !isBooting && sandboxStatus !== "uninitialized" && (
+      {!canFetchLogs && !isBooting && sandboxStatus !== "uninitialized" && (
         <p className="error-banner">
           Sandbox is not running. Start it from the Status tab first.
         </p>

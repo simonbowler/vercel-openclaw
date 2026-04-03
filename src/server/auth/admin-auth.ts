@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 
-import { logInfo, logWarn } from "@/server/log";
+import { logDebug, logWarn } from "@/server/log";
 import { verifyCsrf } from "@/server/auth/csrf";
 import {
   getCookieValue,
@@ -88,7 +88,7 @@ export async function requireAdminAuth(
   const bearerToken = extractBearerToken(request);
   if (bearerToken) {
     if (timingSafeStringEqual(bearerToken, configured.secret)) {
-      logInfo("auth.admin_bearer_ok");
+      logDebug("auth.admin_bearer_ok");
       return { authenticated: true, setCookieHeader: null };
     }
     return unauthorizedResponse();
@@ -97,7 +97,7 @@ export async function requireAdminAuth(
   // Check admin session cookie
   const session = await readAdminSession(request);
   if (session) {
-    logInfo("auth.admin_session_ok");
+    logDebug("auth.admin_session_ok");
     return { authenticated: true, setCookieHeader: null };
   }
 
@@ -122,7 +122,7 @@ export async function requireAdminMutationAuth(
   const bearerToken = extractBearerToken(request);
   if (bearerToken) {
     if (timingSafeStringEqual(bearerToken, configured.secret)) {
-      logInfo("auth.admin_bearer_ok");
+      logDebug("auth.admin_bearer_ok");
       return { authenticated: true, setCookieHeader: null };
     }
     return unauthorizedResponse();
@@ -137,7 +137,7 @@ export async function requireAdminMutationAuth(
 
   const session = await readAdminSession(request);
   if (session) {
-    logInfo("auth.admin_session_ok");
+    logDebug("auth.admin_session_ok");
     return { authenticated: true, setCookieHeader: null };
   }
 

@@ -16,7 +16,7 @@ import {
   getWebhookBypassRequirement,
   getWebhookBypassStatusMessage,
 } from "@/server/deploy-requirements";
-import { logInfo } from "@/server/log";
+import { logDebug, logInfo } from "@/server/log";
 import {
   getPublicUrlDiagnostics,
   resolvePublicOrigin,
@@ -604,7 +604,7 @@ export async function buildDeployPreflight(
     .filter((r) => r.status !== "pass")
     .map((r) => `${r.id}:${r.status}`);
 
-  logInfo("deploy_preflight.built", {
+  logDebug("deploy_preflight.built", {
     ok: payload.ok,
     authMode: payload.authMode,
     publicOrigin: payload.publicOrigin,

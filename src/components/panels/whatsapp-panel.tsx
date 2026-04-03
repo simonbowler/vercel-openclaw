@@ -215,7 +215,7 @@ export function WhatsAppPanel({
       channel="whatsapp"
       configured={wa.configured}
       channelClassName="channel-whatsapp"
-      title="WhatsApp"
+      title="WhatsApp (experimental)"
       summary={
         wa.configured
           ? `Connected${wa.displayName ? ` · ${wa.displayName}` : ""}${wa.linkedPhone ? ` · ${wa.linkedPhone}` : ""}`

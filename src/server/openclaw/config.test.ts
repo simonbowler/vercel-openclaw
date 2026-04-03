@@ -1078,11 +1078,10 @@ test("buildCompareScript normalizes common shorthand model ids at runtime", asyn
 // buildFastRestoreScript — gateway reset behavior
 // ---------------------------------------------------------------------------
 
-test("buildFastRestoreScript conditionally sleeps only when pkill succeeds", () => {
+test("buildFastRestoreScript polls for process death instead of fixed sleep", () => {
   const script = buildFastRestoreScript();
 
-  // The script should contain the conditional sleep pattern:
-  // sleep only inside the `if pkill ...` block, not unconditionally.
+  // The script should contain the conditional pkill + poll pattern.
   assert.ok(
     script.includes("if pkill -f 'openclaw.gateway'"),
     "expected conditional pkill check",
@@ -1091,28 +1090,34 @@ test("buildFastRestoreScript conditionally sleeps only when pkill succeeds", () 
     script.includes("_killed_existing_gateway=1"),
     "expected killed flag set inside if-block",
   );
+
+  // Should poll with pgrep instead of fixed sleep 1
   assert.ok(
-    script.includes("_sleep_ms=1000"),
-    "expected sleep duration set inside if-block",
+    script.includes("pgrep -f 'openclaw.gateway'"),
+    "expected pgrep poll loop for process death",
+  );
+  assert.ok(
+    !script.includes("_sleep_ms=1000"),
+    "should not have fixed 1000ms sleep duration",
   );
 
-  // Verify sleep is inside the if-block, not standalone after pkill
+  // Verify pgrep poll is inside the if-block
   const lines = script.split("\n");
   const pkillLine = lines.findIndex((l) =>
     l.includes("if pkill -f 'openclaw.gateway'"),
   );
-  const sleepLine = lines.findIndex(
-    (l, i) => i > pkillLine && l.trim() === "sleep 1",
+  const pgrepLine = lines.findIndex(
+    (l, i) => i > pkillLine && l.includes("pgrep -f 'openclaw.gateway'"),
   );
   const fiLine = lines.findIndex(
     (l, i) => i > pkillLine && l.trim() === "fi",
   );
   assert.ok(pkillLine >= 0, "pkill line must exist");
-  assert.ok(sleepLine >= 0, "sleep line must exist");
+  assert.ok(pgrepLine >= 0, "pgrep poll line must exist");
   assert.ok(fiLine >= 0, "fi line must exist");
   assert.ok(
-    sleepLine < fiLine,
-    "sleep 1 must be inside the if-block (before fi), not after",
+    pgrepLine < fiLine,
+    "pgrep poll must be inside the if-block (before fi)",
   );
 });
 

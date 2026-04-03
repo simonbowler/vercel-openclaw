@@ -116,7 +116,7 @@ When launch verification reports `ok: false`, these fields explain why:
 
 `channelReadiness.ready` is only `true` after destructive launch verification passes every phase for the current deployment. A deployment is channel-ready only after destructive launch verification passes and `channelReadiness.ready` is `true`.
 
-Run destructive launch verification before connecting Slack or Telegram.
+Run destructive launch verification before connecting any channel.
 
 ## Example launch verification result
 
@@ -143,6 +143,6 @@ Run destructive launch verification before connecting Slack or Telegram.
 
 ## Where to read next
 
-- [Channels and Webhooks](channels-and-webhooks.md) — how to connect Slack and Telegram after verification passes
+- [Channels and Webhooks](channels-and-webhooks.md) — how to connect channels after verification passes
 - [API Reference](api-reference.md) — full request and response shapes for preflight and launch verification
 - [Sandbox Lifecycle and Restore](lifecycle-and-restore.md) — the lifecycle states and restore mechanics that launch verification exercises

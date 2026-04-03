@@ -18,7 +18,7 @@ Start here if you want to understand how the app works in practice.
 1. **Architecture** — what the app is, what it is not, and how requests flow through it
 2. **Sandbox Lifecycle and Restore** — how the sandbox is created, resumed, stopped, and woken by cron (persistent sandboxes with auto-snapshot)
 3. **Preflight and Launch Verification** — how config readiness and runtime readiness are checked
-4. **Channels and Webhooks** — how Slack and Telegram setup, readiness, and protection behavior fit together
+4. **Channels and Webhooks** — how channel setup (Slack, Telegram, WhatsApp, Discord), readiness, and protection behavior fit together
 5. **Environment Variables** — every variable the app reads and when each one matters
 6. **Deployment Protection** — how Vercel Deployment Protection interacts with channel webhooks
 7. **API Reference** — request and response shapes for the admin and automation surfaces

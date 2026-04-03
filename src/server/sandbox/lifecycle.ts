@@ -48,6 +48,7 @@ import {
 } from "@/server/openclaw/restore-assets";
 import { buildRestoreDecision } from "@/server/sandbox/restore-attestation";
 import type { RestoreDecision } from "@/shared/restore-decision";
+import type { LiveConfigSyncResult } from "@/shared/live-config-sync";
 import { getSandboxController } from "@/server/sandbox/controller";
 import type { SandboxHandle } from "@/server/sandbox/controller";
 import {
@@ -771,7 +772,7 @@ export async function getSandboxDomain(port = OPENCLAW_PORT): Promise<string> {
  * Called after channel credentials are saved or removed in the admin UI.
  * No-op when the sandbox is not running.
  */
-export async function syncGatewayConfigToSandbox(): Promise<{ synced: boolean; reason: string }> {
+export async function syncGatewayConfigToSandbox(): Promise<LiveConfigSyncResult> {
   const meta = await getInitializedMeta();
   if (meta.status !== "running" || !meta.sandboxId) {
     logInfo("sandbox.config_sync_skipped", {
@@ -779,7 +780,7 @@ export async function syncGatewayConfigToSandbox(): Promise<{ synced: boolean; r
       status: meta.status,
       sandboxId: meta.sandboxId,
     });
-    return { synced: false, reason: "sandbox_not_running" };
+    return { outcome: "skipped", reason: "sandbox_not_running", liveConfigFresh: false, operatorMessage: null };
   }
 
   const { getPublicOrigin } = await import("@/server/public-url");
@@ -818,7 +819,12 @@ export async function syncGatewayConfigToSandbox(): Promise<{ synced: boolean; r
         sandboxId,
         error: restartErr instanceof Error ? restartErr.message : String(restartErr),
       });
-      return { synced: true, reason: "config_written_restart_failed" };
+      return {
+        outcome: "degraded",
+        reason: "config_written_restart_failed",
+        liveConfigFresh: false,
+        operatorMessage: "Credentials were saved, but the running sandbox did not restart cleanly. Live routes may still be stale until the next successful restart.",
+      };
     }
 
     // Poll for gateway readiness after restart.
@@ -840,13 +846,18 @@ export async function syncGatewayConfigToSandbox(): Promise<{ synced: boolean; r
     });
 
     logInfo("sandbox.config_sync_restarted", { sandboxId });
-    return { synced: true, reason: "config_written_and_restarted" };
+    return { outcome: "applied", reason: "config_written_and_restarted", liveConfigFresh: true, operatorMessage: null };
   } catch (error) {
     logWarn("sandbox.config_sync_failed", {
       sandboxId,
       error: error instanceof Error ? error.message : String(error),
     });
-    return { synced: false, reason: error instanceof Error ? error.message : String(error) };
+    return {
+      outcome: "failed",
+      reason: error instanceof Error ? error.message : String(error),
+      liveConfigFresh: false,
+      operatorMessage: "Config sync failed. The sandbox may be serving stale configuration.",
+    };
   }
 }
 

@@ -567,8 +567,17 @@ _killed_existing_gateway=0
 _sleep_ms=0
 if pkill -f 'openclaw.gateway' 2>/dev/null; then
   _killed_existing_gateway=1
-  _sleep_ms=1000
-  sleep 1
+  # Poll for process death instead of fixed 1-second sleep.
+  # pgrep exits non-zero when no matching process exists.
+  _wait_deadline=\$(( \$(date +%s) + 3 ))
+  while pgrep -f 'openclaw.gateway' > /dev/null 2>&1; do
+    if [ "\$(date +%s)" -ge "\$_wait_deadline" ]; then
+      _sleep_ms=3000
+      break
+    fi
+    sleep 0.05
+    _sleep_ms=\$(( _sleep_ms + 50 ))
+  done
 fi
 _kill_finished=\$(date +%s%N 2>/dev/null || echo 0)
 _kill_ms=0

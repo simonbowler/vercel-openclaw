@@ -1,6 +1,6 @@
 import { getSandboxController } from "@/server/sandbox/controller";
 
-import type { LogEntry, LogLevel, LogSource, SingleStatus } from "@/shared/types";
+import type { LogEntry, LogLevel, LogSource } from "@/shared/types";
 import { requireJsonRouteAuth, authJsonOk } from "@/server/auth/route-auth";
 import {
   filterLogEntries,
@@ -9,6 +9,7 @@ import {
   type LogFilters,
 } from "@/server/log";
 import { getInitializedMeta } from "@/server/store/store";
+import { canReadSandboxLogs } from "@/shared/sandbox/log-visibility";
 
 const MAX_LOG_LINES = 200;
 const LOG_FILE_GLOB = "/tmp/openclaw/openclaw-*.log";
@@ -90,24 +91,6 @@ function isValidSource(value: string): value is LogSource {
 }
 
 /**
- * Sandbox logs are readable whenever the sandbox exists and is in an active
- * lifecycle state — not just "running". The setup, booting, and restoring
- * states are exactly when operators most need sandbox-side logs.
- */
-function shouldReadSandboxLogs(
-  status: SingleStatus,
-  sandboxId: string | null,
-): boolean {
-  if (!sandboxId) return false;
-  return (
-    status === "setup" ||
-    status === "booting" ||
-    status === "restoring" ||
-    status === "running"
-  );
-}
-
-/**
  * Detect `tail` header lines emitted when multiple files match the glob.
  * These have the form `==> /path/to/file <==` and should be excluded.
  */
@@ -170,7 +153,7 @@ export async function GET(request: Request): Promise<Response> {
   };
 
   let sandboxLogs: LogEntry[] = [];
-  if (shouldReadSandboxLogs(meta.status, meta.sandboxId)) {
+  if (canReadSandboxLogs(meta.status, meta.sandboxId)) {
     diagnostics.sandbox.attempted = true;
 
     try {

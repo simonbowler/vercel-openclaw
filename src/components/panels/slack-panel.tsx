@@ -67,12 +67,15 @@ export function SlackPanel({
     if (typeof window === "undefined") return null;
     const params = new URLSearchParams(window.location.search);
     const err = params.get("slack_install_error");
-    if (err) {
+    const installWarning = params.get("slack_install_warning");
+    if (err || installWarning) {
       // Clean up the URL without triggering a reload
       const clean = new URL(window.location.href);
       clean.searchParams.delete("slack_install_error");
+      clean.searchParams.delete("slack_install_warning");
       window.history.replaceState({}, "", clean.toString());
-      return getInstallErrorMessage(err);
+      if (err) return getInstallErrorMessage(err);
+      return "Slack was installed, but the running sandbox did not restart cleanly. Live routes may be stale until the next restart.";
     }
     return null;
   });

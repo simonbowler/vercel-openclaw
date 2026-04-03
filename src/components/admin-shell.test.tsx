@@ -375,3 +375,178 @@ describe("openclaw:admin-action events", () => {
     }
   });
 });
+
+describe("requestJsonCore live-config-sync header detection", () => {
+  function mockFetchWithHeaders(
+    status: number,
+    body: unknown,
+    headers: Record<string, string>,
+  ): typeof fetch {
+    return async () =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "content-type": "application/json", ...headers },
+      });
+  }
+
+  test("degraded sync header suppresses success toast and shows warning toast", async () => {
+    const toasts: { type: string; message: string }[] = [];
+    let refreshCalled = false;
+    const result = await requestJsonCore("/api/channels/slack", {
+      label: "Save Slack",
+      successMessage: "Slack connected",
+      method: "PUT",
+    }, makeDeps({
+      fetchFn: mockFetchWithHeaders(200, { configured: true }, {
+        "x-openclaw-live-config-sync-outcome": "degraded",
+        "x-openclaw-live-config-sync-message": "Sandbox did not restart cleanly.",
+      }),
+      toastSuccess: (m) => toasts.push({ type: "success", message: m }),
+      toastError: (m) => toasts.push({ type: "error", message: m }),
+      refreshPassive: async () => { refreshCalled = true; },
+    }));
+
+    assert.ok(result.ok);
+    assert.equal(toasts.length, 1, "exactly one toast");
+    assert.equal(toasts[0].type, "error");
+    assert.equal(toasts[0].message, "Sandbox did not restart cleanly.");
+    assert.ok(refreshCalled, "status must be refreshed on degraded sync");
+  });
+
+  test("failed sync header suppresses success toast and shows error toast", async () => {
+    const toasts: { type: string; message: string }[] = [];
+    const result = await requestJsonCore("/api/channels/slack", {
+      label: "Save Slack",
+      successMessage: "Slack connected",
+      method: "PUT",
+    }, makeDeps({
+      fetchFn: mockFetchWithHeaders(200, { configured: true }, {
+        "x-openclaw-live-config-sync-outcome": "failed",
+        "x-openclaw-live-config-sync-message": "Config sync failed.",
+      }),
+      toastSuccess: (m) => toasts.push({ type: "success", message: m }),
+      toastError: (m) => toasts.push({ type: "error", message: m }),
+    }));
+
+    assert.ok(result.ok);
+    assert.equal(toasts.length, 1, "exactly one toast");
+    assert.equal(toasts[0].type, "error");
+    assert.equal(toasts[0].message, "Config sync failed.");
+  });
+
+  test("applied sync header shows normal success toast", async () => {
+    const toasts: { type: string; message: string }[] = [];
+    const result = await requestJsonCore("/api/channels/slack", {
+      label: "Save Slack",
+      successMessage: "Slack connected",
+      method: "PUT",
+    }, makeDeps({
+      fetchFn: mockFetchWithHeaders(200, { configured: true }, {
+        "x-openclaw-live-config-sync-outcome": "applied",
+      }),
+      toastSuccess: (m) => toasts.push({ type: "success", message: m }),
+      toastError: (m) => toasts.push({ type: "error", message: m }),
+    }));
+
+    assert.ok(result.ok);
+    assert.equal(toasts.length, 1, "exactly one toast");
+    assert.equal(toasts[0].type, "success");
+    assert.equal(toasts[0].message, "Slack connected");
+  });
+
+  test("skipped sync header shows normal success toast", async () => {
+    const toasts: { type: string; message: string }[] = [];
+    const result = await requestJsonCore("/api/channels/slack", {
+      label: "Save Slack",
+      successMessage: "Slack connected",
+      method: "PUT",
+    }, makeDeps({
+      fetchFn: mockFetchWithHeaders(200, { configured: true }, {
+        "x-openclaw-live-config-sync-outcome": "skipped",
+      }),
+      toastSuccess: (m) => toasts.push({ type: "success", message: m }),
+      toastError: (m) => toasts.push({ type: "error", message: m }),
+    }));
+
+    assert.ok(result.ok);
+    assert.equal(toasts.length, 1, "exactly one toast");
+    assert.equal(toasts[0].type, "success");
+    assert.equal(toasts[0].message, "Slack connected");
+  });
+
+  test("no sync header shows normal success toast", async () => {
+    const toasts: { type: string; message: string }[] = [];
+    const result = await requestJsonCore("/api/status", {
+      label: "Check status",
+      method: "GET",
+    }, makeDeps({
+      fetchFn: mockFetch(200, { ok: true }),
+      toastSuccess: (m) => toasts.push({ type: "success", message: m }),
+      toastError: (m) => toasts.push({ type: "error", message: m }),
+    }));
+
+    assert.ok(result.ok);
+    assert.equal(toasts.length, 1, "exactly one toast");
+    assert.equal(toasts[0].type, "success");
+  });
+});
+
+describe("requestJsonCore CSRF header injection", () => {
+  function capturingFetchFactory(): { getHeaders: () => Headers; fetchFn: typeof fetch } {
+    let captured: Headers | undefined;
+    return {
+      getHeaders: () => {
+        assert.ok(captured, "fetch should have been called");
+        return captured;
+      },
+      fetchFn: async (_input, init) => {
+        captured = new Headers(init?.headers as HeadersInit);
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    };
+  }
+
+  test("POST requests include x-requested-with: XMLHttpRequest", async () => {
+    const { getHeaders, fetchFn } = capturingFetchFactory();
+    await requestJsonCore("/api/admin/reset", {
+      label: "Reset",
+      method: "POST",
+    }, makeDeps({ fetchFn }));
+
+    assert.equal(getHeaders().get("x-requested-with"), "XMLHttpRequest");
+  });
+
+  test("PUT requests include x-requested-with: XMLHttpRequest", async () => {
+    const { getHeaders, fetchFn } = capturingFetchFactory();
+    await requestJsonCore("/api/channels/slack", {
+      label: "Save Slack",
+      method: "PUT",
+    }, makeDeps({ fetchFn }));
+
+    assert.equal(getHeaders().get("x-requested-with"), "XMLHttpRequest");
+  });
+
+  test("GET requests do not include x-requested-with", async () => {
+    const { getHeaders, fetchFn } = capturingFetchFactory();
+    await requestJsonCore("/api/status", {
+      label: "Status",
+      method: "GET",
+    }, makeDeps({ fetchFn }));
+
+    assert.equal(getHeaders().get("x-requested-with"), null);
+  });
+
+  test("explicit x-requested-with is not overwritten", async () => {
+    const { getHeaders, fetchFn } = capturingFetchFactory();
+    await requestJsonCore("/api/test", {
+      label: "Custom header",
+      method: "POST",
+      headers: { "x-requested-with": "CustomValue" },
+    }, makeDeps({ fetchFn }));
+
+    assert.equal(getHeaders().get("x-requested-with"), "CustomValue");
+  });
+});

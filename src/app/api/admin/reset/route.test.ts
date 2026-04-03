@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { buildAuthPostRequest, buildPostRequest, callRoute, drainAfterCallbacks, patchNextServerAfter, resetAfterCallbacks } from "@/test-utils/route-caller";
 import { withHarness } from "@/test-utils/harness";
+import { loginWithAdminSecret } from "@/server/auth/admin-auth";
 
 patchNextServerAfter();
 
@@ -21,15 +22,88 @@ test.afterEach(() => {
   resetAfterCallbacks();
 });
 
-test("admin/reset POST: without auth returns 401", async () => {
+test("admin/reset POST: without auth or CSRF headers returns 403", async () => {
   await withHarness(async () => {
     const route = getAdminResetRoute();
     const result = await callRoute(route.POST, buildPostRequest("/api/admin/reset", "{}"));
-    assert.equal(result.status, 401);
+    assert.equal(result.status, 403);
     assert.deepEqual(result.json, {
-      error: "UNAUTHORIZED",
-      message: "Authentication required.",
+      error: "CSRF_HEADER_MISSING",
+      message: "Missing Origin or X-Requested-With header.",
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CSRF regression tests
+// ---------------------------------------------------------------------------
+
+test("admin/reset POST: cookie-auth without Origin or X-Requested-With returns 403 CSRF_HEADER_MISSING", async () => {
+  await withHarness(async () => {
+    const route = getAdminResetRoute();
+    const login = await loginWithAdminSecret("test-admin-secret-for-scenarios", false);
+    assert.ok(login, "expected admin cookie session");
+
+    const request = buildPostRequest("/api/admin/reset", "{}", {
+      cookie: login.setCookieHeader.split(";")[0],
+    });
+    const result = await callRoute(route.POST, request);
+
+    assert.equal(result.status, 403);
+    assert.deepEqual(result.json, {
+      error: "CSRF_HEADER_MISSING",
+      message: "Missing Origin or X-Requested-With header.",
+    });
+  });
+});
+
+test("admin/reset POST: cookie-auth with cross-origin Origin returns 403 CSRF_ORIGIN_MISMATCH", async () => {
+  await withHarness(async () => {
+    const route = getAdminResetRoute();
+    const login = await loginWithAdminSecret("test-admin-secret-for-scenarios", false);
+    assert.ok(login, "expected admin cookie session");
+
+    const request = buildPostRequest("/api/admin/reset", "{}", {
+      cookie: login.setCookieHeader.split(";")[0],
+      origin: "https://evil.example",
+    });
+    const result = await callRoute(route.POST, request);
+
+    assert.equal(result.status, 403);
+    assert.deepEqual(result.json, {
+      error: "CSRF_ORIGIN_MISMATCH",
+      message: "Cross-origin request blocked.",
+    });
+  });
+});
+
+test("admin/reset POST: cookie-auth with same-origin Origin returns 200", async () => {
+  await withHarness(async () => {
+    const route = getAdminResetRoute();
+    const login = await loginWithAdminSecret("test-admin-secret-for-scenarios", false);
+    assert.ok(login, "expected admin cookie session");
+
+    const request = buildPostRequest("/api/admin/reset", "{}", {
+      cookie: login.setCookieHeader.split(";")[0],
+      origin: "http://localhost:3000",
+    });
+    const result = await callRoute(route.POST, request);
+
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.json, { ok: true, message: "Sandbox reset started" });
+  });
+});
+
+test("admin/reset POST: bearer-auth succeeds without CSRF headers", async () => {
+  await withHarness(async () => {
+    const route = getAdminResetRoute();
+    const request = buildPostRequest("/api/admin/reset", "{}", {
+      authorization: "Bearer test-admin-secret-for-scenarios",
+    });
+    const result = await callRoute(route.POST, request);
+
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.json, { ok: true, message: "Sandbox reset started" });
   });
 });
 

@@ -15,6 +15,10 @@ import {
   buildJsonRouteErrorMessage,
   type JsonRouteErrorPayload,
 } from "@/components/api-route-errors";
+import {
+  LIVE_CONFIG_SYNC_OUTCOME_HEADER,
+  LIVE_CONFIG_SYNC_MESSAGE_HEADER,
+} from "@/shared/live-config-sync";
 import type {
   StatusPayload,
   ActionResult,
@@ -93,12 +97,19 @@ export async function requestJsonCore<T>(
   });
 
   try {
+    const headers: Record<string, string> = {
+      accept: "application/json",
+      ...(input.headers as Record<string, string> ?? {}),
+    };
+    if (
+      method !== "GET" && method !== "HEAD" && method !== "OPTIONS" &&
+      !headers["x-requested-with"]
+    ) {
+      headers["x-requested-with"] = "XMLHttpRequest";
+    }
     const response = await doFetch(action, {
       ...input,
-      headers: {
-        accept: "application/json",
-        ...(input.headers ?? {}),
-      },
+      headers,
     });
 
     if (response.status === 401) {
@@ -152,7 +163,13 @@ export async function requestJsonCore<T>(
     }
 
     const payload = (await response.json().catch(() => null)) as T | null;
-    if (refreshAfter) {
+
+    // Detect degraded/failed live config sync from response headers
+    const syncOutcome = response.headers.get(LIVE_CONFIG_SYNC_OUTCOME_HEADER);
+    const syncMessage = response.headers.get(LIVE_CONFIG_SYNC_MESSAGE_HEADER);
+    const hasSyncWarning = syncOutcome === "degraded" || syncOutcome === "failed";
+
+    if (refreshAfter || hasSyncWarning) {
       await deps.refreshPassive();
     }
     const result: ActionResult<T> = {
@@ -163,14 +180,18 @@ export async function requestJsonCore<T>(
         action,
         label: input.label,
         status: response.status,
-        refreshed: refreshAfter,
+        refreshed: refreshAfter || hasSyncWarning,
       },
     };
     emitAdminActionEvent({
       event: "admin.action.success",
       ...result.meta,
     });
-    deps.toastSuccess(input.successMessage ?? input.label);
+    if (hasSyncWarning && syncMessage) {
+      deps.toastError(syncMessage);
+    } else {
+      deps.toastSuccess(input.successMessage ?? input.label);
+    }
     return result;
   } catch (nextError) {
     const message =

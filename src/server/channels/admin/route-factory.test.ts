@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
 import { createChannelAdminRouteHandlers } from "@/server/channels/admin/route-factory";
+import {
+  LIVE_CONFIG_SYNC_OUTCOME_HEADER,
+  LIVE_CONFIG_SYNC_MESSAGE_HEADER,
+} from "@/shared/live-config-sync";
 import { withHarness } from "@/test-utils/harness";
 import { buildAuthPutRequest, buildAuthDeleteRequest, callRoute } from "@/test-utils/route-caller";
 import { _setAiGatewayTokenOverrideForTesting } from "@/server/env";
@@ -212,5 +216,74 @@ test("DELETE handler calls spec.delete and returns updated state", async () => {
     assert.equal(deleteCalled, true, "spec.delete must be called");
     const body = result.json as { configured: boolean; mode: string };
     assert.equal(body.mode, "webhook-proxied");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Live config sync headers: PUT and DELETE attach x-openclaw-live-config-sync-*
+// ---------------------------------------------------------------------------
+
+test("PUT handler attaches skipped live-config-sync header when sandbox not running", async () => {
+  await withHarness(async () => {
+    _setAiGatewayTokenOverrideForTesting("oidc-token");
+    process.env.NEXT_PUBLIC_APP_URL = "https://app.example.com";
+
+    const { PUT } = createChannelAdminRouteHandlers({
+      channel: "slack",
+      selectState: (s) => s.slack,
+      async put() {},
+      async delete() {},
+    });
+
+    const request = buildAuthPutRequest(
+      "/api/channels/slack",
+      JSON.stringify({}),
+      {
+        host: "app.example.com",
+        "x-forwarded-host": "app.example.com",
+        "x-forwarded-proto": "https",
+      },
+    );
+
+    const result = await callRoute(PUT, request);
+
+    assert.equal(result.status, 200);
+    assert.equal(
+      result.response.headers.get(LIVE_CONFIG_SYNC_OUTCOME_HEADER),
+      "skipped",
+      "outcome header must be skipped when sandbox is not running",
+    );
+    assert.equal(
+      result.response.headers.get(LIVE_CONFIG_SYNC_MESSAGE_HEADER),
+      null,
+      "no message header for skipped outcome",
+    );
+  });
+});
+
+test("DELETE handler attaches skipped live-config-sync header when sandbox not running", async () => {
+  await withHarness(async () => {
+    _setAiGatewayTokenOverrideForTesting("oidc-token");
+
+    const { DELETE } = createChannelAdminRouteHandlers({
+      channel: "whatsapp",
+      selectState: (s) => s.whatsapp,
+      async put() {},
+      async delete() {},
+    });
+
+    const request = buildAuthDeleteRequest(
+      "/api/channels/whatsapp",
+      "{}",
+    );
+
+    const result = await callRoute(DELETE, request);
+
+    assert.equal(result.status, 200);
+    assert.equal(
+      result.response.headers.get(LIVE_CONFIG_SYNC_OUTCOME_HEADER),
+      "skipped",
+      "outcome header must be skipped when sandbox is not running",
+    );
   });
 });

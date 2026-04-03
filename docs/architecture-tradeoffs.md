@@ -4,7 +4,7 @@ This document captures key architectural decisions in vercel-openclaw, the trade
 
 ## Control plane channels vs container-native channels
 
-vercel-openclaw owns the channel layer (Slack, Telegram) in the control plane. moltworker delegates channels entirely to OpenClaw inside the container.
+vercel-openclaw owns the channel layer (Slack, Telegram, and experimentally WhatsApp and Discord) in the control plane. moltworker delegates channels entirely to OpenClaw inside the container.
 
 ### What "control plane channels" means
 
@@ -151,7 +151,7 @@ Setup: set `ADMIN_SECRET` (simple) or configure OAuth client credentials (more s
 
 ### Why the app can't use Vercel Deployment Protection as auth
 
-Deployment Protection was attempted and abandoned. It blocks ALL unauthenticated requests — including channel webhooks from Slack and Telegram. It is also unavailable on Hobby plans. The bypass secret works for Slack but not for Telegram (see above).
+Deployment Protection was attempted and abandoned. It blocks ALL unauthenticated requests — including channel webhooks from Slack, Telegram, and other platforms. It is also unavailable on Hobby plans. The bypass secret works for Slack but not for Telegram (see above).
 
 ## Firewall: enforced vs absent
 

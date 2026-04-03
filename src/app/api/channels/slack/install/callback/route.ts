@@ -7,6 +7,7 @@ import {
 import { fetchSlackAuthIdentity } from "@/server/channels/slack/auth";
 import { getSlackInstallConfig } from "@/server/channels/slack/install-config";
 import { setSlackChannelConfig } from "@/server/channels/state";
+import type { LiveConfigSyncResult } from "@/shared/live-config-sync";
 import { logInfo, logWarn } from "@/server/log";
 import { getPublicOrigin } from "@/server/public-url";
 import {
@@ -138,17 +139,28 @@ export async function GET(request: Request): Promise<Response> {
 
   // Post-mutation: same steps as the channel admin route factory
   await markRestoreTargetDirty({ reason: "dynamic-config-changed" });
+  let syncResult: LiveConfigSyncResult;
   try {
-    await syncGatewayConfigToSandbox();
+    syncResult = await syncGatewayConfigToSandbox();
   } catch (syncError) {
     logWarn("slack_install.config_sync_failed", {
       error: syncError instanceof Error ? syncError.message : String(syncError),
     });
+    syncResult = {
+      outcome: "failed",
+      reason: syncError instanceof Error ? syncError.message : String(syncError),
+      liveConfigFresh: false,
+      operatorMessage: "Config sync failed. The sandbox may be serving stale configuration.",
+    };
   }
 
   // Clear OAuth cookies and redirect to admin
   const next = ctx.next || "/admin";
-  const headers = new Headers({ Location: new URL(next, request.url).toString() });
+  const redirectUrl = new URL(next, request.url);
+  if (syncResult.outcome === "degraded" || syncResult.outcome === "failed") {
+    redirectUrl.searchParams.set("slack_install_warning", "config_sync_degraded");
+  }
+  const headers = new Headers({ Location: redirectUrl.toString() });
   headers.append("Set-Cookie", clearCookie(SLACK_OAUTH_STATE_COOKIE, secure));
   headers.append("Set-Cookie", clearCookie(SLACK_OAUTH_CTX_COOKIE, secure));
   return new Response(null, { status: 302, headers });

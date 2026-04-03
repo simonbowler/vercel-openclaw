@@ -160,7 +160,7 @@ export function DiscordPanel({
       channel="discord"
       configured={dc.configured}
       channelClassName="channel-discord"
-      title="Discord"
+      title="Discord (experimental)"
       summary={
         dc.configured
           ? `Connected${dc.appName ? ` · ${dc.appName}` : ""}`

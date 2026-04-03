@@ -1,5 +1,5 @@
 import { getAuthMode } from "@/server/env";
-import { logDebug, logInfo, logWarn } from "@/server/log";
+import { logDebug, logWarn } from "@/server/log";
 
 export type PublicOriginSource =
   | "NEXT_PUBLIC_APP_URL"
@@ -241,7 +241,7 @@ function buildPublicUrlResult(
     bypassApplied,
   };
 
-  logInfo("public_url.built", diagnostics);
+  logDebug("public_url.built", diagnostics);
 
   return {
     url: url.toString(),

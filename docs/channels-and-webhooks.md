@@ -2,7 +2,7 @@
 
 ## What this doc covers
 
-This guide explains how to connect Slack and Telegram to your OpenClaw deployment. It covers what needs to be true before you connect a channel, how readiness is determined, how each platform behaves differently, and what to do when things go wrong.
+This guide explains how to connect Slack, Telegram, WhatsApp (experimental), and Discord (experimental) to your OpenClaw deployment. It covers what needs to be true before you connect a channel, how readiness is determined, how each platform behaves differently, and what to do when things go wrong.
 
 Channels are a first-class part of the product. They depend on durable state (Upstash Redis), a working sandbox lifecycle, and a verified deployment. This guide walks through the full path from "deployment exists" to "channel is safely connected and working."
 
@@ -13,7 +13,7 @@ There are two different gates here:
 1. **Config gate** — can the app save channel credentials and expose a valid webhook URL?
 2. **Operational gate** — has the deployment proven the full delivery path for real traffic?
 
-Before the admin panel can save Slack or Telegram config, the deployment needs:
+Before the admin panel can save channel config, the deployment needs:
 
 - **A resolvable public HTTPS origin.** The app must be able to build a canonical webhook URL. If it cannot, channel connect is blocked.
 - **AI Gateway auth available.** On Vercel deployments this is usually OIDC. `AI_GATEWAY_API_KEY` can still act as a fallback when OIDC is unavailable. If AI Gateway auth is `unavailable`, channel connect is blocked.
@@ -116,7 +116,7 @@ Admin-visible URLs — in the admin panel, preflight payload, status responses, 
 
 ## What happens when the sandbox is already running
 
-When the sandbox is running and a channel message arrives, both Slack and Telegram take a fast path:
+When the sandbox is running and a channel message arrives, Slack and Telegram take a fast path:
 
 - **Slack** forwards the validated payload directly to `/slack/events` on the gateway (port 3000).
 - **Telegram** forwards the raw update directly to the native Telegram handler (port 8787).

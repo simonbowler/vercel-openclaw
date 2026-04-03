@@ -2255,7 +2255,7 @@ a[href]:focus-visible {
 /* ────── Snapshots ────── */
 
 .snapshot-list-container {
-  min-height: 0;
+  min-height: 48px;
 }
 
 .snapshot-row-header {

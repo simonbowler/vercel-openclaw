@@ -1,5 +1,10 @@
 import type { ChannelName } from "@/shared/channels";
 import type { PublicChannelState } from "@/shared/channel-admin-state";
+import type { LiveConfigSyncResult } from "@/shared/live-config-sync";
+import {
+  LIVE_CONFIG_SYNC_OUTCOME_HEADER,
+  LIVE_CONFIG_SYNC_MESSAGE_HEADER,
+} from "@/shared/live-config-sync";
 import type { SingleMeta } from "@/shared/types";
 import { authJsonError, authJsonOk, requireJsonRouteAuth } from "@/server/auth/route-auth";
 import {
@@ -100,8 +105,9 @@ export function createChannelAdminRouteHandlers<TState>(
 
         // Sync updated config to the running sandbox and restart the
         // gateway so new HTTP routes (e.g. /slack/events) are registered.
+        let syncResult: LiveConfigSyncResult;
         try {
-          const syncResult = await syncGatewayConfigToSandbox();
+          syncResult = await syncGatewayConfigToSandbox();
           logInfo("channels.admin_config_synced", {
             channel: spec.channel,
             operation: "put",
@@ -113,10 +119,25 @@ export function createChannelAdminRouteHandlers<TState>(
             operation: "put",
             error: syncError instanceof Error ? syncError.message : String(syncError),
           });
+          syncResult = {
+            outcome: "failed",
+            reason: syncError instanceof Error ? syncError.message : String(syncError),
+            liveConfigFresh: false,
+            operatorMessage: "Config sync failed. The sandbox may be serving stale configuration.",
+          };
+        }
+
+        if (syncResult.outcome === "degraded" || syncResult.outcome === "failed") {
+          logWarn("channels.admin_config_sync_degraded", {
+            channel: spec.channel,
+            operation: "put",
+            reason: syncResult.reason,
+          });
         }
 
         const nextState = spec.selectState(await getPublicChannelState(request));
-        return authJsonOk(nextState, auth);
+        const response = authJsonOk(nextState, auth);
+        return attachLiveConfigSyncHeaders(response, syncResult);
       } catch (error) {
         return authJsonError(error, auth);
       }
@@ -145,8 +166,9 @@ export function createChannelAdminRouteHandlers<TState>(
 
         // Sync updated config to the running sandbox and restart the
         // gateway so removed channel routes are cleaned up.
+        let syncResult: LiveConfigSyncResult;
         try {
-          const syncResult = await syncGatewayConfigToSandbox();
+          syncResult = await syncGatewayConfigToSandbox();
           logInfo("channels.admin_config_synced", {
             channel: spec.channel,
             operation: "delete",
@@ -158,13 +180,39 @@ export function createChannelAdminRouteHandlers<TState>(
             operation: "delete",
             error: syncError instanceof Error ? syncError.message : String(syncError),
           });
+          syncResult = {
+            outcome: "failed",
+            reason: syncError instanceof Error ? syncError.message : String(syncError),
+            liveConfigFresh: false,
+            operatorMessage: "Config sync failed. The sandbox may be serving stale configuration.",
+          };
+        }
+
+        if (syncResult.outcome === "degraded" || syncResult.outcome === "failed") {
+          logWarn("channels.admin_config_sync_degraded", {
+            channel: spec.channel,
+            operation: "delete",
+            reason: syncResult.reason,
+          });
         }
 
         const nextState = spec.selectState(await getPublicChannelState(request));
-        return authJsonOk(nextState, auth);
+        const response = authJsonOk(nextState, auth);
+        return attachLiveConfigSyncHeaders(response, syncResult);
       } catch (error) {
         return authJsonError(error, auth);
       }
     },
   };
+}
+
+function attachLiveConfigSyncHeaders(
+  response: Response,
+  syncResult: LiveConfigSyncResult,
+): Response {
+  response.headers.set(LIVE_CONFIG_SYNC_OUTCOME_HEADER, syncResult.outcome);
+  if (syncResult.operatorMessage) {
+    response.headers.set(LIVE_CONFIG_SYNC_MESSAGE_HEADER, syncResult.operatorMessage);
+  }
+  return response;
 }

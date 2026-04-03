@@ -11,7 +11,7 @@ It handles:
 - proxying the OpenClaw UI at `/gateway`
 - injecting the gateway token into proxied HTML so WebSocket connections and auth work through the app
 - learning and enforcing egress firewall rules
-- receiving Slack and Telegram webhooks and delivering them to OpenClaw
+- receiving Slack, Telegram, WhatsApp (experimental), and Discord (experimental) webhooks and delivering them to OpenClaw
 
 It does not handle:
 
@@ -44,11 +44,11 @@ The enforcement plane is the actual Vercel Sandbox plus its network policy. The 
 - **Sandbox lifecycle** — create, resume, stop, health checks (persistent sandboxes with auto-snapshot)
 - **Proxy** — reverse proxy to the sandbox, HTML injection, waiting page
 - **Firewall** — domain learning from shell commands, policy enforcement
-- **Channels** — Slack and Telegram webhook ingestion, boot-message flow, durable delivery via Workflow DevKit
+- **Channels** — Slack, Telegram, WhatsApp (experimental), and Discord (experimental) webhook ingestion, boot-message flow, durable delivery via Workflow DevKit
 - **Deployment readiness** — preflight config checks, launch verification runtime checks, watchdog cron
 
 ## Where to read next
 
 - [Sandbox Lifecycle and Restore](lifecycle-and-restore.md) — how the sandbox moves through states and how persistent resume works
 - [Preflight and Launch Verification](preflight-and-launch-verification.md) — how the app proves it is correctly deployed and operational
-- [Channels and Webhooks](channels-and-webhooks.md) — Slack and Telegram setup, readiness, and webhook behavior
+- [Channels and Webhooks](channels-and-webhooks.md) — Channel setup (Slack, Telegram, WhatsApp, Discord), readiness, and webhook behavior
