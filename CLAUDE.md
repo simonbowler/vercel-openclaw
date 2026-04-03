@@ -83,7 +83,7 @@ Channel phases (`channelRoundTrip`, `channelWakeFromSleep`) call `POST /api/admi
 | `/api/admin/channel-forward-diag` | Read channel forward diagnostic from store |
 | `/api/channels/slack/install` | Slack OAuth install initiation |
 | `/api/channels/slack/install/callback` | Slack OAuth callback |
-| `/api/cron/watchdog` | Runs every 5 minutes via Vercel Cron. Health-checks running sandboxes, repairs stuck states, and **wakes stopped sandboxes when OpenClaw cron jobs are due**. |
+| `/api/cron/watchdog` | Runs daily via Vercel Cron (Hobby-compatible default). Health-checks running sandboxes, repairs stuck states, and **wakes stopped sandboxes when OpenClaw cron jobs are due**. Pro users can increase frequency to `*/5 * * * *` via Vercel dashboard project settings. |
 | `/api/admin/watchdog` | GET reads cached watchdog report; POST runs a fresh check |
 
 ## Cron wake
@@ -92,7 +92,7 @@ OpenClaw has a built-in cron scheduler (`croner` library) that persists jobs to 
 
 1. **Before stop** (`stopSandbox()`): reads `jobs.json` from the sandbox, extracts the earliest `nextRunAtMs` across all enabled jobs, and saves it to the host store as `openclaw-single:cron-next-wake-ms`. Also persists the full `jobs.json` content to `openclaw-single:cron-jobs-json`.
 2. **On heartbeat** (`touchRunningSandbox()`): keeps both the wake time and jobs JSON fresh in the store, so they survive even when the sandbox times out naturally without an explicit stop.
-3. **Every 5 minutes** (`/api/cron/watchdog`): if the sandbox is stopped (or in a recoverable error state) and the saved wake time has passed, calls `ensureSandboxReady()` to resume the sandbox. OpenClaw's native cron handles everything from there.
+3. **On each watchdog run** (`/api/cron/watchdog`): if the sandbox is stopped (or in a recoverable error state) and the saved wake time has passed, calls `ensureSandboxReady()` to resume the sandbox. OpenClaw's native cron handles everything from there. The default cron schedule is daily (Hobby-compatible); Pro users can increase to `*/5 * * * *` via Vercel dashboard.
 4. **After resume**: checks if `jobs.json` is empty on the resumed sandbox. If jobs were lost but the store has a copy, writes the stored jobs back and restarts the gateway so the cron module loads them.
 5. **After wake**: the wake key is cleared only when the cron restore outcome is `no-store-jobs`, `already-present`, or `restored-verified`. If resume fails or is unverified, the key is retained so the next watchdog run can retry. OpenClaw reschedules the next run internally, and the next heartbeat will persist the updated time.
 

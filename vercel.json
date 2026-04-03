@@ -1,24 +1,12 @@
 {
-  "regions": ["iad1"],
-  "installCommand": "npm install",
   "crons": [
-    { "path": "/api/cron/watchdog", "schedule": "*/5 * * * *" }
+    { "path": "/api/cron/watchdog", "schedule": "0 8 * * *" }
   ],
   "functions": {
     "src/app/api/admin/ssh/route.ts": {
       "maxDuration": 60
     },
-    "src/app/api/channels/telegram/webhook/route.ts": {
-      "maxDuration": 300
-    },
-    "src/app/api/channels/slack/webhook/route.ts": {
-      "maxDuration": 300
-    },
-    "src/app/api/channels/whatsapp/webhook/route.ts": {
-      "maxDuration": 300
-    },
     "src/app/api/queues/launch-verify/route.ts": {
-      "maxDuration": 300,
       "experimentalTriggers": [
         {
           "type": "queue/v2beta",

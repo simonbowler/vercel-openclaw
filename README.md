@@ -48,7 +48,7 @@ Click **Deploy with Vercel** above, set a password, and you're up.
 | [Upstash Redis](https://vercel.com/marketplace/upstash-redis) | Persistent state — metadata, snapshots, channel config |
 | [Vercel Workflow](https://vercel.com/docs/workflow) | Durable channel message delivery (Slack, Telegram; WhatsApp and Discord are experimental) |
 | [Vercel Queues](https://vercel.com/docs/queues) | Launch verification probe delivery |
-| [Vercel Cron](https://vercel.com/docs/cron-jobs) | Watchdog health checks and scheduled wake |
+| [Vercel Cron](https://vercel.com/docs/cron-jobs) | Watchdog health checks and scheduled wake (daily by default; Pro users can increase to every 5 min via dashboard) |
 
 ## Configuration
 

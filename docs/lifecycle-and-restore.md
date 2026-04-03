@@ -59,7 +59,7 @@ OpenClaw has a built-in cron scheduler that persists jobs to `~/.openclaw/cron/j
 
 1. **Before stop:** the app reads `jobs.json` from the sandbox, extracts the earliest next run time, and saves both the wake time and the full jobs payload to the durable store.
 2. **On heartbeat:** the same data is refreshed in the store so it survives even if the sandbox times out naturally without an explicit stop.
-3. **Every 5 minutes:** the watchdog cron (`/api/cron/watchdog`) checks if the saved wake time has passed. If it has and the sandbox is stopped, the watchdog resumes the sandbox. OpenClaw's native cron takes over from there.
+3. **On each watchdog run:** the watchdog cron (`/api/cron/watchdog`) checks if the saved wake time has passed. If it has and the sandbox is stopped, the watchdog resumes the sandbox. OpenClaw's native cron takes over from there. The default schedule is daily (Hobby-compatible); Pro users can increase to `*/5 * * * *` via Vercel dashboard project settings for more timely auto-wake.
 4. **After resume:** if `jobs.json` is empty on the resumed sandbox but the store has a copy, the app writes the stored jobs back and restarts the gateway so the cron module reloads them.
 5. **After wake:** the wake key is cleared only when the cron restore outcome is confirmed successful. If resume fails, the key is retained so the next watchdog run can retry.
 
