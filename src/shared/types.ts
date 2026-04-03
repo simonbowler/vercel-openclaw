@@ -113,9 +113,13 @@ export type LogSource =
   | "auth"
   | "system";
 
+export type LogTimestampKind = "exact" | "untimed";
+
 export type LogEntry = {
   id: string;
   timestamp: number;
+  timestampKind?: LogTimestampKind;
+  sourceOrder?: number;
   level: LogLevel;
   source: LogSource;
   message: string;

@@ -5,6 +5,7 @@ import { requireJsonRouteAuth, authJsonOk } from "@/server/auth/route-auth";
 import {
   filterLogEntries,
   getFilteredServerLogs,
+  logDebug,
   logWarn,
   type LogFilters,
 } from "@/server/log";
@@ -38,7 +39,9 @@ function parseLogLine(line: string, index: number): LogEntry | null {
       : undefined;
     return {
       id: `log-${parsed.ts ?? index}-${index}`,
-      timestamp: parsed.ts ? new Date(parsed.ts).getTime() : Date.now(),
+      timestamp: parsed.ts ? new Date(parsed.ts).getTime() : 0,
+      timestampKind: parsed.ts ? "exact" : "untimed",
+      sourceOrder: index,
       level,
       source: normalizeSource(parsed.source, parsed.ctx?.source),
       message: parsed.msg ?? trimmed,
@@ -48,7 +51,9 @@ function parseLogLine(line: string, index: number): LogEntry | null {
     // Plain text line — treat as info
     return {
       id: `log-plain-${index}`,
-      timestamp: Date.now(),
+      timestamp: 0,
+      timestampKind: "untimed",
+      sourceOrder: index,
       level: "info",
       source: "system",
       message: trimmed,
@@ -100,6 +105,23 @@ function isTailHeaderLine(line: string): boolean {
   return trimmed.startsWith("==> ") && trimmed.endsWith(" <==");
 }
 
+/**
+ * Sort log entries: exact-timestamped entries by time descending,
+ * untimed entries by source order descending, untimed entries sort after exact.
+ */
+function compareLogEntries(a: LogEntry, b: LogEntry): number {
+  const aUntimed = a.timestampKind === "untimed";
+  const bUntimed = b.timestampKind === "untimed";
+
+  if (aUntimed && bUntimed) {
+    return (b.sourceOrder ?? 0) - (a.sourceOrder ?? 0);
+  }
+  if (aUntimed !== bUntimed) {
+    return aUntimed ? 1 : -1;
+  }
+  return b.timestamp - a.timestamp;
+}
+
 export async function GET(request: Request): Promise<Response> {
   const auth = await requireJsonRouteAuth(request);
   if (auth instanceof Response) {
@@ -147,6 +169,7 @@ export async function GET(request: Request): Promise<Response> {
       tailError: null as string | null,
       parsedLineCount: 0,
       matchedLineCount: 0,
+      untimedLineCount: 0,
     },
     filters,
   };
@@ -168,11 +191,22 @@ export async function GET(request: Request): Promise<Response> {
       for (const [index, line] of stdout.split("\n").entries()) {
         if (isTailHeaderLine(line)) continue;
         const entry = parseLogLine(line, index);
-        if (entry) parsed.push(entry);
+        if (!entry) continue;
+        if (entry.timestampKind === "untimed") {
+          diagnostics.sandbox.untimedLineCount += 1;
+        }
+        parsed.push(entry);
       }
 
       diagnostics.sandbox.included = true;
       diagnostics.sandbox.parsedLineCount = parsed.length;
+
+      if (diagnostics.sandbox.untimedLineCount > 0) {
+        logDebug("admin.logs.untimed_lines_present", {
+          sandboxId: meta.sandboxId,
+          untimedLineCount: diagnostics.sandbox.untimedLineCount,
+        });
+      }
 
       sandboxLogs = filterLogEntries(parsed, filters);
       diagnostics.sandbox.matchedLineCount = sandboxLogs.length;
@@ -189,10 +223,8 @@ export async function GET(request: Request): Promise<Response> {
     }
   }
 
-  // Merge and sort by timestamp descending (newest first)
-  const allLogs = [...serverLogs, ...sandboxLogs].sort(
-    (a, b) => b.timestamp - a.timestamp,
-  );
+  // Merge and sort: exact timestamps by time descending, untimed entries last in source order
+  const allLogs = [...serverLogs, ...sandboxLogs].sort(compareLogEntries);
 
   return authJsonOk(
     {

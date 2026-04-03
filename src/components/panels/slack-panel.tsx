@@ -51,6 +51,46 @@ function getInstallErrorMessage(code: string): string {
   }
 }
 
+type SlackInstallNotice = {
+  message: string;
+};
+
+function readSlackInstallNotice(search: string): SlackInstallNotice | null {
+  const params = new URLSearchParams(search);
+  const err = params.get("slack_install_error");
+  if (err) {
+    return { message: getInstallErrorMessage(err) };
+  }
+  const outcome = params.get("slack_install_warning");
+  const reason = params.get("slack_install_reason");
+  const operatorMessage = params.get("slack_install_message");
+  if (outcome !== "degraded" && outcome !== "failed") {
+    return null;
+  }
+  if (operatorMessage) {
+    return { message: operatorMessage };
+  }
+  if (reason === "config_written_restart_failed") {
+    return {
+      message:
+        "Slack was installed, but the running sandbox did not restart cleanly. Live routes may be stale until the next successful restart.",
+    };
+  }
+  return {
+    message:
+      outcome === "failed"
+        ? "Slack was installed, but config sync failed. The sandbox may still be serving stale configuration."
+        : "Slack was installed, but live config sync completed in a degraded state.",
+  };
+}
+
+const SLACK_INSTALL_PARAMS = [
+  "slack_install_error",
+  "slack_install_warning",
+  "slack_install_reason",
+  "slack_install_message",
+] as const;
+
 export function SlackPanel({
   status,
   busy,
@@ -66,28 +106,34 @@ export function SlackPanel({
   const [editing, setEditing] = useState(false);
   const [panelError, setPanelError] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
-    const err = new URLSearchParams(window.location.search).get("slack_install_error");
-    return err ? getInstallErrorMessage(err) : null;
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has("slack_install_error")) return null;
+    const notice = readSlackInstallNotice(window.location.search);
+    return notice?.message ?? null;
   });
-  const [liveConfigWarning, setLiveConfigWarning] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    const w = new URLSearchParams(window.location.search).get("slack_install_warning");
-    return w
-      ? "Slack was installed, but the running sandbox did not restart cleanly. Live routes may be stale until the next restart."
-      : null;
-  });
+  const [liveConfigWarning, setLiveConfigWarning] = useState<string | null>(
+    () => {
+      if (typeof window === "undefined") return null;
+      const params = new URLSearchParams(window.location.search);
+      if (params.has("slack_install_error")) return null;
+      const notice = readSlackInstallNotice(window.location.search);
+      return notice?.message ?? null;
+    },
+  );
   const [copied, setCopied] = useState(false);
   const [showManualForm, setShowManualForm] = useState(false);
 
-  // Clean OAuth callback query params from URL without triggering a reload.
-  // Reading params happens in useState initializers above (pure computation);
+  // Clean Slack install query params from URL without triggering a reload.
+  // State was read in useState initializers above (pure computation);
   // the side effect (replaceState) lives here in useEffect.
   useEffect(() => {
+    if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
-    if (!params.has("slack_install_error") && !params.has("slack_install_warning")) return;
+    if (!SLACK_INSTALL_PARAMS.some((key) => params.has(key))) return;
     const clean = new URL(window.location.href);
-    clean.searchParams.delete("slack_install_error");
-    clean.searchParams.delete("slack_install_warning");
+    for (const key of SLACK_INSTALL_PARAMS) {
+      clean.searchParams.delete(key);
+    }
     window.history.replaceState({}, "", clean.toString());
   }, []);
 

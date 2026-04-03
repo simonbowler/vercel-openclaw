@@ -134,7 +134,7 @@ export async function GET(request: Request): Promise<Response> {
   });
 
   // Post-mutation: delegate to the shared channel config apply helper
-  const { needsOperatorWarning } = await applyChannelConfigChange({
+  const { liveConfigSync } = await applyChannelConfigChange({
     channel: "slack",
     operation: "oauth-install",
   });
@@ -142,8 +142,29 @@ export async function GET(request: Request): Promise<Response> {
   // Clear OAuth cookies and redirect to admin
   const next = ctx.next || "/admin";
   const redirectUrl = new URL(next, request.url);
-  if (needsOperatorWarning) {
-    redirectUrl.searchParams.set("slack_install_warning", "config_sync_degraded");
+  if (
+    liveConfigSync.outcome === "degraded" ||
+    liveConfigSync.outcome === "failed"
+  ) {
+    redirectUrl.searchParams.set("slack_install_warning", liveConfigSync.outcome);
+    redirectUrl.searchParams.set(
+      "slack_install_reason",
+      liveConfigSync.reason,
+    );
+    if (liveConfigSync.operatorMessage) {
+      redirectUrl.searchParams.set(
+        "slack_install_message",
+        liveConfigSync.operatorMessage,
+      );
+    }
+    logWarn("slack_install.operator_warning_redirect", {
+      outcome: liveConfigSync.outcome,
+      reason: liveConfigSync.reason,
+    });
+  } else {
+    logInfo("slack_install.redirect_ready", {
+      outcome: liveConfigSync.outcome,
+    });
   }
   const headers = new Headers({ Location: redirectUrl.toString() });
   headers.append("Set-Cookie", clearCookie(SLACK_OAUTH_STATE_COOKIE, secure));

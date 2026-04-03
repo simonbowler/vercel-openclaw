@@ -33,6 +33,20 @@ const ALL_SOURCES: LogSource[] = [
 
 const POLL_INTERVAL_MS = 3000;
 
+function formatLogTime(entry: LogEntry): string {
+  return entry.timestampKind === "untimed"
+    ? "untimed"
+    : new Date(entry.timestamp).toLocaleTimeString();
+}
+
+function formatLogCopyText(entry: LogEntry): string {
+  const prefix =
+    entry.timestampKind === "untimed"
+      ? "[untimed]"
+      : `[${new Date(entry.timestamp).toISOString()}]`;
+  return `${prefix} [${entry.level.toUpperCase()}] [${entry.source}] ${entry.message}`;
+}
+
 export function LogsPanel({ active, status, readDeps }: LogsPanelProps) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [search, setSearch] = useState("");
@@ -50,7 +64,6 @@ export function LogsPanel({ active, status, readDeps }: LogsPanelProps) {
   const vlistRef = useRef<VListHandle>(null);
 
   const sandboxStatus = status.status as SingleStatus;
-  const isRunning = sandboxStatus === "running";
   const canFetchLogs = isSandboxLogReadableStatus(sandboxStatus);
   const isBooting = isSandboxLifecyclePending(sandboxStatus);
   const isStopped = sandboxStatus === "stopped";
@@ -121,7 +134,7 @@ export function LogsPanel({ active, status, readDeps }: LogsPanelProps) {
   });
 
   const copyLogEntry = useCallback((entry: LogEntry) => {
-    const text = `[${new Date(entry.timestamp).toISOString()}] [${entry.level.toUpperCase()}] [${entry.source}] ${entry.message}`;
+    const text = formatLogCopyText(entry);
     void navigator.clipboard
       .writeText(text)
       .then(() => {
@@ -224,7 +237,7 @@ export function LogsPanel({ active, status, readDeps }: LogsPanelProps) {
                 className={`log-row ${LEVEL_COLORS[entry.level]}`}
               >
                 <span className="log-time">
-                  {new Date(entry.timestamp).toLocaleTimeString()}
+                  {formatLogTime(entry)}
                 </span>
                 <span className={`log-level ${LEVEL_COLORS[entry.level]}`}>
                   {entry.level}
