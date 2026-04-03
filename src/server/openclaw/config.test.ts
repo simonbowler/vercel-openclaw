@@ -13,6 +13,7 @@ import {
   GATEWAY_CONFIG_HASH_VERSION,
   buildStartupScript,
   buildFastRestoreScript,
+  buildForcePairScript,
   buildWebSearchSkill,
   buildWebSearchScript,
   buildVisionSkill,
@@ -1142,19 +1143,252 @@ test("buildFastRestoreScript emits fast_restore.gateway_reset log with killed, s
   );
 });
 
-test("buildFastRestoreScript peer-deps fallback log includes package and reason metadata", () => {
+test("buildFastRestoreScript fails fast when @buape/carbon is missing instead of self-healing", () => {
   const script = buildFastRestoreScript();
 
+  // Must NOT contain the old runtime install path
   assert.ok(
-    script.includes("fast_restore.installing_peer_deps"),
-    "expected installing_peer_deps log event",
+    !script.includes("fast_restore.installing_peer_deps"),
+    "must not contain installing_peer_deps — runtime self-heal was removed",
+  );
+  assert.ok(
+    !script.includes("npm install @buape/carbon"),
+    "must not contain npm install — runtime self-heal was removed",
+  );
+
+  // Must contain the fail-fast integrity check
+  assert.ok(
+    script.includes("fast_restore.missing_dependency"),
+    "expected missing_dependency log event",
   );
   assert.ok(
     script.includes('"package":"@buape/carbon"'),
-    "expected package field in peer_deps fallback log",
+    "expected package field in missing_dependency log",
   );
   assert.ok(
-    script.includes('"reason":"snapshot_missing"'),
-    "expected reason field in peer_deps fallback log",
+    script.includes('"action":"rebuild_artifact"'),
+    "expected action field in missing_dependency log",
   );
+
+  // The check must exit non-zero when the dependency is absent
+  const lines = script.split("\n");
+  const checkLine = lines.findIndex((l) =>
+    l.includes("fast_restore.missing_dependency"),
+  );
+  const exitLine = lines.findIndex(
+    (l, i) => i > checkLine && l.trim() === "exit 1",
+  );
+  assert.ok(checkLine >= 0, "missing_dependency log line must exist");
+  assert.ok(
+    exitLine >= 0 && exitLine - checkLine <= 2,
+    "exit 1 must immediately follow the missing_dependency log",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// buildFastRestoreScript — stale snapshot invariant (host-scheduler)
+// ---------------------------------------------------------------------------
+
+test("buildFastRestoreScript rejects snapshots containing stale skills/host-scheduler", () => {
+  const script = buildFastRestoreScript();
+
+  // Must contain the snapshot invariant check
+  assert.ok(
+    script.includes("fast_restore.stale_snapshot_content"),
+    "expected stale_snapshot_content log event",
+  );
+  assert.ok(
+    script.includes('"path":"skills/host-scheduler"'),
+    "expected path field in stale_snapshot_content log",
+  );
+  assert.ok(
+    script.includes('"action":"rebuild_snapshot"'),
+    "expected action field in stale_snapshot_content log",
+  );
+
+  // The check must exit non-zero when the stale directory exists
+  const lines = script.split("\n");
+  const checkLine = lines.findIndex((l) =>
+    l.includes("fast_restore.stale_snapshot_content"),
+  );
+  const exitLine = lines.findIndex(
+    (l, i) => i > checkLine && l.trim() === "exit 1",
+  );
+  assert.ok(checkLine >= 0, "stale_snapshot_content log line must exist");
+  assert.ok(
+    exitLine >= 0 && exitLine - checkLine <= 2,
+    "exit 1 must immediately follow the stale_snapshot_content log",
+  );
+});
+
+test("buildFastRestoreScript does not contain rm -rf of skills/host-scheduler", () => {
+  const script = buildFastRestoreScript();
+
+  assert.ok(
+    !script.includes("rm -rf") || !script.includes("skills/host-scheduler"),
+    "must not silently delete skills/host-scheduler — stale snapshots should fail, not be repaired",
+  );
+
+  // More precise: no rm command targeting host-scheduler at all
+  const lines = script.split("\n");
+  const rmLine = lines.find(
+    (l) => l.includes("rm ") && l.includes("host-scheduler"),
+  );
+  assert.equal(
+    rmLine,
+    undefined,
+    "must not contain any rm command targeting host-scheduler",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// buildForcePairScript — corrupt state detection
+// ---------------------------------------------------------------------------
+
+async function runForcePairScript(stateDir: string) {
+  const script = buildForcePairScript();
+  const scriptPath = join(stateDir, ".force-pair-test.mjs");
+  await writeFile(scriptPath, script);
+  const result = spawnSync(
+    process.execPath,
+    [scriptPath, stateDir],
+    { encoding: "utf8", timeout: 10_000 },
+  );
+  await rm(scriptPath, { force: true });
+  return result;
+}
+
+test("buildForcePairScript creates fresh identity when device.json is missing", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fp-missing-"));
+  try {
+    const result = await runForcePairScript(dir);
+    assert.equal(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+    const identity = JSON.parse(await readFile(join(dir, "identity", "device.json"), "utf8"));
+    assert.equal(typeof identity.publicKeyPem, "string");
+    assert.equal(typeof identity.privateKeyPem, "string");
+    const paired = JSON.parse(await readFile(join(dir, "devices", "paired.json"), "utf8"));
+    assert.equal(typeof paired, "object");
+    assert.ok(!Array.isArray(paired));
+    assert.ok(Object.keys(paired).length === 1, "expected exactly one paired device");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildForcePairScript exits non-zero on malformed device.json", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fp-bad-device-"));
+  try {
+    await mkdir(join(dir, "identity"), { recursive: true });
+    await writeFile(join(dir, "identity", "device.json"), "NOT VALID JSON{{{");
+
+    const result = await runForcePairScript(dir);
+
+    assert.notEqual(result.status, 0, "expected non-zero exit for malformed device.json");
+
+    // Must emit structured corrupt_state event
+    assert.ok(
+      result.stderr.includes("force_pair.corrupt_state"),
+      `expected force_pair.corrupt_state in stderr, got: ${result.stderr}`,
+    );
+    const logLine = result.stderr
+      .split("\n")
+      .find((l) => l.includes("force_pair.corrupt_state"));
+    assert.ok(logLine, "expected structured log line");
+    const parsed = JSON.parse(logLine!);
+    assert.equal(parsed.reason, "device_json_invalid");
+    assert.ok(parsed.filePath.endsWith("device.json"));
+    assert.ok(parsed.backupPath?.includes(".corrupt-"), "expected timestamped backup path");
+
+    // Original corrupted file must still exist (not silently replaced)
+    const original = await readFile(join(dir, "identity", "device.json"), "utf8");
+    assert.equal(original, "NOT VALID JSON{{{", "corrupted file must not be overwritten");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildForcePairScript exits non-zero on parseable device.json with invalid public key", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fp-bad-device-key-"));
+  try {
+    await mkdir(join(dir, "identity"), { recursive: true });
+    await writeFile(
+      join(dir, "identity", "device.json"),
+      `${JSON.stringify(
+        {
+          publicKeyPem: "not-a-pem",
+          privateKeyPem: "still-not-a-real-key",
+          createdAtMs: Date.now(),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const result = await runForcePairScript(dir);
+
+    assert.notEqual(
+      result.status,
+      0,
+      "expected non-zero exit for invalid device public key",
+    );
+    assert.ok(
+      result.stderr.includes("force_pair.corrupt_state"),
+      `expected force_pair.corrupt_state in stderr, got: ${result.stderr}`,
+    );
+    const logLine = result.stderr
+      .split("\n")
+      .find((l) => l.includes("force_pair.corrupt_state"));
+    assert.ok(logLine, "expected structured log line");
+    const parsed = JSON.parse(logLine!);
+    assert.equal(parsed.reason, "device_json_key_invalid");
+    assert.ok(parsed.filePath.endsWith("device.json"));
+    assert.ok(parsed.backupPath?.includes(".corrupt-"), "expected timestamped backup path");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildForcePairScript exits non-zero on malformed paired.json (array instead of object)", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fp-bad-paired-"));
+  try {
+    // Create a valid identity so the script gets past device.json
+    await mkdir(join(dir, "identity"), { recursive: true });
+    await mkdir(join(dir, "devices"), { recursive: true });
+
+    // Pre-create a valid device identity by running the script once with no files
+    const bootstrapDir = await mkdtemp(join(tmpdir(), "fp-bootstrap-"));
+    const bootstrap = await runForcePairScript(bootstrapDir);
+    assert.equal(bootstrap.status, 0, `bootstrap failed: ${bootstrap.stderr}`);
+
+    // Copy the valid identity into our test dir
+    const validIdentity = await readFile(join(bootstrapDir, "identity", "device.json"), "utf8");
+    await writeFile(join(dir, "identity", "device.json"), validIdentity);
+    await rm(bootstrapDir, { recursive: true, force: true });
+
+    // Write a malformed paired.json (array instead of object)
+    await writeFile(join(dir, "devices", "paired.json"), "[]");
+
+    const result = await runForcePairScript(dir);
+
+    assert.notEqual(result.status, 0, "expected non-zero exit for malformed paired.json");
+
+    // Must emit structured corrupt_state event
+    assert.ok(
+      result.stderr.includes("force_pair.corrupt_state"),
+      `expected force_pair.corrupt_state in stderr, got: ${result.stderr}`,
+    );
+    const logLine = result.stderr
+      .split("\n")
+      .find((l) => l.includes("force_pair.corrupt_state"));
+    const parsed = JSON.parse(logLine!);
+    assert.equal(parsed.reason, "paired_json_shape_invalid");
+    assert.ok(parsed.filePath.endsWith("paired.json"));
+    assert.ok(parsed.backupPath?.includes(".corrupt-"), "expected timestamped backup path");
+
+    // Original corrupted file must still exist
+    const original = await readFile(join(dir, "devices", "paired.json"), "utf8");
+    assert.equal(original, "[]", "corrupted paired.json must not be overwritten");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

@@ -416,14 +416,51 @@ export function buildForcePairScript(): string {
 import path from "node:path";
 import crypto from "node:crypto";
 
+async function backupIfPresent(filePath) {
+  const backupPath = \`\${filePath}.corrupt-\${Date.now()}\`;
+  try {
+    await fs.copyFile(filePath, backupPath);
+    return { backupPath, backupError: null };
+  } catch (error) {
+    return {
+      backupPath: null,
+      backupError: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function failCorrupt(filePath, reason, error) {
+  const { backupPath, backupError } = await backupIfPresent(filePath);
+  console.error(JSON.stringify({
+    event: "force_pair.corrupt_state",
+    filePath,
+    backupPath,
+    backupError,
+    reason,
+    error: error instanceof Error ? error.message : String(error),
+  }));
+  process.exit(1);
+}
+
+async function readJsonOrMissing(filePath, reason) {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return null;
+    }
+    await failCorrupt(filePath, reason, error);
+    return null;
+  }
+}
+
 const stateDir = process.argv[2];
 const identityDir = path.join(stateDir, "identity");
 const identityPath = path.join(identityDir, "device.json");
 
-let identity;
-try {
-  identity = JSON.parse(await fs.readFile(identityPath, "utf8"));
-} catch {
+let identity = await readJsonOrMissing(identityPath, "device_json_invalid");
+if (identity === null) {
   await fs.mkdir(identityDir, { recursive: true });
   const kp = crypto.generateKeyPairSync("ed25519");
   identity = {
@@ -434,17 +471,40 @@ try {
   await fs.writeFile(identityPath, JSON.stringify(identity, null, 2) + "\\n", { mode: 0o600 });
 }
 
-const publicKeyPem = identity.publicKeyPem;
-if (typeof publicKeyPem !== "string") process.exit(0);
+if (
+  !identity ||
+  typeof identity !== "object" ||
+  typeof identity.publicKeyPem !== "string" ||
+  typeof identity.privateKeyPem !== "string"
+) {
+  await failCorrupt(
+    identityPath,
+    "device_json_shape_invalid",
+    "Expected publicKeyPem/privateKeyPem strings",
+  );
+}
 
-const pubKey = crypto.createPublicKey(publicKeyPem);
-const spkiDer = pubKey.export({ type: "spki", format: "der" });
+let spkiDer;
+try {
+  const pubKey = crypto.createPublicKey(identity.publicKeyPem);
+  spkiDer = pubKey.export({ type: "spki", format: "der" });
+} catch (error) {
+  await failCorrupt(
+    identityPath,
+    "device_json_key_invalid",
+    error,
+  );
+}
 const prefix = Buffer.from("302a300506032b6570032100", "hex");
 if (
   spkiDer.length !== prefix.length + 32 ||
   !spkiDer.subarray(0, prefix.length).equals(prefix)
 ) {
-  process.exit(0);
+  await failCorrupt(
+    identityPath,
+    "device_json_key_invalid",
+    "Unexpected ed25519 public key format",
+  );
 }
 
 const rawKey = spkiDer.subarray(prefix.length);
@@ -459,8 +519,18 @@ const devicesDir = path.join(stateDir, "devices");
 await fs.mkdir(devicesDir, { recursive: true });
 
 const pairedPath = path.join(devicesDir, "paired.json");
-let paired = {};
-try { paired = JSON.parse(await fs.readFile(pairedPath, "utf8")); } catch {}
+let paired = await readJsonOrMissing(pairedPath, "paired_json_invalid");
+if (paired === null) {
+  paired = {};
+}
+
+if (!paired || typeof paired !== "object" || Array.isArray(paired)) {
+  await failCorrupt(
+    pairedPath,
+    "paired_json_shape_invalid",
+    "Expected JSON object",
+  );
+}
 
 paired[deviceId] = {
   deviceId,
@@ -542,22 +612,24 @@ if [ -n "$ai_gateway_api_key" ]; then
   export OPENAI_API_KEY="$ai_gateway_api_key"
   export OPENAI_BASE_URL="$ai_gateway_base_url"
 fi
-# Install missing peer dependencies if not already present.
-# OpenClaw 2026.3.31+ ships @buape/carbon only inside the Discord extension
-# bundle, but the UI module also imports it — without this the gateway UI
-# returns 500 while API routes work fine.
+# Integrity check: fail fast if bundled peer dependencies are missing.
+# The artifact/snapshot must ship @buape/carbon — runtime repair is not
+# acceptable because it makes restores nondeterministic.
 OC_PKG="/home/vercel-sandbox/.global/npm/lib/node_modules/openclaw"
-if [ ! -d "\$OC_PKG/node_modules/@buape/carbon" ]; then
-  echo '{"event":"fast_restore.installing_peer_deps","package":"@buape/carbon","reason":"snapshot_missing"}' >&2
-  (
-    set -e
-    mkdir -p /tmp/openclaw-peer-deps && cd /tmp/openclaw-peer-deps
-    npm init -y > /dev/null 2>&1
-    npm install @buape/carbon --no-save --ignore-scripts --loglevel warn 2>&1
-    mkdir -p "\$OC_PKG/node_modules"
-    cp -r node_modules/@buape "\$OC_PKG/node_modules/"
-    rm -rf /tmp/openclaw-peer-deps
-  ) || echo '{"event":"fast_restore.peer_deps_failed"}' >&2
+OC_CARBON_PATH="\$OC_PKG/node_modules/@buape/carbon"
+if [ ! -d "\$OC_CARBON_PATH" ]; then
+  echo '{"event":"fast_restore.missing_dependency","package":"@buape/carbon","path":"'\$OC_CARBON_PATH'","action":"rebuild_artifact"}' >&2
+  exit 1
+fi
+# Snapshot invariant: reject snapshots that still contain the stale
+# host-scheduler skill.  It told the agent "the cron tool is disabled"
+# and directed it to a removed script.  The native cron tool works
+# correctly and needs no skill wrapper.  Fail instead of cleaning up
+# so broken snapshots are surfaced rather than silently repaired.
+STALE_HOST_SCHEDULER_DIR="${OPENCLAW_STATE_DIR}/skills/host-scheduler"
+if [ -e "\$STALE_HOST_SCHEDULER_DIR" ]; then
+  echo '{"event":"fast_restore.stale_snapshot_content","path":"skills/host-scheduler","action":"rebuild_snapshot"}' >&2
+  exit 1
 fi
 # Kill any existing gateway process — persistent sandboxes may still have
 # the previous gateway running after resume.  Snapshots have no running
@@ -624,10 +696,6 @@ if [ "\$_ready" = "1" ]; then
   # left a non-silent pending request, it blocks auto-pairing for all
   # subsequent local CLI connections (cron tool, gateway status, etc.).
   rm -f "${OPENCLAW_STATE_DIR}/devices/pending.json"
-  # Remove stale host-scheduler skill — it told the agent "the cron tool
-  # is disabled" and directed it to a removed script.  The native cron
-  # tool works correctly with Claude Sonnet and needs no skill wrapper.
-  rm -rf "${OPENCLAW_STATE_DIR}/skills/host-scheduler"
   # Ensure OPENCLAW_GATEWAY_PORT is in the shell profile so agent tools
   # (cron, gateway status) can connect.  Old snapshots may lack this.
   ${buildGatewayPortProfileShell()}
