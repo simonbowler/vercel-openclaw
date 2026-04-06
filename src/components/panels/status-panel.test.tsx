@@ -9,7 +9,6 @@ import {
 } from "@/components/status-payload-defaults";
 import type { ChannelConnectability } from "@/shared/channel-connectability";
 
-import { getStatusRequestPath } from "../admin-shell";
 import {
   deriveEffectiveStatus,
   getAutoSleepDisplay,
@@ -97,7 +96,6 @@ const DEFAULT_LIFECYCLE: StatusPayload["lifecycle"] =
   DEFAULT_STATUS_LIFECYCLE;
 
 const RUN_ACTION: RunAction = async () => true;
-const CHECK_HEALTH = async () => {};
 
 function makeStatus(overrides: Partial<StatusPayload> = {}): StatusPayload {
   return {
@@ -144,7 +142,6 @@ function renderPanel(status: StatusPayload, pendingAction: string | null = null)
       busy={pendingAction !== null}
       pendingAction={pendingAction}
       runAction={RUN_ACTION}
-      checkHealth={CHECK_HEALTH}
     />,
   );
 }
@@ -210,7 +207,6 @@ test("StatusPanel renders restore action when errored with a snapshot", () => {
 test("StatusPanel renders Open Gateway as the main green running action", () => {
   const html = renderPanel(makeStatus());
 
-  assert.ok(html.includes("Check health"));
   assert.ok(html.includes("Stop"));
   assert.match(html, /<a[^>]*class="button success"[^>]*>Open Gateway<\/a>/);
 });
@@ -272,17 +268,6 @@ test("StatusPanel shows asleep badge and restart action after estimated timeout 
   assert.ok(!html.includes(">Stop</button>"));
 });
 
-test("StatusPanel disables check health button while the health probe is pending", () => {
-  const html = renderPanel(makeStatus(), "Check health");
-
-  assert.match(html, /<button[^>]*disabled=""[^>]*>Checking health…<\/button>/);
-});
-
-test("getStatusRequestPath uses passive polling by default and live health on demand", () => {
-  assert.equal(getStatusRequestPath(), "/api/status");
-  assert.equal(getStatusRequestPath(false), "/api/status");
-  assert.equal(getStatusRequestPath(true), "/api/status?health=1");
-});
 
 test("getAutoSleepDisplay shows source labels and estimated sleep warning", () => {
   assert.equal(
