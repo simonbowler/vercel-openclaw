@@ -1,27 +1,9 @@
 import { setWebhook, getMyCommands } from "@/server/channels/telegram/bot-api";
 import type { TelegramBotCommand } from "@/server/channels/telegram/bot-api";
 import { getTelegramBotCommands, syncTelegramCommands } from "@/server/channels/telegram/commands";
-import { setTelegramChannelConfig } from "@/server/channels/state";
+import { buildTelegramWebhookUrl, setTelegramChannelConfig } from "@/server/channels/state";
 import { logInfo, logWarn } from "@/server/log";
 import { getInitializedMeta, getStore } from "@/server/store/store";
-
-/**
- * Strip the Vercel protection bypass query parameter from a URL.
- * Telegram's setWebhook silently drops registrations when the URL
- * contains this parameter.
- */
-export function stripBypassParam(url: string): string {
-  try {
-    const parsed = new URL(url);
-    if (parsed.searchParams.has("x-vercel-protection-bypass")) {
-      parsed.searchParams.delete("x-vercel-protection-bypass");
-      return parsed.toString();
-    }
-  } catch {
-    // Not a valid URL — return as-is.
-  }
-  return url;
-}
 
 export const TELEGRAM_RECONCILE_KEY =
   "telegram:integration:last-reconciled-at";
@@ -73,9 +55,15 @@ export async function reconcileTelegramIntegration(options?: {
     }
   }
 
-  // Strip the bypass query param if present — Telegram silently rejects
-  // webhook URLs that contain it.
-  const webhookUrl = stripBypassParam(config.webhookUrl);
+  // Prefer the dynamically-built URL (includes bypass param when configured).
+  // Fall back to stored config.webhookUrl when the origin cannot be resolved
+  // (e.g. in tests or environments without NEXT_PUBLIC_APP_URL).
+  let webhookUrl: string;
+  try {
+    webhookUrl = buildTelegramWebhookUrl();
+  } catch {
+    webhookUrl = config.webhookUrl;
+  }
   await setWebhook(config.botToken, webhookUrl, config.webhookSecret);
 
   let commandsSynced = false;
@@ -118,7 +106,7 @@ export async function reconcileTelegramIntegration(options?: {
   await getStore().setValue(TELEGRAM_RECONCILE_KEY, checkedAt);
 
   logInfo("channels.telegram_integration_reconciled", {
-    webhookUrl: stripBypassParam(config.webhookUrl),
+    webhookUrl,
     commandsSynced,
     commandCount,
   });

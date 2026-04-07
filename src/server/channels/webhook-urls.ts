@@ -30,22 +30,14 @@ export function buildChannelDisplayWebhookUrl(
 /**
  * Build a webhook URL for platform registration and delivery.
  *
- * Telegram uses the display URL (no bypass query param) because Telegram
- * validates webhooks via the `x-telegram-bot-api-secret-token` header,
- * and including the bypass secret causes `setWebhook` to silently drop
- * the registration.
- *
- * Slack and Discord use `buildPublicUrl` which appends the bypass secret
- * when available.
+ * All channels use `buildPublicUrl` which appends the bypass secret
+ * when available, allowing webhooks to pass through Vercel Deployment
+ * Protection.
  */
 export function buildChannelWebhookUrl(
   channel: ChannelName,
   request?: Request,
-) : string | null {
-  if (channel === "telegram") {
-    return buildChannelDisplayWebhookUrl(channel, request);
-  }
-
+): string | null {
   return buildPublicUrl(
     CHANNEL_WEBHOOK_PATHS[channel as WebhookProxiedChannel],
     request,

@@ -96,7 +96,7 @@ Configure Telegram credentials from the admin panel. The app stores the bot toke
 
 OpenClaw's config includes the app's public Telegram webhook route as `webhookUrl`. When the sandbox boots, OpenClaw itself also calls `setWebhook` with this URL, so the app's endpoint — not the sandbox's — is what Telegram calls.
 
-Telegram registration URLs must not include the bypass query parameter. Telegram validates webhooks via the `x-telegram-bot-api-secret-token` header, and including the bypass parameter can cause `setWebhook` to silently drop registration.
+Telegram validates webhooks via the `x-telegram-bot-api-secret-token` header. Registration URLs include the bypass query parameter when configured, allowing Telegram to work with Vercel Deployment Protection.
 
 ### How Telegram messages flow
 
@@ -108,9 +108,7 @@ When a Telegram update arrives at the webhook:
 
 ## Protected deployments
 
-Slack can use a bypass-capable delivery URL on protected deployments. Telegram intentionally cannot.
-
-This is because Telegram's `setWebhook` registration silently fails when extra query parameters are present in the URL. To make Telegram work on a protected deployment, configure a Deployment Protection Exception or use another protection-compatible path.
+All channels (Slack, Telegram, Discord) use bypass-capable delivery URLs on protected deployments when `VERCEL_AUTOMATION_BYPASS_SECRET` is configured.
 
 Admin-visible URLs — in the admin panel, preflight payload, status responses, and docs examples — must stay display-safe and never expose the bypass secret. The app enforces this by using `buildPublicDisplayUrl()` for all operator-visible surfaces and reserving `buildPublicUrl()` for outbound delivery only.
 
@@ -145,9 +143,9 @@ The admin panel shows a channel as blocked when deployment prerequisites are sti
 
 This means config looks good, but the current deployment has not yet proven the full delivery path. Preflight only checks config. Safe mode proves boot or resume plus a real completion, but destructive launch verification is still required before `channelReadiness.ready` becomes `true`.
 
-### Slack works but Telegram registration fails on a protected deployment
+### Channel webhooks fail on a protected deployment
 
-Telegram is hitting Vercel's Deployment Protection, not app auth. Unlike Slack, Telegram cannot use the bypass query parameter because `setWebhook` silently drops registrations with extra parameters. Configure a Deployment Protection Exception for the Telegram webhook path, or disable Deployment Protection if your use case allows it.
+Channel webhooks are hitting Vercel's Deployment Protection. Enable Protection Bypass for Automation in your Vercel project settings and set `VERCEL_AUTOMATION_BYPASS_SECRET`. All channels (Slack, Telegram, Discord) include the bypass parameter in their delivery URLs when configured.
 
 ### Launch verification phases look mostly healthy but overall result is false
 

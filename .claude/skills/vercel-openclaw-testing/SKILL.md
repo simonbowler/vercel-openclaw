@@ -409,7 +409,7 @@ These patterns are distilled from 100+ commits of production fixes. When investi
 
 **Root causes found historically:**
 - Startup scripts called `deleteWebhook` on every sandbox boot, clearing the webhook URL. Old snapshots contained these scripts, and new scripts weren't synced fast enough after restore. **Fix:** remove `deleteWebhook` from startup scripts entirely.
-- Telegram's `setWebhook` API silently rejects URLs containing `x-vercel-protection-bypass` query parameter. **Fix:** use separate `buildPublicDisplayUrl` without bypass param for Telegram.
+- Telegram's `setWebhook` API was previously believed to reject URLs with query parameters, but testing confirmed it preserves them. All channels now use `buildPublicUrl` with the bypass param.
 - Queue publish failures on webhook route returned 500 to Telegram, which then exponentially backed off webhook deliveries (Telegram reduces delivery frequency on repeated failures). **Fix:** always return 200 from webhook route, even on internal errors.
 - Reconnecting Telegram created backlogged failed updates that prevented new webhook delivery. **Fix:** pass `drop_pending_updates: true` to `setWebhook`.
 
@@ -483,7 +483,7 @@ Step-by-step investigation playbooks for common production issues.
 5. **Check for fast-path failures:** Search for `fast_path_failed` — this means Vercel Queues rejected the publish and the system fell back to store-based queuing
 6. **Check for job parking:** Search for `job_parked` or `job_retry_parked` — these indicate deferred or retrying jobs with `nextAttemptAt` timestamps
 7. **Check gateway token:** `GET /api/status` — look at `lifecycle.consecutiveTokenRefreshFailures` and `lifecycle.breakerOpenUntil` for token refresh circuit breaker state
-8. **Check webhook URL:** For Telegram, verify the registered URL doesn't contain `x-vercel-protection-bypass` (Telegram silently rejects it)
+8. **Check webhook URL:** For Telegram, verify the registered URL via `getWebhookInfo` matches the expected delivery URL
 9. **Trigger self-heal:** Run destructive smoke with `selfHealTokenRefresh` phase, or `POST /api/admin/launch-verify` with destructive mode
 
 ### "Sandbox stuck in restoring/error"

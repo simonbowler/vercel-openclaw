@@ -81,4 +81,4 @@ See [Deployment Protection](deployment-protection.md) for full details on bypass
 
 | Variable | Purpose |
 | -------- | ------- |
-| `VERCEL_AUTOMATION_BYPASS_SECRET` | Lets protected webhook requests reach the app when Vercel Deployment Protection is enabled. Telegram intentionally does not include the bypass query parameter — use a Deployment Protection Exception for Telegram on protected deployments. |
+| `VERCEL_AUTOMATION_BYPASS_SECRET` | Lets protected webhook requests reach the app when Vercel Deployment Protection is enabled. All channel webhook URLs include the bypass parameter when configured. |

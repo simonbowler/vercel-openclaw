@@ -230,9 +230,9 @@ for (const envName of contractEnvNames) {
 
 const wordingRequirements = [
   {
-    snippet: "Telegram intentionally does not include the bypass query parameter",
+    snippet: "All channel webhook URLs",
     label: "Telegram bypass behavior",
-    files: ["docs/deployment-protection.md", "CLAUDE.md", "CONTRIBUTING.md"],
+    files: ["docs/deployment-protection.md", "CONTRIBUTING.md"],
   },
   {
     snippet: "deployment contract **warns** — it does not fail",

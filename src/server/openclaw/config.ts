@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { getProtectionBypassSecret } from "@/server/public-url";
 
 const OPENCLAW_PORT = 3000;
 
@@ -398,7 +399,12 @@ export function buildGatewayConfig(
       webhookPath: OPENCLAW_TELEGRAM_INTERNAL_WEBHOOK_PATH,
     };
     if (origin) {
-      telegramConfig.webhookUrl = `${origin}${TELEGRAM_PUBLIC_WEBHOOK_PATH}`;
+      const webhookUrl = new URL(TELEGRAM_PUBLIC_WEBHOOK_PATH, `${origin}/`);
+      const bypassSecret = getProtectionBypassSecret();
+      if (bypassSecret) {
+        webhookUrl.searchParams.set("x-vercel-protection-bypass", bypassSecret);
+      }
+      telegramConfig.webhookUrl = webhookUrl.toString();
     }
     if (telegramWebhookSecret) {
       telegramConfig.webhookSecret = telegramWebhookSecret;

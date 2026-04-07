@@ -4,36 +4,9 @@ import test from "node:test";
 import {
   reconcileTelegramIntegration,
   reconcileTelegramWebhook,
-  stripBypassParam,
   TELEGRAM_RECONCILE_KEY,
 } from "@/server/channels/telegram/reconcile";
 import { withHarness } from "@/test-utils/harness";
-
-test("stripBypassParam removes only x-vercel-protection-bypass", () => {
-  assert.equal(
-    stripBypassParam(
-      "https://app.example.com/api/channels/telegram/webhook?x-vercel-protection-bypass=topsecret&foo=1",
-    ),
-    "https://app.example.com/api/channels/telegram/webhook?foo=1",
-  );
-
-  assert.equal(
-    stripBypassParam(
-      "https://app.example.com/api/channels/telegram/webhook?foo=1",
-    ),
-    "https://app.example.com/api/channels/telegram/webhook?foo=1",
-  );
-
-  assert.equal(
-    stripBypassParam(
-      "https://app.example.com/api/channels/telegram/webhook?x-vercel-protection-bypass=secret",
-    ),
-    "https://app.example.com/api/channels/telegram/webhook",
-  );
-
-  // Malformed URL returns as-is
-  assert.equal(stripBypassParam("not-a-url"), "not-a-url");
-});
 
 test("reconcileTelegramIntegration sets webhook, syncs commands, and records timestamp", async () => {
   await withHarness(async (h) => {

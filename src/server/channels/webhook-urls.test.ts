@@ -96,16 +96,19 @@ test("buildChannelWebhookUrl for whatsapp includes bypass secret", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Telegram: delivery URL stays on display path (no bypass)
+// Telegram: delivery URL includes bypass like other channels
 // ---------------------------------------------------------------------------
 
-test("buildChannelWebhookUrl for telegram returns display URL (no bypass)", () => {
+test("buildChannelWebhookUrl for telegram includes bypass secret", () => {
   process.env.NEXT_PUBLIC_APP_URL = "https://app.example.com";
   process.env.VERCEL_AUTOMATION_BYPASS_SECRET = "bypass-secret";
 
   const url = buildChannelWebhookUrl("telegram", makeRequest());
-  assert.equal(url, "https://app.example.com/api/channels/telegram/webhook");
-  assert.ok(url !== null && !url.includes("x-vercel-protection-bypass"));
+  assert.ok(url !== null, "telegram webhook URL must not be null");
+  assert.ok(
+    url.includes("x-vercel-protection-bypass=bypass-secret"),
+    "telegram delivery URL must include bypass secret",
+  );
 });
 
 // ---------------------------------------------------------------------------

@@ -4,15 +4,13 @@
 
 ## Channel behavior
 
-- Slack webhook URLs include the bypass query parameter when the secret is configured.
-- Telegram intentionally does not include the bypass query parameter. Telegram validates via the `x-telegram-bot-api-secret-token` header, and adding the bypass query parameter can cause `setWebhook` to silently drop registration. On protected deployments, Telegram needs a Deployment Protection Exception or another protection-compatible path.
+All channel webhook URLs (Slack, Telegram, Discord) include the `x-vercel-protection-bypass` query parameter when `VERCEL_AUTOMATION_BYPASS_SECRET` is configured. This allows webhooks from all platforms to pass through Vercel Deployment Protection.
 
 ## Delivery URLs vs operator-visible URLs
 
 These are intentionally different surfaces:
 
-- Slack delivery URLs may include `x-vercel-protection-bypass` when `VERCEL_AUTOMATION_BYPASS_SECRET` is configured.
-- Telegram intentionally does not include the bypass query parameter because Telegram webhook registration can silently fail when it is present.
+- Delivery URLs include `x-vercel-protection-bypass` when `VERCEL_AUTOMATION_BYPASS_SECRET` is configured.
 - Admin-visible payloads, rendered UI, connectability output, and docs examples must use display URLs that never expose the bypass secret.
 
 Examples:
@@ -20,7 +18,7 @@ Examples:
 ```
 Delivery URL (Slack):    https://app.example.com/api/channels/slack/webhook?x-vercel-protection-bypass=[redacted]
 Display URL (Slack):     https://app.example.com/api/channels/slack/webhook
-Delivery URL (Telegram): https://app.example.com/api/channels/telegram/webhook
+Delivery URL (Telegram): https://app.example.com/api/channels/telegram/webhook?x-vercel-protection-bypass=[redacted]
 Display URL (Telegram):  https://app.example.com/api/channels/telegram/webhook
 ```
 

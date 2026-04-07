@@ -79,7 +79,7 @@ Channel phases (`channelRoundTrip`, `channelWakeFromSleep`) call `POST /api/admi
 | `/api/admin/stop` | Stop the sandbox (v2 auto-snapshots on stop) |
 | `/api/admin/snapshot` | Stop the sandbox (same as stop for now; v2 auto-snapshots on stop) |
 | `/api/admin/snapshots/delete` | Delete a past snapshot from Vercel and local history |
-| `/api/admin/channel-secrets` | Configure smoke credentials and dispatch server-signed synthetic channel webhooks. Raw secrets are never returned. Smoke dispatch URLs use `buildPublicUrl()` (bypass included when configured) for all channels, including Telegram — this is intentionally different from provider-facing Telegram webhook registration, which omits the bypass parameter. |
+| `/api/admin/channel-secrets` | Configure smoke credentials and dispatch server-signed synthetic channel webhooks. Raw secrets are never returned. Smoke dispatch URLs use `buildPublicUrl()` (bypass included when configured) for all channels. |
 | `/api/admin/channel-forward-diag` | Read channel forward diagnostic from store |
 | `/api/channels/slack/install` | Slack OAuth install initiation |
 | `/api/channels/slack/install/callback` | Slack OAuth callback |
@@ -133,7 +133,7 @@ Responsibilities:
 - expose `buildPublicUrl(path: string, request?: Request): string`
 - append `x-vercel-protection-bypass=<VERCEL_AUTOMATION_BYPASS_SECRET>` when the bypass secret is available (regardless of auth mode)
 
-Channel webhook URL construction lives in `src/server/channels/webhook-urls.ts`. The convenience wrappers in `src/server/channels/state.ts` (`buildSlackWebhookUrl`, `buildTelegramWebhookUrl`) delegate to `buildChannelWebhookUrl()` in that module. Slack delivery URLs use `buildPublicUrl` (bypass secret appended when available) for runtime webhook forwarding, but the Slack app manifest uses `buildPublicDisplayUrl` (no bypass secret) because the bypass query parameter interferes with Slack's Event Subscriptions URL verification. Telegram intentionally does not include the bypass query parameter — Telegram URLs use `buildPublicDisplayUrl` (no bypass secret) because Telegram validates webhooks via the `x-telegram-bot-api-secret-token` header, and including the bypass query parameter causes `setWebhook` to silently drop the registration.
+Channel webhook URL construction lives in `src/server/channels/webhook-urls.ts`. The convenience wrappers in `src/server/channels/state.ts` (`buildSlackWebhookUrl`, `buildTelegramWebhookUrl`) delegate to `buildChannelWebhookUrl()` in that module. All channel delivery URLs use `buildPublicUrl` (bypass secret appended when available). The Slack app manifest uses `buildPublicDisplayUrl` (no bypass secret) because the bypass query parameter interferes with Slack's Event Subscriptions URL verification.
 
 Admin-visible surfaces (preflight payload, status responses, UI) must use `buildPublicDisplayUrl()` instead of `buildPublicUrl()`. The display variant omits the `x-vercel-protection-bypass` query parameter so secrets are never leaked to the browser or API consumers.
 

@@ -102,9 +102,7 @@ Unlike Slack Socket Mode (where the SDK handles reconnection and Slack retries r
 
 ### Telegram and deployment protection
 
-Telegram webhook URLs cannot include the `x-vercel-protection-bypass` query parameter. Including it causes `setWebhook` to silently drop the registration. This means Telegram webhooks are incompatible with Vercel Deployment Protection unless a Deployment Protection Exception is configured for the webhook path.
-
-See [Deployment Protection](deployment-protection.md) for the full breakdown.
+Telegram webhook URLs now include the `x-vercel-protection-bypass` query parameter, the same as Slack and Discord. Telegram's `setWebhook` API preserves query parameters in the registered URL, so the bypass secret is delivered with every webhook callback. This means Telegram webhooks work with Vercel Deployment Protection when `VERCEL_AUTOMATION_BYPASS_SECRET` is configured.
 
 ## Always-on sandbox vs sleep/wake
 
@@ -151,7 +149,7 @@ Setup: set `ADMIN_SECRET` (simple) or configure OAuth client credentials (more s
 
 ### Why the app can't use Vercel Deployment Protection as auth
 
-Deployment Protection was attempted and abandoned. It blocks ALL unauthenticated requests — including channel webhooks from Slack, Telegram, and other platforms. It is also unavailable on Hobby plans. The bypass secret works for Slack but not for Telegram (see above).
+Deployment Protection was attempted and abandoned. It blocks ALL unauthenticated requests — including channel webhooks from Slack, Telegram, and other platforms. It is also unavailable on Hobby plans. The bypass secret works for all channels when configured.
 
 ## Firewall: enforced vs absent
 

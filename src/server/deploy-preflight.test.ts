@@ -1509,7 +1509,7 @@ test("preflight reports api-key when AI_GATEWAY_API_KEY is used without OIDC", a
 // Drift-resistant: webhook-bypass remediation copy and AI Gateway fallback
 // ===========================================================================
 
-test("preflight bypass remediation text mentions Slack/Discord and Telegram exception path", async () => {
+test("preflight bypass remediation text mentions all channels", async () => {
   await withEnv(
     {
       VERCEL: "1",
@@ -1536,18 +1536,14 @@ test("preflight bypass remediation text mentions Slack/Discord and Telegram exce
       assert.ok(bypassCheck, "expected webhook-bypass check");
       assert.equal(bypassCheck.status, "warn", "missing bypass must be warn, not fail");
 
-      // The action copy must name Slack and Discord as bypass consumers
+      // The action copy must mention all channel webhooks
       const bypassAction = payload.actions.find(
         (a) => a.id === "configure-webhook-bypass",
       );
       assert.ok(bypassAction, "expected configure-webhook-bypass action");
-      assert.match(bypassAction.message, /Slack and Discord/i, "message must mention Slack and Discord");
+      assert.match(bypassAction.message, /Slack/i, "message must mention Slack");
       assert.match(bypassAction.message, /Telegram/i, "message must mention Telegram");
-      assert.match(
-        bypassAction.remediation,
-        /Deployment Protection Exception/i,
-        "remediation must mention Deployment Protection Exception for Telegram",
-      );
+      assert.match(bypassAction.message, /Discord/i, "message must mention Discord");
 
       // Overall preflight must still pass (bypass is diagnostic-only)
       assert.equal(payload.ok, true, "missing bypass must not make preflight fail");
@@ -1651,7 +1647,7 @@ test("preflight cron fields reflect ADMIN_SECRET fallback on Vercel", async () =
   );
 });
 
-test("preflight treats missing webhook bypass as warning and mentions Telegram exception", async () => {
+test("preflight treats missing webhook bypass as warning and mentions channels", async () => {
   await withEnv(
     {
       VERCEL: "1",
@@ -1690,9 +1686,9 @@ test("preflight treats missing webhook bypass as warning and mentions Telegram e
         (item) => item.id === "configure-webhook-bypass",
       );
       assert.ok(action, "expected configure-webhook-bypass action");
-      assert.match(action.message, /Slack and Discord/i);
+      assert.match(action.message, /Slack/i);
       assert.match(action.message, /Telegram/i);
-      assert.match(action.remediation, /Deployment Protection Exception/i);
+      assert.match(action.message, /Discord/i);
     },
   );
 });
