@@ -24,10 +24,11 @@ If any of those hard blockers are present, the channel config route returns HTTP
 These warnings do **not** block channel save by themselves:
 
 - `OPENCLAW_PACKAGE_SPEC` not pinned
-- `VERCEL_AUTOMATION_BYPASS_SECRET` not set
 - `CRON_SECRET` not set
 
-They still matter for deterministic resumes, protected webhook reachability, and cron recovery, but they are not part of the channel connectability hard-blocker set.
+They still matter for deterministic resumes and cron recovery, but they are not part of the channel connectability hard-blocker set.
+
+`VERCEL_AUTOMATION_BYPASS_SECRET` is a special case: the missing secret alone is only a warning, but when the app's runtime self-probe detects that Vercel Deployment Protection is actually active, the missing bypass becomes a hard blocker (`deployment-protection-active` issue with status `fail`) because webhooks literally cannot reach the app.
 
 Destructive launch verification is a separate operational proof step. It is what proves queue delivery, sandbox boot or resume, real completions, wake-from-sleep, and resume-target sealing. The app does not currently use `channelReadiness.ready` as a save-time blocker; it is the signal that tells operators whether the current deployment is truly channel-ready.
 
@@ -108,7 +109,7 @@ When a Telegram update arrives at the webhook:
 
 ## Protected deployments
 
-All channels (Slack, Telegram, Discord) use bypass-capable delivery URLs on protected deployments when `VERCEL_AUTOMATION_BYPASS_SECRET` is configured.
+All channels (Slack, Telegram, WhatsApp, Discord) use bypass-capable delivery URLs on protected deployments when `VERCEL_AUTOMATION_BYPASS_SECRET` is configured. The app auto-detects active Deployment Protection at runtime and hard-blocks channel connections when protection is on but bypass is not configured.
 
 Admin-visible URLs — in the admin panel, preflight payload, status responses, and docs examples — must stay display-safe and never expose the bypass secret. The app enforces this by using `buildPublicDisplayUrl()` for all operator-visible surfaces and reserving `buildPublicUrl()` for outbound delivery only.
 
@@ -145,7 +146,7 @@ This means config looks good, but the current deployment has not yet proven the 
 
 ### Channel webhooks fail on a protected deployment
 
-Channel webhooks are hitting Vercel's Deployment Protection. Enable Protection Bypass for Automation in your Vercel project settings and set `VERCEL_AUTOMATION_BYPASS_SECRET`. All channels (Slack, Telegram, Discord) include the bypass parameter in their delivery URLs when configured.
+Channel webhooks are hitting Vercel's Deployment Protection. Enable Protection Bypass for Automation in your Vercel project settings and set `VERCEL_AUTOMATION_BYPASS_SECRET`. All channels (Slack, Telegram, WhatsApp, Discord) include the bypass parameter in their delivery URLs when configured. The app detects active protection at runtime — if the admin panel shows a "Deployment Protection is blocking webhook delivery" banner, follow the instructions there.
 
 ### Launch verification phases look mostly healthy but overall result is false
 

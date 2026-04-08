@@ -1,10 +1,12 @@
 # Deployment Protection and Webhooks
 
-`VERCEL_AUTOMATION_BYPASS_SECRET` is diagnostic-only: missing it does not fail preflight by itself, but protected third-party webhooks can be blocked before app auth runs.
+`VERCEL_AUTOMATION_BYPASS_SECRET` is applied opportunistically when configured. The app also performs a runtime self-probe to detect whether Vercel Deployment Protection is actually active on the deployment.
+
+When the self-probe confirms protection is active and no working bypass secret is configured, channel connections are hard-blocked (HTTP 409) because webhooks from Slack, Telegram, WhatsApp, and Discord cannot reach the app. The missing secret alone (without confirmed protection) remains a warning, not a blocker.
 
 ## Channel behavior
 
-All channel webhook URLs (Slack, Telegram, Discord) include the `x-vercel-protection-bypass` query parameter when `VERCEL_AUTOMATION_BYPASS_SECRET` is configured. This allows webhooks from all platforms to pass through Vercel Deployment Protection.
+All channel webhook URLs (Slack, Telegram, WhatsApp, Discord) include the `x-vercel-protection-bypass` query parameter when `VERCEL_AUTOMATION_BYPASS_SECRET` is configured. This allows webhooks from all platforms to pass through Vercel Deployment Protection.
 
 ## Delivery URLs vs operator-visible URLs
 
@@ -26,7 +28,7 @@ In code: use `buildPublicUrl()` only for outbound delivery or registration URLs 
 
 Reachability and readiness are different things.
 
-- **Deployment Protection** decides whether channel webhooks (Slack, Telegram, etc.) can reach the app at all.
+- **Deployment Protection** decides whether channel webhooks (Slack, Telegram, WhatsApp, Discord) can reach the app at all.
 - **Preflight** tells you whether the deployment is configured well enough to expose those webhooks.
 - **Safe launch verification** proves queue delivery, sandbox boot or resume, and a real completion.
 - **Destructive launch verification** adds wake-from-sleep and resume-target preparation.

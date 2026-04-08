@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildDeployPreflight, getLaunchVerifyBlocking } from "@/server/deploy-preflight";
+import { _setProbeResultForTesting, _resetProbeForTesting } from "@/server/deployment-protection-probe";
 import { _setAiGatewayTokenOverrideForTesting, _setAiGatewayCredentialOverrideForTesting } from "@/server/env";
 import { _resetStoreForTesting } from "@/server/store/store";
 
@@ -24,6 +25,8 @@ function withEnv<T>(
     }
 
     _resetStoreForTesting();
+    // Prevent real network calls from the deployment protection probe.
+    _setProbeResultForTesting({ status: "skipped", probeError: null });
 
     const restore = () => {
       for (const [key, value] of previous.entries()) {
@@ -36,6 +39,7 @@ function withEnv<T>(
       _setAiGatewayTokenOverrideForTesting(null);
       _setAiGatewayCredentialOverrideForTesting(null);
       _resetStoreForTesting();
+      _resetProbeForTesting();
     };
 
     return fn().finally(restore);
@@ -1264,6 +1268,7 @@ test("getLaunchVerifyBlocking: synthetic webhook-bypass warn does not block", ()
     publicOrigin: "https://app.example.com",
     webhookBypassEnabled: false,
     webhookBypassRecommended: true,
+    deploymentProtectionDetected: false,
     storeBackend: "upstash" as const,
     aiGatewayAuth: "oidc" as const,
     cronSecretConfigured: true,

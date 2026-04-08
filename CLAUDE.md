@@ -493,7 +493,7 @@ Notes:
 - `admin-secret` is the default if `VERCEL_AUTH_MODE` is unset
 - admin auth accepts either `Authorization: Bearer <admin-secret>` or the encrypted `openclaw_admin` session cookie
 - CSRF is enforced on cookie-based mutation requests but not bearer token requests
-- deployment-protection was attempted and abandoned — Vercel's deployment protection blocks channel webhooks from Slack, Telegram, WhatsApp, and Discord, and is unavailable on Hobby plans
+- Vercel Deployment Protection is supported via `VERCEL_AUTOMATION_BYPASS_SECRET`. The app auto-detects active protection at runtime (self-probe of `/api/health`) and hard-blocks channel connections when protection is active but bypass is not configured. Hobby plans cannot enable Deployment Protection, so this only affects Pro/Enterprise deployments.
 - `sign-in-with-vercel` uses encrypted cookie sessions and verifies the ID token against Vercel's JWKS
 - access tokens are refreshed before expiry
 - refresh failure should clear the session and force a new login

@@ -36,6 +36,7 @@ test("bypass is not required in sign-in-with-vercel mode", () => {
   const requirement = getWebhookBypassRequirement();
   assert.deepEqual(requirement, {
     configured: false,
+    protectionDetected: false,
     recommendation: "recommended",
     reason: "sign-in-with-vercel",
   });
@@ -53,6 +54,7 @@ test("bypass recommendation is none in admin-secret mode", () => {
   const requirement = getWebhookBypassRequirement();
   assert.deepEqual(requirement, {
     configured: false,
+    protectionDetected: false,
     recommendation: "none",
     reason: "admin-secret",
   });
@@ -70,6 +72,7 @@ test("bypass recommendation is none on Vercel in admin-secret mode", () => {
   const requirement = getWebhookBypassRequirement();
   assert.deepEqual(requirement, {
     configured: false,
+    protectionDetected: false,
     recommendation: "none",
     reason: "admin-secret",
   });
@@ -87,8 +90,47 @@ test("bypass recommendation is none when secret is already configured", () => {
   const requirement = getWebhookBypassRequirement();
   assert.deepEqual(requirement, {
     configured: true,
+    protectionDetected: false,
     recommendation: "none",
     reason: "admin-secret",
+  });
+  assert.equal(
+    getWebhookBypassStatusMessage(requirement),
+    "Protection bypass is configured for protected deployment webhook flows.",
+  );
+});
+
+// --- protectionDetected parameter ---
+
+test("bypass is recommended in admin-secret mode when protection is detected", () => {
+  delete process.env.VERCEL_AUTH_MODE;
+  process.env.VERCEL = "1";
+  delete process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+
+  const requirement = getWebhookBypassRequirement({ protectionDetected: true });
+  assert.deepEqual(requirement, {
+    configured: false,
+    protectionDetected: true,
+    recommendation: "recommended",
+    reason: "deployment-protection-detected",
+  });
+  assert.equal(
+    getWebhookBypassStatusMessage(requirement),
+    "Deployment Protection is active but bypass is not configured. Channel webhooks (Slack, Telegram, WhatsApp, Discord) will be blocked.",
+  );
+});
+
+test("bypass recommendation stays none when protection detected but secret configured", () => {
+  delete process.env.VERCEL_AUTH_MODE;
+  process.env.VERCEL = "1";
+  process.env.VERCEL_AUTOMATION_BYPASS_SECRET = "secret";
+
+  const requirement = getWebhookBypassRequirement({ protectionDetected: true });
+  assert.deepEqual(requirement, {
+    configured: true,
+    protectionDetected: true,
+    recommendation: "none",
+    reason: "deployment-protection-detected",
   });
   assert.equal(
     getWebhookBypassStatusMessage(requirement),

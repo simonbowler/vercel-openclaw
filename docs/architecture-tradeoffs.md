@@ -80,12 +80,12 @@ OpenClaw opens a WebSocket to Slack's servers. Events arrive over that WebSocket
 | Concern | HTTP mode | Socket Mode |
 |---------|-----------|-------------|
 | Wake-from-sleep | Works — webhook hits a Vercel Function | Broken — WebSocket dies with the sandbox |
-| Deployment protection | Blocked — Slack can't reach the webhook | Works — no inbound requests needed |
+| Deployment protection | Works — bypass secret appended to webhook URLs | Works — no inbound requests needed |
 | Message during sleep | Queued in Workflow, delivered on wake | Lost until sandbox reconnects |
 | Boot message | Sent immediately on webhook receipt | Not possible (no trigger) |
 | Complexity | ~1,500 lines (webhook route + adapter + workflow) | Zero (OpenClaw handles it) |
 
-**You cannot have both wake-from-sleep and deployment protection with the same channel.** HTTP mode enables wake-from-sleep but breaks deployment protection. Socket Mode enables deployment protection but breaks wake-from-sleep.
+**Wake-from-sleep and deployment protection now work together.** When `VERCEL_AUTOMATION_BYPASS_SECRET` is configured, the app appends the bypass secret to all channel webhook URLs, allowing Slack, Telegram, WhatsApp, and Discord webhooks to pass through Vercel Deployment Protection. The app auto-detects active protection and hard-blocks channel connections if the bypass secret is missing.
 
 ## Telegram: no outbound-only option
 

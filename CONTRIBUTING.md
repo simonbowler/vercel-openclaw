@@ -150,7 +150,7 @@ Full reference:
 | `OPENCLAW_PACKAGE_SPEC` | No | OpenClaw version to install. When unset, the runtime falls back to a pinned known-good version (currently `openclaw@2026.3.28`). On Vercel deployments, the deployment contract **warns** — it does not fail — when unset or unpinned. Pin to an exact version like `openclaw@1.2.3` for deterministic sandbox resumes. |
 | `OPENCLAW_SANDBOX_VCPUS` | No | vCPU count for sandbox create and resume (valid: 1, 2, 4, 8; default: 1). Keep fixed during benchmarks. |
 | `OPENCLAW_SANDBOX_SLEEP_AFTER_MS` | No | How long the sandbox stays alive after last activity, in milliseconds (60000–2700000; default: 1800000 = 30 min). Heartbeat and touch-throttle intervals are derived proportionally. Existing running sandboxes cannot be shortened in place. If you increase this value, the next touch/heartbeat can top the sandbox timeout up to the new target. If you decrease it, the lower value becomes exact on the next create or restore. |
-| `VERCEL_AUTOMATION_BYPASS_SECRET` | No | Enables protected webhook delivery when Deployment Protection is on. All channel webhook URLs (Slack, Telegram, Discord) include the bypass parameter when configured. |
+| `VERCEL_AUTOMATION_BYPASS_SECRET` | No | Enables protected webhook delivery when Deployment Protection is on. All channel webhook URLs (Slack, Telegram, WhatsApp, Discord) include the bypass parameter when configured. The app auto-detects active protection and hard-blocks channel connections when it is on but this secret is missing. |
 | `NEXT_PUBLIC_APP_URL` | No | Base origin override |
 | `NEXT_PUBLIC_BASE_DOMAIN` | No | Preferred external host for webhook URLs |
 | `BASE_DOMAIN` | No | Legacy alias for `NEXT_PUBLIC_BASE_DOMAIN` |

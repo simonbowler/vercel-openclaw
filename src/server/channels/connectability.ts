@@ -10,6 +10,7 @@ import {
   type DeploymentRequirement,
 } from "@/server/deployment-contract";
 import { logDebug, logInfo } from "@/server/log";
+import { getProtectionBypassSecret } from "@/server/public-url";
 import { buildChannelDisplayWebhookUrl } from "@/server/channels/webhook-urls";
 
 const ALL_CHANNELS: ChannelName[] = ["slack", "telegram", "discord", "whatsapp"];
@@ -143,6 +144,7 @@ function collectContractIssues(
  */
 export type SharedConnectabilityInputs = {
   contract?: DeploymentContract;
+  deploymentProtectionDetected?: boolean;
 };
 
 /**
@@ -169,6 +171,21 @@ export async function buildChannelPrerequisite(
     channel,
     contract,
   );
+
+  // When the runtime self-probe confirms Deployment Protection is active
+  // and no working bypass is configured, channel webhooks cannot reach the
+  // app. This is a hard blocker — distinct from the heuristic
+  // "webhook-bypass" check which stays non-blocking.
+  if (shared.deploymentProtectionDetected && !getProtectionBypassSecret()) {
+    addIssue(issues, {
+      id: "deployment-protection-active",
+      status: "fail",
+      message: `${label} cannot receive webhooks: Vercel Deployment Protection is blocking unauthenticated requests. Set VERCEL_AUTOMATION_BYPASS_SECRET or disable Deployment Protection.`,
+      remediation:
+        "In your Vercel project, go to Settings > Deployment Protection > Protection Bypass for Automation. Enable it and copy the secret into VERCEL_AUTOMATION_BYPASS_SECRET, then redeploy. Alternatively, disable Deployment Protection entirely.",
+      env: ["VERCEL_AUTOMATION_BYPASS_SECRET"],
+    });
+  }
 
   let webhookUrl: string | null = webhookUrlOverride ?? null;
 

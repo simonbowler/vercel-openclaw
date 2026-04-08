@@ -36,6 +36,8 @@ type PreflightData = {
   ok: boolean;
   checks: PreflightCheck[];
   actions: PreflightAction[];
+  deploymentProtectionDetected?: boolean;
+  webhookBypassEnabled?: boolean;
 };
 
 export type PreflightSummary = {
@@ -443,6 +445,34 @@ export function ChannelsPanel({
           <p className="muted-copy" style={{ margin: "4px 0 0" }}>
             Channel cards keep the last known preflight snapshot until refresh succeeds.
           </p>
+        </div>
+      ) : null}
+
+      {/* ── Deployment Protection detected ── */}
+      {preflight?.deploymentProtectionDetected && !preflight?.webhookBypassEnabled ? (
+        <div
+          className="error-banner"
+          style={{ marginTop: 16, marginBottom: 16 }}
+          aria-live="polite"
+          data-preflight-banner="deployment-protection"
+        >
+          <p style={{ margin: 0, fontWeight: 500 }}>
+            Vercel Deployment Protection is blocking webhook delivery.
+          </p>
+          <p className="muted-copy" style={{ margin: "4px 0 0" }}>
+            Channel webhooks from Slack, Telegram, WhatsApp, and Discord cannot reach this deployment.
+          </p>
+          <details className="channel-details" style={{ marginTop: 10 }}>
+            <summary>How to fix</summary>
+            <div className="channel-details-body">
+              <ol style={{ margin: 0, paddingLeft: 20 }}>
+                <li className="muted-copy">In the Vercel Dashboard, open your project and go to <strong>Settings &gt; Deployment Protection</strong>.</li>
+                <li className="muted-copy">Under <strong>Protection Bypass for Automation</strong>, enable it and copy the generated secret.</li>
+                <li className="muted-copy">Add <code>VERCEL_AUTOMATION_BYPASS_SECRET</code> as an environment variable with the copied value.</li>
+                <li className="muted-copy">Redeploy for the change to take effect.</li>
+              </ol>
+            </div>
+          </details>
         </div>
       ) : null}
 

@@ -17,6 +17,7 @@ import {
   getWebhookBypassRequirement,
   getWebhookBypassStatusMessage,
 } from "@/server/deploy-requirements";
+import { probeDeploymentProtection } from "@/server/deployment-protection-probe";
 import { logDebug, logInfo, logWarn } from "@/server/log";
 import {
   resolvePublicOrigin,
@@ -81,6 +82,7 @@ export type PreflightPayload = {
   publicOrigin: string | null;
   webhookBypassEnabled: boolean;
   webhookBypassRecommended: boolean;
+  deploymentProtectionDetected: boolean;
   storeBackend: "upstash" | "memory";
   aiGatewayAuth: "oidc" | "api-key" | "unavailable";
   cronSecretConfigured: boolean;
@@ -248,6 +250,7 @@ function buildActions(input: {
   contract: DeploymentContract;
   webhookBypassEnabled: boolean;
   webhookBypassRecommended: boolean;
+  deploymentProtectionDetected: boolean;
 }): PreflightAction[] {
   const actions: PreflightAction[] = [];
   const byId = indexRequirements(input.contract);
@@ -258,11 +261,16 @@ function buildActions(input: {
   pushRequirementAction(actions, byId.get("cron-secret"), "configure-cron-secret");
 
   if (input.webhookBypassRecommended && !input.webhookBypassEnabled) {
+    // When the self-probe confirms protection is active, promote to
+    // "required" so buildNextSteps() emits "resolve blockers" text and
+    // the operator gets clear actionable guidance.
+    const protectionConfirmed = input.deploymentProtectionDetected;
     actions.push({
       id: "configure-webhook-bypass",
-      status: "recommended",
-      message:
-        "Enable Protection Bypass for Automation and set VERCEL_AUTOMATION_BYPASS_SECRET so channel webhooks (Slack, Telegram, Discord) can reach the protected deployment.",
+      status: protectionConfirmed ? "required" : "recommended",
+      message: protectionConfirmed
+        ? "Deployment Protection is active. Channel webhooks (Slack, Telegram, WhatsApp, Discord) are blocked. Set VERCEL_AUTOMATION_BYPASS_SECRET or disable Deployment Protection."
+        : "Enable Protection Bypass for Automation and set VERCEL_AUTOMATION_BYPASS_SECRET so channel webhooks (Slack, Telegram, WhatsApp, Discord) can reach the protected deployment.",
       remediation:
         "In your Vercel project, go to Settings > Deployment Protection > Protection Bypass for Automation. Enable it and copy the secret into VERCEL_AUTOMATION_BYPASS_SECRET, then redeploy.",
       env: ["VERCEL_AUTOMATION_BYPASS_SECRET"],
@@ -498,7 +506,15 @@ export async function buildDeployPreflight(
   }
 
   const publicOrigin = publicOriginResolution?.origin ?? null;
-  const webhookBypassRequirement = getWebhookBypassRequirement();
+
+  // Self-probe: detect whether Vercel Deployment Protection is active.
+  // Cached with a 60s TTL and in-flight deduplication.
+  const probeResult = await probeDeploymentProtection(request);
+  const deploymentProtectionDetected = probeResult.status === "detected";
+
+  const webhookBypassRequirement = getWebhookBypassRequirement({
+    protectionDetected: deploymentProtectionDetected,
+  });
   const webhookBypassEnabled = webhookBypassRequirement.configured;
   const webhookBypassRecommended =
     webhookBypassRequirement.recommendation === "recommended";
@@ -512,7 +528,10 @@ export async function buildDeployPreflight(
     publicOriginResolution,
   );
 
-  const channels = await buildChannelPrerequisiteReport(request, { contract });
+  const channels = await buildChannelPrerequisiteReport(request, {
+    contract,
+    deploymentProtectionDetected,
+  });
 
   // ---------------------------------------------------------------------------
   // Derive preflight checks from the deployment contract — single source of
@@ -621,6 +640,7 @@ export async function buildDeployPreflight(
     contract,
     webhookBypassEnabled,
     webhookBypassRecommended,
+    deploymentProtectionDetected,
   });
 
   const ok =
@@ -635,6 +655,7 @@ export async function buildDeployPreflight(
     publicOrigin,
     webhookBypassEnabled,
     webhookBypassRecommended,
+    deploymentProtectionDetected,
     storeBackend,
     aiGatewayAuth,
     ...cronState,
@@ -657,6 +678,7 @@ export async function buildDeployPreflight(
     publicOrigin: payload.publicOrigin,
     webhookBypassEnabled: payload.webhookBypassEnabled,
     webhookBypassRecommended: payload.webhookBypassRecommended,
+    deploymentProtectionDetected: payload.deploymentProtectionDetected,
     storeBackend: payload.storeBackend,
     aiGatewayAuth: payload.aiGatewayAuth,
     ...cronState,
