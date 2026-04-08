@@ -64,7 +64,7 @@ function withEnv<T>(
   }
 }
 
-test("buildGatewayConfig disables insecure auth by default but always disables device auth", () => {
+test("buildGatewayConfig enables insecure auth by default behind the proxy and disables device auth", () => {
   withEnv(
     {
       OPENCLAW_ALLOW_INSECURE_AUTH: undefined,
@@ -79,7 +79,7 @@ test("buildGatewayConfig disables insecure auth by default but always disables d
         };
       };
 
-      assert.equal(config.gateway.controlUi.allowInsecureAuth, false);
+      assert.equal(config.gateway.controlUi.allowInsecureAuth, true);
       assert.equal(config.gateway.controlUi.dangerouslyDisableDeviceAuth, true);
     },
   );

@@ -87,7 +87,7 @@ test("whatsapp GET returns unconfigured public state", async () => {
     assert.equal(body.mode, "webhook-proxied");
     assert.equal(body.status, "unconfigured");
     assert.equal(body.requiresRunningSandbox, false);
-    assert.equal(body.loginVia, "/gateway");
+    assert.equal(body.loginVia, "/gateway/chat?session=main");
     assert.equal(body.webhookUrl, null);
   });
 });

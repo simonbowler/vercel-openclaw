@@ -21,6 +21,7 @@ import {
 import { getStore, getInitializedMeta, mutateMeta } from "@/server/store/store";
 import { jsonError } from "@/shared/http";
 import type { SingleMeta } from "@/shared/types";
+import { GATEWAY_CHAT_PATH } from "@/shared/gateway-paths";
 
 type GatewayStatus = "ready" | "not-ready" | "unknown";
 
@@ -133,7 +134,7 @@ export async function GET(request: Request): Promise<Response> {
       gatewayReady: toGatewayReady(gatewayStatus),
       gatewayStatus,
       gatewayCheckedAt,
-      gatewayUrl: "/gateway",
+      gatewayUrl: GATEWAY_CHAT_PATH,
       lastError: responseMeta.lastError,
       lastKeepaliveAt: responseMeta.lastAccessedAt,
       sleepAfterMs: sleepConfig.sleepAfterMs,

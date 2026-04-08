@@ -176,7 +176,26 @@ test("Gateway: GET when running proxies upstream JSON response", async () => {
 });
 
 // ===========================================================================
-// 4. HTML responses include injected script (WebSocket rewrite + gateway token)
+// 4. Bare gateway root redirects to the chat UI when sandbox is running
+// ===========================================================================
+
+test("Gateway: bare root redirects to chat UI when sandbox is running", async () => {
+  const h = createScenarioHarness();
+  try {
+    await driveToRunning(h);
+    const result = await callGatewayGet("/");
+    assert.equal(result.status, 307);
+    assert.equal(
+      result.response.headers.get("location"),
+      "http://localhost:3000/gateway/chat?session=main",
+    );
+  } finally {
+    h.teardown();
+  }
+});
+
+// ===========================================================================
+// 5. HTML responses include injected script (WebSocket rewrite + gateway token)
 // ===========================================================================
 
 test("Gateway: HTML response includes injected script with gateway token", async () => {
@@ -198,7 +217,7 @@ test("Gateway: HTML response includes injected script with gateway token", async
     const originalFetch = globalThis.fetch;
     globalThis.fetch = h.fakeFetch.fetch;
     try {
-      const result = await callGatewayGet("/");
+      const result = await callGatewayGet("/chat?session=main");
       assert.equal(result.status, 200);
       // Injected script should be present
       assert.ok(result.text.includes("<script>"), "Expected injected <script> tag");
@@ -232,7 +251,7 @@ test("Gateway: HTML response includes injected script with gateway token", async
 });
 
 // ===========================================================================
-// 5. Non-HTML responses (JSON, images) pass through without injection
+// 6. Non-HTML responses (JSON, images) pass through without injection
 // ===========================================================================
 
 test("Gateway: JSON response passes through without HTML injection", async () => {
@@ -566,7 +585,7 @@ test("Gateway: upstream 410 marks sandbox unavailable and returns waiting page",
     const originalFetch = globalThis.fetch;
     globalThis.fetch = h.fakeFetch.fetch;
     try {
-      const result = await callGatewayGet("/", { accept: "text/html" });
+      const result = await callGatewayGet("/chat?session=main", { accept: "text/html" });
       assert.equal(result.status, 202);
       assert.ok(
         result.text.includes("<!DOCTYPE html>") || result.text.includes("<html"),
@@ -1016,7 +1035,7 @@ test("Gateway: HTML injection embeds actual gateway token value", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = h.fakeFetch.fetch;
     try {
-      const result = await callGatewayGet("/");
+      const result = await callGatewayGet("/chat?session=main");
       assert.equal(result.status, 200);
       // The actual gateway token value must appear in the injected script
       assert.ok(
@@ -1261,7 +1280,7 @@ test("sandbox running + extendTimeout fails → detects dead sandbox before prox
     const originalFetch = globalThis.fetch;
     globalThis.fetch = h.fakeFetch.fetch;
     try {
-      const result = await callGatewayGet("/", { accept: "text/html" });
+      const result = await callGatewayGet("/chat?session=main", { accept: "text/html" });
 
       assert.equal(result.status, 202, "Should return 202 waiting page");
       assert.ok(

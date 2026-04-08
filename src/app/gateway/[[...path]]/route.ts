@@ -22,6 +22,7 @@ import {
   touchRunningSandbox,
 } from "@/server/sandbox/lifecycle";
 import { getSandboxHeartbeatIntervalMs } from "@/server/sandbox/timeout";
+import { GATEWAY_CHAT_PATH } from "@/shared/gateway-paths";
 
 export const maxDuration = 300;
 
@@ -92,7 +93,10 @@ async function handleProxy(request: Request, path: string): Promise<Response> {
     reason: "gateway.request",
     schedule: after,
   });
-  const returnPath = `/gateway${path === "/" ? "" : path}`;
+  const returnPath =
+    path === "/"
+      ? GATEWAY_CHAT_PATH
+      : `/gateway${path}`;
 
   if (ensure.state !== "running") {
     logInfo("gateway.pending", { ...reqCtx, sandboxStatus: ensure.meta.status });
@@ -102,6 +106,13 @@ async function handleProxy(request: Request, path: string): Promise<Response> {
       status: ensure.meta.status,
       setCookieHeader: auth.setCookieHeader,
     });
+  }
+
+  if (path === "/") {
+    return withSetCookie(
+      Response.redirect(new URL(GATEWAY_CHAT_PATH, request.url), 307),
+      auth.setCookieHeader,
+    );
   }
 
   // Proactively refresh the OIDC token if stale (throttled to every 5 min).

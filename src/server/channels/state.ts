@@ -22,6 +22,7 @@ import { getSlackInstallConfig } from "@/server/channels/slack/install-config";
 import { buildDeploymentContract } from "@/server/deployment-contract";
 import { logDebug } from "@/server/log";
 import { getInitializedMeta, mutateMeta } from "@/server/store/store";
+import { GATEWAY_CHAT_PATH } from "@/shared/gateway-paths";
 
 export type {
   PublicSlackState,
@@ -230,7 +231,7 @@ function toPublicWhatsAppState(
     linkedPhone: config?.linkedPhone ?? null,
     lastError: config?.lastError ?? null,
     requiresRunningSandbox: false,
-    loginVia: "/gateway",
+    loginVia: GATEWAY_CHAT_PATH,
     connectability,
   };
 }

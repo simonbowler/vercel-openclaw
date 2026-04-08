@@ -223,7 +223,7 @@ test("Proxy pass-through: GET /gateway/ for HTML triggers injection", async () =
     globalThis.fetch = h.fakeFetch.fetch;
 
     try {
-      const result = await callGatewayGet("/");
+      const result = await callGatewayGet("/chat?session=main");
 
       assert.equal(result.status, 200);
       // The injected script should be present in the HTML

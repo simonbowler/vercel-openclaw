@@ -12,6 +12,7 @@ import { buildRestoreTargetAttestation } from "@/server/sandbox/restore-attestat
 import { buildRestoreTargetPlan } from "@/server/sandbox/restore-attestation";
 import { getSandboxSleepConfig } from "@/server/sandbox/timeout";
 import type { StatusPayload } from "@/components/admin-types";
+import { GATEWAY_CHAT_PATH } from "@/shared/gateway-paths";
 
 async function getInitialStatus(): Promise<StatusPayload | null> {
   try {
@@ -56,7 +57,7 @@ async function getInitialStatus(): Promise<StatusPayload | null> {
       gatewayReady: false,
       gatewayStatus: "unknown",
       gatewayCheckedAt: null,
-      gatewayUrl: "/gateway",
+      gatewayUrl: GATEWAY_CHAT_PATH,
       lastError: meta.lastError,
       lastKeepaliveAt: meta.lastAccessedAt,
       sleepAfterMs: sleepConfig.sleepAfterMs,

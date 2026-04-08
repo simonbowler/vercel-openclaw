@@ -62,7 +62,7 @@ export type PublicWhatsAppState = {
   linkedPhone: string | null;
   lastError: string | null;
   requiresRunningSandbox: boolean;
-  loginVia: "/gateway";
+  loginVia: string;
   connectability: ChannelConnectability;
 };
 

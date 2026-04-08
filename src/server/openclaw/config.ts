@@ -262,7 +262,9 @@ export function buildGatewayConfig(
   whatsappConfig?: WhatsAppGatewayConfig,
 ): string {
   const controlUi: Record<string, unknown> = {
-    allowInsecureAuth: readBooleanEnv("OPENCLAW_ALLOW_INSECURE_AUTH", false),
+    // The proxy enforces auth before any request reaches the sandbox gateway,
+    // so the control UI can trust the proxied origin and skip its own login gate.
+    allowInsecureAuth: readBooleanEnv("OPENCLAW_ALLOW_INSECURE_AUTH", true),
     // Device auth is always disabled in the proxied setup because the
     // server-side force-pair identity can never match the browser's
     // client-generated identity.  The proxy enforces auth before any

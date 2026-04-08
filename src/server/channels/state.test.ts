@@ -548,7 +548,7 @@ test("[state] unconfigured whatsapp returns webhook-proxied defaults", async () 
     assert.equal(state.whatsapp.mode, "webhook-proxied");
     assert.equal(state.whatsapp.status, "unconfigured");
     assert.equal(state.whatsapp.requiresRunningSandbox, false);
-    assert.equal(state.whatsapp.loginVia, "/gateway");
+    assert.equal(state.whatsapp.loginVia, "/gateway/chat?session=main");
     assert.equal(state.whatsapp.webhookUrl, null);
     assert.equal(state.whatsapp.configuredAt, null);
     assert.equal(state.whatsapp.displayName, null);
@@ -577,7 +577,7 @@ test("[state] configured whatsapp returns correct public shape", async () => {
     assert.equal(state.whatsapp.displayName, "Test Account");
     assert.equal(state.whatsapp.linkedPhone, "+1234567890");
     assert.equal(state.whatsapp.requiresRunningSandbox, false);
-    assert.equal(state.whatsapp.loginVia, "/gateway");
+    assert.equal(state.whatsapp.loginVia, "/gateway/chat?session=main");
     assert.equal(
       state.whatsapp.webhookUrl,
       "https://app.example.com/api/channels/whatsapp/webhook",
