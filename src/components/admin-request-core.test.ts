@@ -62,7 +62,7 @@ function captureConsoleLogs(): {
   };
 }
 
-test("200: returns data and emits start + success logs", async () => {
+test("200: returns data without emitting browser console logs", async () => {
   const logs = captureConsoleLogs();
   try {
     const result = await fetchAdminJsonCore<{ items: number[] }>(
@@ -73,18 +73,7 @@ test("200: returns data and emits start + success logs", async () => {
     assert.equal(result.ok, true);
     assert.ok(result.ok && result.data.items.length === 2);
 
-    // start log via console.info
-    const start = logs.infos.find((l) => l.event === "admin.read.start");
-    assert.ok(start, "expected admin.read.start log");
-    assert.equal(start!.action, "/api/admin/logs");
-
-    // success log via console.info
-    const success = logs.infos.find((l) => l.event === "admin.read.success");
-    assert.ok(success, "expected admin.read.success log");
-    assert.equal(success!.action, "/api/admin/logs");
-    assert.equal(success!.status, 200);
-
-    // no error logs
+    assert.deepEqual(logs.infos, []);
     assert.equal(
       logs.warns.filter((l) => l.event === "admin.read.error").length,
       0,
@@ -94,7 +83,7 @@ test("200: returns data and emits start + success logs", async () => {
   }
 });
 
-test("401: clears auth state, toasts, and emits start + error logs", async () => {
+test("401: clears auth state, toasts, and emits error log", async () => {
   const errors: string[] = [];
   let statusCleared = false;
   const logs = captureConsoleLogs();
@@ -116,10 +105,6 @@ test("401: clears auth state, toasts, and emits start + error logs", async () =>
     assert.ok(statusCleared, "expected setStatus(null) to be called");
     assert.deepEqual(errors, ["Session expired. Sign in again."]);
 
-    // start log
-    const start = logs.infos.find((l) => l.event === "admin.read.start");
-    assert.ok(start);
-
     // error log via console.warn
     const errLog = logs.warns.find((l) => l.event === "admin.read.error");
     assert.ok(errLog, "expected admin.read.error log");
@@ -130,7 +115,7 @@ test("401: clears auth state, toasts, and emits start + error logs", async () =>
   }
 });
 
-test("500: toasts HTTP error and emits start + error logs", async () => {
+test("500: toasts HTTP error and emits error log", async () => {
   const errors: string[] = [];
   const logs = captureConsoleLogs();
 
@@ -147,9 +132,6 @@ test("500: toasts HTTP error and emits start + error logs", async () => {
     assert.ok(!result.ok && result.status === 500);
     assert.deepEqual(errors, ["Request failed (HTTP 500)"]);
 
-    const start = logs.infos.find((l) => l.event === "admin.read.start");
-    assert.ok(start);
-
     const errLog = logs.warns.find((l) => l.event === "admin.read.error");
     assert.ok(errLog, "expected admin.read.error log");
     assert.equal(errLog!.status, 500);
@@ -159,7 +141,7 @@ test("500: toasts HTTP error and emits start + error logs", async () => {
   }
 });
 
-test("network error: toasts, returns status null, and emits start + error logs", async () => {
+test("network error: toasts, returns status null, and emits error log", async () => {
   const errors: string[] = [];
   const logs = captureConsoleLogs();
 
@@ -176,9 +158,6 @@ test("network error: toasts, returns status null, and emits start + error logs",
     assert.ok(!result.ok && result.status === null);
     assert.deepEqual(errors, ["Failed to fetch"]);
 
-    const start = logs.infos.find((l) => l.event === "admin.read.start");
-    assert.ok(start);
-
     const errLog = logs.warns.find((l) => l.event === "admin.read.error");
     assert.ok(errLog, "expected admin.read.error log");
     assert.equal(errLog!.status, null);
@@ -190,7 +169,7 @@ test("network error: toasts, returns status null, and emits start + error logs",
 
 // --- quiet mode (toastError: false) ---
 
-test("200 with toastError: false: returns data normally", async () => {
+test("200 with toastError: false: returns data without console logs", async () => {
   const logs = captureConsoleLogs();
   try {
     const result = await fetchAdminJsonCore<{ ok: boolean }>(
@@ -201,11 +180,8 @@ test("200 with toastError: false: returns data normally", async () => {
 
     assert.equal(result.ok, true);
     assert.ok(result.ok && result.data.ok === true);
-
-    const start = logs.infos.find((l) => l.event === "admin.read.start");
-    assert.ok(start);
-    const success = logs.infos.find((l) => l.event === "admin.read.success");
-    assert.ok(success);
+    assert.deepEqual(logs.infos, []);
+    assert.deepEqual(logs.warns, []);
   } finally {
     logs.restore();
   }

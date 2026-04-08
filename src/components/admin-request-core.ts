@@ -25,16 +25,8 @@ export type ReadJsonOptions = {
   toastError?: boolean;
 };
 
-function logAdminReadLifecycle(
-  event: "admin.read.start" | "admin.read.success" | "admin.read.error",
-  payload: Record<string, unknown>,
-): void {
-  const line = JSON.stringify({ event, ...payload });
-  if (event === "admin.read.error") {
-    console.warn(line);
-  } else {
-    console.info(line);
-  }
+function logAdminReadError(payload: Record<string, unknown>): void {
+  console.warn(JSON.stringify({ event: "admin.read.error", ...payload }));
 }
 
 /**
@@ -43,9 +35,8 @@ function logAdminReadLifecycle(
  * - 401 clears auth state via `deps.setStatus(null)` and toasts.
  * - Non-401 errors surface visible panel error state.
  * - Emits `admin.read.error` for auth / HTTP / network failures.
- * - Writes browser-console lifecycle logs for start/success/error so
- *   agentic verification can observe real read behavior without adding
- *   panel-specific logging branches.
+ * - Keeps successful reads quiet in the browser console so `/api/status`
+ *   polling does not flood operator devtools.
  */
 export async function fetchAdminJsonCore<T>(
   action: string,
@@ -55,8 +46,6 @@ export async function fetchAdminJsonCore<T>(
   const requestId = createAdminActionRequestId();
   const doFetch = deps.fetchFn ?? fetch;
   const shouldToastError = options.toastError !== false;
-
-  logAdminReadLifecycle("admin.read.start", { requestId, action });
 
   try {
     const response = await doFetch(action, {
@@ -75,7 +64,7 @@ export async function fetchAdminJsonCore<T>(
         code: "unauthorized",
         error,
       });
-      logAdminReadLifecycle("admin.read.error", {
+      logAdminReadError({
         requestId,
         action,
         status: 401,
@@ -98,7 +87,7 @@ export async function fetchAdminJsonCore<T>(
         code: "http-error",
         error,
       });
-      logAdminReadLifecycle("admin.read.error", {
+      logAdminReadError({
         requestId,
         action,
         status: response.status,
@@ -112,11 +101,6 @@ export async function fetchAdminJsonCore<T>(
     }
 
     const data = (await response.json()) as T;
-    logAdminReadLifecycle("admin.read.success", {
-      requestId,
-      action,
-      status: response.status,
-    });
     return { ok: true, data };
   } catch (err) {
     const error = err instanceof Error ? err.message : "Network error";
@@ -128,7 +112,7 @@ export async function fetchAdminJsonCore<T>(
       code: "network-error",
       error,
     });
-    logAdminReadLifecycle("admin.read.error", {
+    logAdminReadError({
       requestId,
       action,
       status: null,
