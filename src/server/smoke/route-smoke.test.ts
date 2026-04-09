@@ -1026,7 +1026,8 @@ test("route-smoke: gateway proxies HTML with injection when running", async (t) 
   try {
     await h.driveToRunning();
 
-    const result = await callGatewayGet("/");
+    // Request /chat (not /) because the gateway root redirects 307 to the chat path
+    const result = await callGatewayGet("/chat?session=main");
     await drainAfterCallbacks();
 
     assert.equal(result.status, 200);

@@ -156,7 +156,7 @@ test("SnapshotsPanel renders the danger zone at the bottom", () => {
   assert.match(html, /<button[^>]*>Reset Sandbox<\/button>/);
 });
 
-test("SnapshotsPanel disables reset while the sandbox is uninitialized or transitioning", () => {
+test("SnapshotsPanel hides reset when uninitialized, disables during transition", () => {
   const uninitializedHtml = renderPanel(
     makeStatus({
       status: "uninitialized",
@@ -166,7 +166,9 @@ test("SnapshotsPanel disables reset while the sandbox is uninitialized or transi
   );
   const setupHtml = renderPanel(makeStatus({ status: "setup" }));
 
-  assert.match(uninitializedHtml, /<button[^>]*disabled=""[^>]*>Reset Sandbox<\/button>/);
+  // Danger zone is hidden entirely when uninitialized
+  assert.ok(!uninitializedHtml.includes("Reset Sandbox"), "Reset button should be hidden when uninitialized");
+  // Still disabled during transitional states
   assert.match(setupHtml, /<button[^>]*disabled=""[^>]*>Reset Sandbox<\/button>/);
 });
 
