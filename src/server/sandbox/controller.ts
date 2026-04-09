@@ -71,6 +71,7 @@ export interface SandboxHandle {
   domain(port: number): string;
   snapshot(): Promise<SnapshotResult>;
   stop(options?: { blocking?: boolean }): Promise<void>;
+  delete(options?: { signal?: AbortSignal }): Promise<void>;
   extendTimeout(duration: number): Promise<void>;
   updateNetworkPolicy(policy: NetworkPolicy): Promise<NetworkPolicy>;
   runDetachedCommand(options: RunCommandOptions): Promise<{ cmdId: string }>;
@@ -143,6 +144,9 @@ function wrapSandbox(sandbox: Sandbox): SandboxHandle {
     },
     async stop(options) {
       await sandbox.stop(options);
+    },
+    async delete(options) {
+      await sandbox.delete(options);
     },
     async extendTimeout(duration) {
       await sandbox.extendTimeout(duration);

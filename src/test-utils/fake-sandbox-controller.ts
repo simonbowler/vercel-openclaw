@@ -31,6 +31,7 @@ export type SandboxEventKind =
   | "snapshot"
   | "restore"
   | "stop"
+  | "delete"
   | "command"
   | "write_files"
   | "extend_timeout"
@@ -75,6 +76,7 @@ export class FakeSandboxHandle implements SandboxHandle {
   extendedTimeouts: number[] = [];
   snapshotCalled = false;
   stopCalled = false;
+  deleteCalled = false;
   createEnv?: Record<string, string>;
   createTimeNetworkPolicy?: import("@vercel/sandbox").NetworkPolicy;
   private portDomain: string;
@@ -252,6 +254,16 @@ export class FakeSandboxHandle implements SandboxHandle {
     this._status = "stopped";
     this.eventLog.push({
       kind: "stop",
+      sandboxId: this.sandboxId,
+      timestamp: Date.now(),
+    });
+  }
+
+  async delete(_options?: { signal?: AbortSignal }): Promise<void> {
+    this.deleteCalled = true;
+    this._status = "stopped";
+    this.eventLog.push({
+      kind: "delete",
       sandboxId: this.sandboxId,
       timestamp: Date.now(),
     });

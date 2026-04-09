@@ -3505,7 +3505,7 @@ async function destroyCurrentSandboxWithoutSnapshot(
 
   try {
     const sandbox = await getSandboxController().get({ sandboxId: meta.sandboxId });
-    await sandbox.stop({ blocking: true });
+    await sandbox.delete();
     logInfo("sandbox.reset.destroyed", ctx({ sandboxId: meta.sandboxId }));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

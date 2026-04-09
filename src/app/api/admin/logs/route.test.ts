@@ -169,6 +169,7 @@ test("GET /api/admin/logs: sandbox log parsing prefers top-level source over ctx
           },
           async readFileToBuffer() { return null; },
           async stop() {},
+          async delete() {},
           async runDetachedCommand() { return { cmdId: "fake-cmd" }; },
           async getCommand() { return { async kill() {} }; },
         } satisfies SandboxHandle;
@@ -398,6 +399,7 @@ function fakeSandboxController(
           return null;
         },
         async stop() {},
+        async delete() {},
         async runDetachedCommand() { return { cmdId: "fake-cmd" }; },
         async getCommand() { return { async kill() {} }; },
       } satisfies SandboxHandle;

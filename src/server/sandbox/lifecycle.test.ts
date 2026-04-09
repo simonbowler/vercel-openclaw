@@ -4154,8 +4154,14 @@ test("resetSandbox clears restoreOracle to idle defaults", async () => {
     let meta = await getInitializedMeta();
     assert.equal(meta.restoreOracle.status, "pending");
 
-    // Reset should restore idle defaults
+    // Reset should restore idle defaults and delete the sandbox
+    const beforeSandboxId = meta.sandboxId;
     meta = await resetSandbox({ origin: "https://app.example.com", reason: "test-reset" });
+
+    // Verify sandbox was deleted (not just stopped)
+    const handle = h.controller.getHandle(beforeSandboxId!);
+    assert.ok(handle?.deleteCalled, "reset should delete the persistent sandbox");
+
     assert.equal(meta.restoreOracle.status, "idle", "Oracle status should be idle after reset");
     assert.equal(meta.restoreOracle.pendingReason, null, "Oracle pendingReason should be null after reset");
     assert.equal(meta.restoreOracle.lastEvaluatedAt, null, "Oracle timestamps should clear after reset");

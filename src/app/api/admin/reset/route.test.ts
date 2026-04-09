@@ -139,7 +139,7 @@ test("admin/reset POST: responds immediately and resets sandbox state after call
     assert.equal(afterMeta.lastError, null);
 
     const stoppedHandle = h.controller.getHandle(originalSandboxId);
-    assert.ok(stoppedHandle?.stopCalled, "reset should stop the original sandbox");
-    assert.equal(stoppedHandle?.snapshotCalled, false, "reset should not snapshot before stopping");
+    assert.ok(stoppedHandle?.deleteCalled, "reset should delete the original sandbox");
+    assert.equal(stoppedHandle?.snapshotCalled, false, "reset should not snapshot before deleting");
   });
 });
