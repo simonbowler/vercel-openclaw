@@ -2154,6 +2154,10 @@ export async function reconcileSandboxHealth(options: {
     const freshMeta = await mutateMeta((m) => {
       m.lastAccessedAt = Date.now();
     });
+    // Force-refresh the OIDC token on the network policy. After a timeout
+    // the platform may have auto-resumed the sandbox with a stale token,
+    // causing AI Gateway 401s even though the gateway process is alive.
+    await ensureFreshGatewayToken({ force: true });
     return { status: "ready", meta: freshMeta, repaired: false };
   }
 
