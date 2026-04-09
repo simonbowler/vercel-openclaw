@@ -61,6 +61,7 @@ import {
   isSnapshotNotFoundError,
 } from "@/server/sandbox/snapshot-delete";
 import {
+  estimateSandboxTimeoutRemainingMs,
   getSandboxSleepAfterMs,
   getSandboxTouchThrottleMs,
 } from "@/server/sandbox/timeout";
@@ -250,7 +251,32 @@ export async function ensureSandboxRunning(options: {
   logInfo("sandbox.ensure_running", opCtx);
 
   if (meta.status === "running" && meta.sandboxId) {
-    return { state: "running", meta };
+    // Check if the sandbox has likely timed out — if so, reconcile instead
+    // of returning stale "running" state. The platform auto-stops sandboxes
+    // after sleepAfterMs, but our metadata is never updated.
+    const remainingMs = estimateSandboxTimeoutRemainingMs(
+      meta.lastAccessedAt,
+      getSandboxSleepAfterMs(),
+    );
+    if (remainingMs === null || remainingMs > 0) {
+      return { state: "running", meta };
+    }
+
+    logInfo("sandbox.ensure_running.timeout_expired", {
+      ...opCtx,
+      lastAccessedAt: meta.lastAccessedAt,
+      sleepAfterMs: getSandboxSleepAfterMs(),
+    });
+    const health = await reconcileSandboxHealth({
+      origin: options.origin,
+      reason: options.reason,
+      schedule: options.schedule,
+      op: options.op,
+    });
+    if (health.status === "ready") {
+      return { state: "running", meta: health.meta };
+    }
+    return { state: "waiting", meta: health.meta };
   }
 
   if (isBusyStatus(meta.status)) {
