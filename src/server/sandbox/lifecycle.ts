@@ -2020,7 +2020,12 @@ async function refreshAiGatewayToken(sandbox: SandboxHandle, sandboxId: string):
     next.lastTokenExpiresAt = credential.expiresAt ?? null;
   });
 
-  logInfo("sandbox.token_refresh.complete", { sandboxId });
+  logInfo("sandbox.token_refresh.complete", {
+    sandboxId,
+    source: credential.source,
+    expiresAt: credential.expiresAt ?? null,
+    refreshedAt: Date.now(),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2151,6 +2156,16 @@ export async function reconcileSandboxHealth(options: {
   // Metadata says running — verify with a real probe.
   const sandboxId = meta.sandboxId;
   const probe = await probeGatewayReady();
+
+  logInfo("sandbox.health_reconcile.probe_result", {
+    sandboxId,
+    ready: probe.ready,
+    statusCode: probe.statusCode,
+    markerFound: probe.markerFound,
+    error: probe.error,
+    reason: options.reason,
+  });
+
   if (probe.ready) {
     // Refresh lastAccessedAt so the UI doesn't derive "asleep" from stale timestamps
     const freshMeta = await mutateMeta((m) => {

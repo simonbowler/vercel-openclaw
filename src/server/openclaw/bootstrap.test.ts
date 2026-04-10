@@ -240,7 +240,7 @@ test("setupOpenClaw writes gateway token content", async () => {
   }
 });
 
-test("setupOpenClaw writes AI gateway key file for OpenClaw auth-profiles resolution", async () => {
+test("setupOpenClaw writes placeholder AI gateway key (real credential via network policy)", async () => {
   const h = createScenarioHarness();
   try {
     const handle = await createHandle(h);
@@ -255,7 +255,10 @@ test("setupOpenClaw writes AI gateway key file for OpenClaw auth-profiles resolu
       (f) => f.path.endsWith(".ai-gateway-api-key"),
     );
     assert.ok(keyFile, "AI gateway key file should be written");
-    assert.equal(keyFile!.content.toString(), "test-key");
+    assert.ok(
+      keyFile!.content.toString().includes("placeholder"),
+      "Should write placeholder, not real key",
+    );
   } finally {
     h.teardown();
   }

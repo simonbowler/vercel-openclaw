@@ -1394,7 +1394,7 @@ test("persistent resume passes restore env to fast-restore script", async () => 
       );
       assert.ok(bashCmd, "Should run fast-restore script for persistent resume");
       assert.equal(bashCmd.env?.OPENCLAW_GATEWAY_TOKEN, "test-gw-token");
-      assert.equal(bashCmd.env?.AI_GATEWAY_API_KEY, undefined);
+      assert.ok(bashCmd.env?.AI_GATEWAY_API_KEY?.includes("placeholder"), "Should use placeholder AI key");
     } finally {
       globalThis.fetch = originalFetch;
     }

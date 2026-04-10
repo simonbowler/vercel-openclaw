@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import * as workflowApi from "workflow/api";
 
 import { getPublicOrigin } from "@/server/public-url";
@@ -8,7 +9,7 @@ import { sendMessage } from "@/server/channels/telegram/bot-api";
 import { extractRequestId, logError, logInfo, logWarn } from "@/server/log";
 import { createOperationContext, withOperationContext } from "@/server/observability/operation-context";
 import { OPENCLAW_TELEGRAM_WEBHOOK_PORT } from "@/server/openclaw/config";
-import { getSandboxDomain, reconcileStaleRunningStatus } from "@/server/sandbox/lifecycle";
+import { ensureFreshGatewayToken, getSandboxDomain, reconcileStaleRunningStatus } from "@/server/sandbox/lifecycle";
 import { getInitializedMeta, getStore } from "@/server/store/store";
 
 type TelegramWebhookDedupLock = {
@@ -144,14 +145,19 @@ export async function POST(request: Request): Promise<Response> {
           },
           body: JSON.stringify(payload),
         });
+        const forwardBody = await forwardResponse.text().catch(() => "");
         if (forwardResponse.ok) {
           logInfo("channels.telegram_fast_path_ok", withOperationContext(op, {
             sandboxId: effectiveMeta.sandboxId,
+            status: forwardResponse.status,
+            bodyLength: forwardBody.length,
+            bodyHead: forwardBody.slice(0, 200),
           }));
         } else {
           logWarn("channels.telegram_fast_path_non_ok", withOperationContext(op, {
             status: forwardResponse.status,
             sandboxId: effectiveMeta.sandboxId,
+            bodyHead: forwardBody.slice(0, 200),
           }));
         }
         return Response.json({ ok: true });

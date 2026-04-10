@@ -192,25 +192,25 @@ test("worker sandbox restore files contain exactly the goal-critical pair", () =
 
 // --- buildRestoreRuntimeEnv ---
 
-test("buildRestoreRuntimeEnv without apiKey has gateway token and base URL only", () => {
+test("buildRestoreRuntimeEnv uses placeholder for AI gateway key (real credential injected via network policy)", () => {
   const env = buildRestoreRuntimeEnv({
     gatewayToken: "gw-token",
   });
 
   assert.equal(env.OPENCLAW_GATEWAY_TOKEN, "gw-token");
   assert.equal(env.OPENAI_BASE_URL, "https://ai-gateway.vercel.sh/v1");
-  assert.equal(env.AI_GATEWAY_API_KEY, undefined);
-  assert.equal(env.OPENAI_API_KEY, undefined);
+  assert.ok(env.AI_GATEWAY_API_KEY.includes("placeholder"), "Should use placeholder, not real key");
+  assert.equal(env.OPENAI_API_KEY, env.AI_GATEWAY_API_KEY);
 });
 
-test("buildRestoreRuntimeEnv with apiKey includes AI gateway env vars", () => {
+test("buildRestoreRuntimeEnv ignores apiKey param (network policy handles real credential)", () => {
   const env = buildRestoreRuntimeEnv({
     gatewayToken: "gw-token",
     apiKey: "test-ai-key",
   });
 
-  assert.equal(env.AI_GATEWAY_API_KEY, "test-ai-key");
-  assert.equal(env.OPENAI_API_KEY, "test-ai-key");
+  // apiKey is ignored — placeholder used instead
+  assert.ok(env.AI_GATEWAY_API_KEY.includes("placeholder"));
   assert.equal(env.OPENAI_BASE_URL, "https://ai-gateway.vercel.sh/v1");
 });
 
@@ -244,10 +244,10 @@ test("buildBootstrapFiles includes static, dynamic, token, and manifest files", 
   const tokenFile = files.find((f) => f.path.endsWith(".gateway-token"));
   assert.ok(tokenFile, "should include gateway token file");
   assert.equal(tokenFile!.content.toString(), "tok-test");
-  // AI gateway key file (empty when no apiKey provided)
+  // AI gateway key file (placeholder — real credential via network policy)
   const keyFile = files.find((f) => f.path.endsWith(".ai-gateway-api-key"));
   assert.ok(keyFile, "should include AI gateway key file");
-  assert.equal(keyFile!.content.toString(), "");
+  assert.ok(keyFile!.content.toString().includes("placeholder"), "should be placeholder, not real key");
   // Manifest
   assert.ok(paths.includes(OPENCLAW_RESTORE_ASSET_MANIFEST_PATH), "should include manifest");
 });

@@ -179,21 +179,16 @@ export function buildRestoreRuntimeEnv(
   // is delivered via writeFiles() (buildDynamicRestoreFiles) when the hash
   // changes, or already baked into the snapshot when it matches.
   //
-  // The network policy header transform provides defense-in-depth by
-  // overwriting the Authorization header at the firewall layer, but
-  // OpenClaw also needs AI_GATEWAY_API_KEY in env to populate its internal
-  // auth store (auth-profiles.json) at startup.
-  const env: Record<string, string> = {
+  // The real AI Gateway credential is injected via network policy header
+  // transform at the firewall layer — it never enters the sandbox VM.
+  // OpenClaw needs a non-empty AI_GATEWAY_API_KEY to bootstrap its
+  // auth-profiles provider, so we pass a placeholder.
+  return {
     OPENCLAW_GATEWAY_TOKEN: options.gatewayToken,
     OPENAI_BASE_URL: "https://ai-gateway.vercel.sh/v1",
+    AI_GATEWAY_API_KEY: "sk-placeholder-injected-via-network-policy",
+    OPENAI_API_KEY: "sk-placeholder-injected-via-network-policy",
   };
-
-  if (options.apiKey) {
-    env.AI_GATEWAY_API_KEY = options.apiKey;
-    env.OPENAI_API_KEY = options.apiKey;
-  }
-
-  return env;
 }
 
 export function buildRestoreAssetManifest(): RestoreAssetManifest {
@@ -254,7 +249,7 @@ export function buildBootstrapFiles(
     },
     {
       path: OPENCLAW_AI_GATEWAY_API_KEY_PATH,
-      content: Buffer.from(options.apiKey ?? ""),
+      content: Buffer.from("sk-placeholder-injected-via-network-policy"),
     },
     ...buildStaticRestoreFiles(),
     {

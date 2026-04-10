@@ -122,13 +122,11 @@ function buildGatewayEnvShell(): string {
     '  echo \'{"event":"gateway_env.error","reason":"empty_gateway_token"}\' >&2',
     "  exit 1",
     "fi",
-    // AI_GATEWAY_API_KEY: always read from disk file (written fresh during
-    // bootstrap/restore). The baked-in env var is stale on resume.
-    `AI_GATEWAY_API_KEY="$(cat "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}" 2>/dev/null || true)"`,
-    'if [ -n "$AI_GATEWAY_API_KEY" ]; then',
-    '  export AI_GATEWAY_API_KEY="$AI_GATEWAY_API_KEY"',
-    '  export OPENAI_API_KEY="$AI_GATEWAY_API_KEY"',
-    "fi",
+    // AI_GATEWAY_API_KEY: placeholder — real credential injected via network
+    // policy header transform at the firewall layer (never enters the VM).
+    // OpenClaw needs a non-empty value to bootstrap its auth-profiles provider.
+    'export AI_GATEWAY_API_KEY="sk-placeholder-injected-via-network-policy"',
+    'export OPENAI_API_KEY="$AI_GATEWAY_API_KEY"',
     `export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}"`,
     `export OPENCLAW_GATEWAY_PORT="${OPENCLAW_PORT}"`,
     'export OPENCLAW_GATEWAY_TOKEN="$gateway_token"',
@@ -752,14 +750,11 @@ if [ -z "\$gateway_token" ]; then
   echo '{"event":"fast_restore.error","reason":"empty_gateway_token"}' >&2
   exit 1
 fi
-# AI Gateway API key: always read from disk file (written fresh during restore).
-# The baked-in env var from sandbox create time is stale on resume — ignore it.
-# Also injected via network policy transform (defense-in-depth).
-AI_GATEWAY_API_KEY="$(cat "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}" 2>/dev/null || true)"
-if [ -n "\$AI_GATEWAY_API_KEY" ]; then
-  export AI_GATEWAY_API_KEY="\$AI_GATEWAY_API_KEY"
-  export OPENAI_API_KEY="\$AI_GATEWAY_API_KEY"
-fi
+# AI Gateway API key: use a placeholder — the real credential is injected via
+# network policy header transform at the firewall layer (never enters the VM).
+# OpenClaw needs a non-empty value to bootstrap its auth-profiles provider.
+export AI_GATEWAY_API_KEY="sk-placeholder-injected-via-network-policy"
+export OPENAI_API_KEY="\$AI_GATEWAY_API_KEY"
 export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}"
 export OPENCLAW_GATEWAY_PORT="${OPENCLAW_PORT}"
 export OPENCLAW_GATEWAY_TOKEN="\$gateway_token"
