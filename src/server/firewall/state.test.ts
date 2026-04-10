@@ -1317,41 +1317,31 @@ test("dismissLearnedDomains with invalid domains emits logWarn before throwing",
 // Structured logging: ingestion skip reasons
 // ===========================================================================
 
-test("ingestLearningFromSandbox emits logInfo with skip reason when mode is not learning", async () => {
+test("ingestLearningFromSandbox returns skip reason when mode is not learning", async () => {
   await withFirewallTestStore(async () => {
     const ctrl = installSucceedingSandboxController();
     try {
       await prepareRunningSandbox(); // mode = disabled
 
-      _resetLogBuffer();
-      await ingestLearningFromSandbox(true);
-
-      const logs = getServerLogs();
-      const skipLog = logs.find(
-        (e) => e.message === "firewall.ingest_skipped" && e.data?.reason === "mode-not-learning",
-      );
-      assert.ok(skipLog, "Expected logInfo with reason 'mode-not-learning'");
+      const result = await ingestLearningFromSandbox(true);
+      assert.equal(result.ingested, false);
+      assert.equal(result.reason, "mode-not-learning");
     } finally {
       ctrl.restore();
     }
   });
 });
 
-test("ingestLearningFromSandbox emits logInfo with skip reason when sandbox is not running", async () => {
+test("ingestLearningFromSandbox returns skip reason when sandbox is not running", async () => {
   await withFirewallTestStore(async () => {
     await mutateMeta((meta) => {
       meta.firewall.mode = "learning";
       meta.status = "stopped";
     });
 
-    _resetLogBuffer();
-    await ingestLearningFromSandbox(true);
-
-    const logs = getServerLogs();
-    const skipLog = logs.find(
-      (e) => e.message === "firewall.ingest_skipped" && e.data?.reason === "sandbox-not-running",
-    );
-    assert.ok(skipLog, "Expected logInfo with reason 'sandbox-not-running'");
+    const result = await ingestLearningFromSandbox(true);
+    assert.equal(result.ingested, false);
+    assert.equal(result.reason, "sandbox-not-running");
   });
 });
 

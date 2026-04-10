@@ -7,7 +7,7 @@ import {
   isVercelDeployment,
 } from "@/server/env";
 import type { OpenclawPackageSpecConfig } from "@/server/env";
-import { logInfo, logWarn } from "@/server/log";
+import { logDebug, logInfo, logWarn } from "@/server/log";
 import { getProtectionBypassSecret, resolvePublicOrigin } from "@/server/public-url";
 
 // Re-export shared types so existing consumers keep working.
@@ -166,7 +166,7 @@ function checkStore(onVercel: boolean): DeploymentRequirement {
 function checkCronSecret(onVercel: boolean): DeploymentRequirement {
   const cron = getCronSecretConfig();
 
-  logInfo("deployment_contract.cron_secret_evaluated", {
+  logDebug("deployment_contract.cron_secret_evaluated", {
     onVercel,
     source: cron.source,
   });
@@ -393,7 +393,7 @@ export async function buildDeploymentContract(
 
   const ok = requirements.every((r) => r.status !== "fail");
 
-  logInfo("deployment_contract.built", {
+  logDebug("deployment_contract.built", {
     ok,
     authMode,
     storeBackend,

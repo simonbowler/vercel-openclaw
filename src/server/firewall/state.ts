@@ -5,7 +5,7 @@ import { getInitializedMeta, getStore, mutateMeta } from "@/server/store/store";
 import { learningLockKey } from "@/server/store/keyspace";
 import { applyFirewallPolicyToSandbox } from "@/server/firewall/policy";
 import { extractDomainsWithContext, groupByRegistrableDomain, normalizeDomainList } from "@/server/firewall/domains";
-import { logInfo, logWarn } from "@/server/log";
+import { logDebug, logInfo, logWarn } from "@/server/log";
 import { getSandboxController } from "@/server/sandbox/controller";
 
 const EVENT_RETENTION = 1000;
@@ -373,13 +373,13 @@ export async function ingestLearningFromSandbox(
 
   const meta = await getInitializedMeta();
   if (meta.firewall.mode !== "learning") {
-    logInfo("firewall.ingest_skipped", { operation: "ingest", reason: "mode-not-learning", mode: meta.firewall.mode, requestId: options?.requestId });
+    logDebug("firewall.ingest_skipped", { operation: "ingest", reason: "mode-not-learning", mode: meta.firewall.mode, requestId: options?.requestId });
     const outcome = makeSkipOutcome("mode-not-learning");
     await persistIngestionSkip("mode-not-learning", outcome);
     return { ingested: false, reason: "mode-not-learning", domains: [], outcome };
   }
   if (!meta.sandboxId || (meta.status !== "running" && meta.status !== "booting")) {
-    logInfo("firewall.ingest_skipped", { operation: "ingest", reason: "sandbox-not-running", status: meta.status, requestId: options?.requestId });
+    logDebug("firewall.ingest_skipped", { operation: "ingest", reason: "sandbox-not-running", status: meta.status, requestId: options?.requestId });
     const outcome = makeSkipOutcome("sandbox-not-running");
     await persistIngestionSkip("sandbox-not-running", outcome);
     return { ingested: false, reason: "sandbox-not-running", domains: [], outcome };
@@ -389,7 +389,7 @@ export async function ingestLearningFromSandbox(
     meta.firewall.lastIngestedAt &&
     Date.now() - meta.firewall.lastIngestedAt < LEARNING_INGEST_INTERVAL_MS
   ) {
-    logInfo("firewall.ingest_skipped", { operation: "ingest", reason: "throttled", lastIngestedAt: meta.firewall.lastIngestedAt, requestId: options?.requestId });
+    logDebug("firewall.ingest_skipped", { operation: "ingest", reason: "throttled", lastIngestedAt: meta.firewall.lastIngestedAt, requestId: options?.requestId });
     const outcome = makeSkipOutcome("throttled");
     await persistIngestionSkip("throttled", outcome);
     return { ingested: false, reason: "throttled", domains: [], outcome };
@@ -399,7 +399,7 @@ export async function ingestLearningFromSandbox(
   const lockKey = learningLockKey();
   const lockToken = await store.acquireLock(lockKey, 10);
   if (!lockToken) {
-    logInfo("firewall.ingest_skipped", { operation: "ingest", reason: "locked", requestId: options?.requestId });
+    logDebug("firewall.ingest_skipped", { operation: "ingest", reason: "locked", requestId: options?.requestId });
     const outcome = makeSkipOutcome("locked");
     await persistIngestionSkip("locked", outcome);
     return { ingested: false, reason: "locked", domains: [], outcome };
@@ -416,7 +416,7 @@ export async function ingestLearningFromSandbox(
     const enriched = extractDomainsWithContext(output);
     const domains = enriched.map((entry) => entry.domain);
     if (domains.length > 0) {
-      logInfo("firewall.ingest_domains_learned", {
+      logDebug("firewall.ingest_domains_learned", {
         operation: "ingest",
         count: domains.length,
         domains: enriched.map((e) => ({
@@ -512,7 +512,7 @@ export async function ingestLearningFromSandbox(
       m.firewall.lastIngestOutcome = outcome;
     });
 
-    logInfo("firewall.ingest_completed", {
+    logDebug("firewall.ingest_completed", {
       operation: "ingest",
       durationMs: outcome.durationMs,
       domainsSeenCount: outcome.domainsSeenCount,
