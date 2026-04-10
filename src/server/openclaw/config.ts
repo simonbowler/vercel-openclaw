@@ -114,12 +114,9 @@ function buildGatewayEnvShell(): string {
     '  echo \'{"event":"gateway_env.error","reason":"empty_gateway_token"}\' >&2',
     "  exit 1",
     "fi",
-    // AI_GATEWAY_API_KEY: try env first (set at create-time), fall back to
-    // disk file (written during bootstrap).  Both are needed because OpenClaw
-    // reads the env var for its auth-profiles resolution.
-    'if [ -z "${AI_GATEWAY_API_KEY:-}" ]; then',
-    `  AI_GATEWAY_API_KEY="$(cat "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}" 2>/dev/null || true)"`,
-    "fi",
+    // AI_GATEWAY_API_KEY: always read from disk file (written fresh during
+    // bootstrap/restore). The baked-in env var is stale on resume.
+    `AI_GATEWAY_API_KEY="$(cat "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}" 2>/dev/null || true)"`,
     'if [ -n "$AI_GATEWAY_API_KEY" ]; then',
     '  export AI_GATEWAY_API_KEY="$AI_GATEWAY_API_KEY"',
     '  export OPENAI_API_KEY="$AI_GATEWAY_API_KEY"',
@@ -747,13 +744,11 @@ if [ -z "\$gateway_token" ]; then
   echo '{"event":"fast_restore.error","reason":"empty_gateway_token"}' >&2
   exit 1
 fi
-# AI Gateway API key: try env first (set at create-time), fall back to
-# disk file.  Also injected via network policy transform (defense-in-depth).
-if [ -z "\${AI_GATEWAY_API_KEY:-}" ]; then
-  AI_GATEWAY_API_KEY="$(cat "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}" 2>/dev/null || true)"
-fi
+# AI Gateway API key: always read from disk file (written fresh during restore).
+# The baked-in env var from sandbox create time is stale on resume — ignore it.
+# Also injected via network policy transform (defense-in-depth).
+AI_GATEWAY_API_KEY="$(cat "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}" 2>/dev/null || true)"
 if [ -n "\$AI_GATEWAY_API_KEY" ]; then
-  (umask 077; printf '%s' "\$AI_GATEWAY_API_KEY" > "${OPENCLAW_AI_GATEWAY_API_KEY_PATH}")
   export AI_GATEWAY_API_KEY="\$AI_GATEWAY_API_KEY"
   export OPENAI_API_KEY="\$AI_GATEWAY_API_KEY"
 fi
