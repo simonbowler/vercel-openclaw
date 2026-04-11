@@ -294,6 +294,9 @@ export function buildGatewayConfig(
         },
       },
     },
+    update: {
+      checkOnStart: false,
+    },
   };
 
   config.agents = {

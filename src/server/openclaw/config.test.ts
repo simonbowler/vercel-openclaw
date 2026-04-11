@@ -106,6 +106,16 @@ test("buildGatewayConfig reads insecure auth toggle from env", () => {
   );
 });
 
+test("buildGatewayConfig disables update checks on startup", () => {
+  const config = JSON.parse(buildGatewayConfig()) as {
+    update?: {
+      checkOnStart?: boolean;
+    };
+  };
+
+  assert.equal(config.update?.checkOnStart, false);
+});
+
 test("buildGatewayConfig throws for invalid boolean env values", () => {
   withEnv(
     {
