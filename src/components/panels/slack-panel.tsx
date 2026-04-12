@@ -13,8 +13,10 @@ import {
   ChannelCopyValue,
   ChannelInfoRow,
   ChannelSecretField,
+  PortStatusRow,
   getChannelActionLabel,
 } from "@/components/panels/channel-panel-shared";
+import type { PortCheck } from "@/app/api/admin/sandbox-diag/route";
 
 type SlackPanelProps = {
   status: StatusPayload;
@@ -22,6 +24,7 @@ type SlackPanelProps = {
   runAction: RunAction;
   requestJson: RequestJson;
   preflightBlockerIds?: Set<string> | null;
+  portCheck?: PortCheck | null;
 };
 
 function getSlackPill(configured: boolean): ChannelPillModel {
@@ -97,6 +100,7 @@ export function SlackPanel({
   runAction,
   requestJson,
   preflightBlockerIds,
+  portCheck,
 }: SlackPanelProps) {
   const [signingSecret, setSigningSecret] = useState("");
   const [botToken, setBotToken] = useState("");
@@ -260,6 +264,7 @@ export function SlackPanel({
       <ChannelInfoRow label="Health">
         <code className="inline-code">Ready</code>
       </ChannelInfoRow>
+      {portCheck ? <PortStatusRow port={portCheck} /> : null}
       <div className="inline-actions">
         {oauthAvailable ? (
           <a

@@ -17,6 +17,7 @@ import type {
   LaunchVerificationPhase,
   ChannelReadiness,
 } from "@/shared/launch-verification";
+import type { SandboxDiagPayload } from "@/app/api/admin/sandbox-diag/route";
 
 type PreflightCheck = {
   id: string;
@@ -354,11 +355,37 @@ export function ChannelsPanel({
   const preflightRequestIdRef = useRef(0);
   const mountedRef = useRef(true);
 
+  /* Sandbox diagnostics state */
+  const [sandboxDiag, setSandboxDiag] = useState<SandboxDiagPayload | null>(null);
+
   const preflightSummary = summarizePreflight(preflight);
   const preflightBlockerIds =
     preflightSummary.ok === false
       ? new Set(preflightSummary.blockerIds)
       : null;
+
+  /* ── Sandbox diagnostics fetching ── */
+
+  async function refreshSandboxDiag(): Promise<void> {
+    if (status.status !== "running") {
+      setSandboxDiag(null);
+      return;
+    }
+    try {
+      const res = await fetch("/api/admin/sandbox-diag", {
+        cache: "no-store",
+        headers: { accept: "application/json" },
+      });
+      if (res.ok) {
+        const data = (await res.json()) as SandboxDiagPayload;
+        if (mountedRef.current) {
+          setSandboxDiag(data);
+        }
+      }
+    } catch {
+      // Best effort — diag is supplementary, not critical
+    }
+  }
 
   /* ── Preflight fetching ── */
 
@@ -406,11 +433,12 @@ export function ChannelsPanel({
     if (!active) return;
     const timer = window.setTimeout(() => {
       void refreshPreflight();
+      void refreshSandboxDiag();
     }, 0);
     return () => {
       window.clearTimeout(timer);
     };
-  }, [active]);
+  }, [active, status.status]);
 
   return (
     <article
@@ -430,7 +458,7 @@ export function ChannelsPanel({
           disabled={busy || refreshing}
           onClick={() => {
             setRefreshing(true);
-            void Promise.all([refresh(), refreshPreflight()])
+            void Promise.all([refresh(), refreshPreflight(), refreshSandboxDiag()])
               .finally(() => setRefreshing(false));
           }}
         >
@@ -510,6 +538,7 @@ export function ChannelsPanel({
           runAction={runAction}
           requestJson={requestJson}
           preflightBlockerIds={preflightBlockerIds}
+          portCheck={sandboxDiag?.ports.find((p) => p.label === "Slack") ?? null}
         />
         <TelegramPanel
           status={status}
@@ -517,6 +546,7 @@ export function ChannelsPanel({
           runAction={runAction}
           requestJson={requestJson}
           preflightBlockerIds={preflightBlockerIds}
+          portCheck={sandboxDiag?.ports.find((p) => p.label === "Telegram") ?? null}
         />
         <DiscordPanel
           status={status}

@@ -1,12 +1,12 @@
 {
   "version": 3,
-  "generatedAt": "2026-04-02T18:48:41.269Z",
+  "generatedAt": "2026-04-12T19:17:54.931Z",
   "roots": [
     "src/app/api/admin",
     "src/app/api/firewall",
     "src/app/api/debug"
   ],
-  "discoveredRouteCount": 41,
+  "discoveredRouteCount": 43,
   "unauthenticatedRouteCount": 0,
   "violationCount": 0,
   "routes": [
@@ -28,6 +28,10 @@
     },
     {
       "method": "GET",
+      "path": "/api/admin/faq"
+    },
+    {
+      "method": "GET",
       "path": "/api/admin/launch-verify"
     },
     {
@@ -41,6 +45,10 @@
     {
       "method": "GET",
       "path": "/api/admin/prepare-restore"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/sandbox-diag"
     },
     {
       "method": "GET",

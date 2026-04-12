@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { ChannelPill } from "@/components/ui/badge";
 import { ConnectabilityNotice } from "@/components/panels/connectability-notice";
 import type { ChannelConnectability } from "@/shared/channel-connectability";
+import type { PortCheck } from "@/app/api/admin/sandbox-diag/route";
 
 export type SupportedChannelName = "slack" | "telegram" | "discord" | "whatsapp";
 
@@ -228,6 +229,38 @@ export function ChannelSecretField({
       </div>
       {validationMessage ? (
         <p className="channel-validation-error">{validationMessage}</p>
+      ) : null}
+    </div>
+  );
+}
+
+const PORT_STATUS_DOTS: Record<PortCheck["status"], { color: string; label: string }> = {
+  ok: { color: "var(--success)", label: "Ready" },
+  warn: { color: "var(--warning)", label: "Starting" },
+  fail: { color: "var(--error)", label: "Down" },
+  unchecked: { color: "var(--foreground-subtle)", label: "Unknown" },
+};
+
+export function PortStatusRow({ port }: { port: PortCheck | null | undefined }) {
+  if (!port) return null;
+  const dot = PORT_STATUS_DOTS[port.status];
+  return (
+    <div className="port-status-row" data-port-status={port.status}>
+      <div className="port-status-header">
+        <span
+          className="port-status-dot"
+          style={{ background: dot.color }}
+          aria-label={dot.label}
+        />
+        <span className="field-label">
+          Port {port.port}
+        </span>
+        <span className="port-status-message">
+          {port.message}
+        </span>
+      </div>
+      {port.tip ? (
+        <p className="port-status-tip">{port.tip}</p>
       ) : null}
     </div>
   );

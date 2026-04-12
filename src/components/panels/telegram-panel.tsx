@@ -12,8 +12,10 @@ import {
   ChannelCopyValue,
   ChannelInfoRow,
   ChannelSecretField,
+  PortStatusRow,
   getChannelActionLabel,
 } from "@/components/panels/channel-panel-shared";
+import type { PortCheck } from "@/app/api/admin/sandbox-diag/route";
 
 type TelegramPanelProps = {
   status: StatusPayload;
@@ -21,6 +23,7 @@ type TelegramPanelProps = {
   runAction: RunAction;
   requestJson: RequestJson;
   preflightBlockerIds?: Set<string> | null;
+  portCheck?: PortCheck | null;
 };
 
 function getTelegramPill(args: {
@@ -58,6 +61,7 @@ export function TelegramPanel({
   runAction,
   requestJson,
   preflightBlockerIds,
+  portCheck,
 }: TelegramPanelProps) {
   const [botToken, setBotToken] = useState("");
   const [showToken, setShowToken] = useState(false);
@@ -192,6 +196,7 @@ export function TelegramPanel({
               })}
             </code>
           </ChannelInfoRow>
+          {portCheck ? <PortStatusRow port={portCheck} /> : null}
           <div className="inline-actions">
             <button
               className="button secondary"
