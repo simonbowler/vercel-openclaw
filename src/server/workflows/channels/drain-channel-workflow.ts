@@ -382,7 +382,7 @@ async function forwardToNativeHandler(
   payload: unknown,
   meta: import("@/shared/types").SingleMeta,
   getSandboxDomain: (port?: number) => Promise<string>,
-): Promise<{ ok: boolean; status: number }> {
+): Promise<{ ok: boolean; status: number; durationMs: number; bodyLength: number }> {
   const { OPENCLAW_TELEGRAM_WEBHOOK_PORT } = await import("@/server/openclaw/config");
 
   let forwardUrl: string;
@@ -418,11 +418,13 @@ async function forwardToNativeHandler(
 
   console.log(`[DIAG] native_forward_attempt url=${forwardUrl} channel=${channel} sandboxId=${meta.sandboxId} hasSecret=${Boolean(headers["x-telegram-bot-api-secret-token"])}`);
 
+  const t0 = Date.now();
   const response = await fetch(forwardUrl, {
     method: "POST",
     headers,
     body: JSON.stringify(payload),
   });
+  const durationMs = Date.now() - t0;
 
   // Always capture response body for diagnostics.
   let responseBody: string | null = null;
@@ -430,7 +432,8 @@ async function forwardToNativeHandler(
     responseBody = await response.text();
   } catch { /* best effort */ }
 
-  console.log(`[DIAG] native_forward_response status=${response.status} ok=${response.ok} bodyLength=${responseBody?.length ?? 0} body=${(responseBody ?? "").slice(0, 300)}`);
+  const bodyLength = responseBody?.length ?? 0;
+  console.log(`[DIAG] native_forward_response status=${response.status} ok=${response.ok} durationMs=${durationMs} bodyLength=${bodyLength} body=${(responseBody ?? "").slice(0, 300)}`);
 
   if (!response.ok) {
     logWarn("channels.native_forward_error_response", {
@@ -442,12 +445,12 @@ async function forwardToNativeHandler(
     });
   }
 
-  return { ok: response.ok, status: response.status };
+  return { ok: response.ok, status: response.status, durationMs, bodyLength };
 }
 
-const RETRYING_FORWARD_MAX_ATTEMPTS = 6;
-const RETRYING_FORWARD_RETRY_INTERVAL_MS = 1_000;
-const RETRYING_FORWARD_TIMEOUT_MS = 30_000;
+const RETRYING_FORWARD_MAX_ATTEMPTS = 20;
+const RETRYING_FORWARD_RETRY_INTERVAL_MS = 2_000;
+const RETRYING_FORWARD_TIMEOUT_MS = 45_000;
 
 /**
  * Collapsed probe + forward: sends the real payload directly to the native
@@ -482,8 +485,21 @@ async function forwardToNativeHandlerWithRetry(
       // Proxy-level failures (502/503/504): handler not listening yet. Safe to retry.
       // Handler-not-ready (401/404): native handler is listening at TCP level
       // but webhook route or secret validation is not yet initialized.
-      if (result.status >= 502 || result.status === 401 || result.status === 404) {
-        const reason = result.status >= 502 ? "proxy-error" : "handler-not-ready";
+      //
+      // Swallowed by base server (200 with empty body in <100ms): some OpenClaw
+      // versions return a generic 200 from the base HTTP server on port 8787
+      // before the Telegram webhook handler registers its route.  The real
+      // handler processes the AI request (takes seconds) and returns a body.
+      // A near-instant 200 with no body means the payload was silently
+      // discarded.  Safe to retry — the handler never saw it.
+      const swallowed = channel === "telegram"
+        && result.status === 200
+        && result.durationMs < 100
+        && result.bodyLength === 0;
+      if (result.status >= 502 || result.status === 401 || result.status === 404 || swallowed) {
+        const reason = swallowed ? "swallowed-by-base-server"
+          : result.status >= 502 ? "proxy-error"
+          : "handler-not-ready";
         const entry = { attempt, reason, status: result.status };
         retries.push(entry);
         logInfo("channels.native_forward_retry", {
@@ -491,6 +507,8 @@ async function forwardToNativeHandlerWithRetry(
           attempt,
           status: result.status,
           reason,
+          durationMs: result.durationMs,
+          bodyLength: result.bodyLength,
         });
         if (attempt < RETRYING_FORWARD_MAX_ATTEMPTS && Date.now() < deadline) {
           await new Promise((r) => setTimeout(r, RETRYING_FORWARD_RETRY_INTERVAL_MS));

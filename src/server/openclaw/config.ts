@@ -131,6 +131,12 @@ function buildGatewayEnvShell(): string {
     `export OPENCLAW_GATEWAY_PORT="${OPENCLAW_PORT}"`,
     'export OPENCLAW_GATEWAY_TOKEN="$gateway_token"',
     `export OPENAI_BASE_URL="${AI_GATEWAY_BASE_URL}"`,
+    // Limit provider discovery to vercel-ai-gateway only.  OpenClaw v2026.4.11+
+    // runs prewarmConfiguredPrimaryModel before channel startup, which discovers
+    // all 27 provider plugins sequentially.  Each plugin's catalog fetch can
+    // time out, blocking Telegram/Slack startup by 28+ seconds.  Restricting
+    // discovery to the single provider we use eliminates the delay.
+    'export OPENCLAW_TEST_ONLY_PROVIDER_PLUGIN_IDS="vercel-ai-gateway"',
     `export NODE_OPTIONS="\${NODE_OPTIONS:-} --require=${OPENCLAW_NET_LEARN_PATH}"`,
   ].join("\n");
 }
@@ -762,6 +768,7 @@ export OPENCLAW_CONFIG_PATH="${OPENCLAW_CONFIG_PATH}"
 export OPENCLAW_GATEWAY_PORT="${OPENCLAW_PORT}"
 export OPENCLAW_GATEWAY_TOKEN="\$gateway_token"
 export OPENAI_BASE_URL="https://ai-gateway.vercel.sh/v1"
+export OPENCLAW_TEST_ONLY_PROVIDER_PLUGIN_IDS="vercel-ai-gateway"
 ${buildNetLearnWriteShell()}
 export NODE_OPTIONS="\${NODE_OPTIONS:-} --require=${OPENCLAW_NET_LEARN_PATH}"
 # Integrity check: fail fast if bundled peer dependencies are missing.
