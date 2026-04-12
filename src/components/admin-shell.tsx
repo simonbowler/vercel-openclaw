@@ -12,6 +12,7 @@ import { ChannelsPanel } from "@/components/panels/channels-panel";
 import { SshPanel } from "@/components/panels/ssh-panel";
 import { LogsPanel } from "@/components/panels/logs-panel";
 import { SnapshotsPanel } from "@/components/panels/snapshots-panel";
+import { FaqPanel } from "@/components/panels/faq-panel";
 import {
   buildJsonRouteErrorMessage,
   type JsonRouteErrorPayload,
@@ -40,6 +41,7 @@ const TABS = [
   { id: "terminal", label: "Terminal" },
   { id: "logs", label: "Logs" },
   { id: "snapshots", label: "Snapshots" },
+  { id: "faq", label: "FAQ" },
 ] as const;
 
 export function createAdminActionRequestId(): string {
@@ -567,6 +569,11 @@ export function AdminShell({
                     requestJson={requestJson}
                     readDeps={readDeps}
                   />
+                </section>
+              )}
+              {isMounted("faq") && (
+                <section {...getPanelProps("faq")}>
+                  <FaqPanel active={activeTab === "faq"} readDeps={readDeps} />
                 </section>
               )}
             </>

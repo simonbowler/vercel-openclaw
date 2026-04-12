@@ -1171,6 +1171,137 @@ a[href]:focus-visible {
   word-break: break-all;
 }
 
+.faq-banner {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid rgba(245, 166, 35, 0.24);
+  border-radius: 8px;
+  background: var(--warning-surface);
+  color: var(--warning);
+  font-size: 13px;
+}
+
+.faq-panel-intro {
+  margin-top: 8px;
+}
+
+.faq-content {
+  margin-top: 20px;
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.faq-content > :first-child {
+  margin-top: 0;
+}
+
+.faq-content > :last-child {
+  margin-bottom: 0;
+}
+
+.faq-content h1,
+.faq-content h2,
+.faq-content h3 {
+  margin-top: 28px;
+  margin-bottom: 10px;
+  letter-spacing: 0;
+}
+
+.faq-content h1 {
+  font-size: 1.5rem;
+  line-height: 1.15;
+}
+
+.faq-content h2 {
+  font-size: 1.1rem;
+  line-height: 1.25;
+}
+
+.faq-content h3 {
+  font-size: 0.95rem;
+}
+
+.faq-content p,
+.faq-content ul,
+.faq-content ol,
+.faq-content blockquote,
+.faq-content pre,
+.faq-content table {
+  margin: 0 0 16px;
+}
+
+.faq-content ul,
+.faq-content ol {
+  padding-left: 20px;
+}
+
+.faq-content li + li {
+  margin-top: 6px;
+}
+
+.faq-content a {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.faq-content code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.faq-content :not(pre) > code {
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+}
+
+.faq-content pre {
+  overflow-x: auto;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+}
+
+.faq-content pre code {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.faq-content blockquote {
+  padding-left: 12px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--foreground-muted);
+}
+
+.faq-content hr {
+  margin: 24px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.faq-content table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+}
+
+.faq-content th,
+.faq-content td {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.faq-content th {
+  background: var(--background);
+  font-weight: 600;
+}
+
 /* ────── Launch verification ────── */
 
 .launch-phases {
