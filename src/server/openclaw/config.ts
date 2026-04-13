@@ -138,6 +138,9 @@ function buildGatewayEnvShell(): string {
     // time out, blocking Telegram/Slack startup by 28+ seconds.  Restricting
     // discovery to the single provider we use eliminates the delay.
     'export OPENCLAW_TEST_ONLY_PROVIDER_PLUGIN_IDS="vercel-ai-gateway"',
+    // Skip prewarmConfiguredPrimaryModel — sandbox network isn't ready
+    // during early boot, causing a 17s model discovery timeout.
+    'export OPENCLAW_AGENT_RUNTIME="none"',
     `export NODE_OPTIONS="\${NODE_OPTIONS:-} --require=${OPENCLAW_NET_LEARN_PATH}"`,
   ].join("\n");
 }
@@ -770,6 +773,14 @@ export OPENCLAW_GATEWAY_PORT="${OPENCLAW_PORT}"
 export OPENCLAW_GATEWAY_TOKEN="\$gateway_token"
 export OPENAI_BASE_URL="https://ai-gateway.vercel.sh/v1"
 export OPENCLAW_TEST_ONLY_PROVIDER_PLUGIN_IDS="vercel-ai-gateway"
+# Skip prewarmConfiguredPrimaryModel on startup.  This function discovers
+# model providers before channel startup, but the sandbox network stack
+# isn't ready for outbound connections during the first ~15s of boot.
+# The discovery fetch hangs until timeout, blocking Telegram/Slack
+# handler registration.  Setting OPENCLAW_AGENT_RUNTIME=none makes the
+# prewarm return immediately.  Chat completions are unaffected — they
+# resolve the model at request time, not at startup.
+export OPENCLAW_AGENT_RUNTIME="none"
 chmod +x "${OPENCLAW_DIAG_SCRIPT_PATH}" 2>/dev/null || true
 ${buildNetLearnWriteShell()}
 export NODE_OPTIONS="\${NODE_OPTIONS:-} --require=${OPENCLAW_NET_LEARN_PATH}"
