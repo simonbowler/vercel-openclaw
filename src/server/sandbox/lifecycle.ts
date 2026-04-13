@@ -171,6 +171,88 @@ const TOKEN_REFRESH_LOCK_WAIT_MS = 5_000;
 const TOKEN_REFRESH_LOCK_POLL_MS = 500;
 
 // ---------------------------------------------------------------------------
+// Slack credential validation for restore
+// ---------------------------------------------------------------------------
+
+/** Definitive Slack auth errors that mean the token is permanently invalid. */
+const SLACK_DEFINITIVE_AUTH_ERRORS = [
+  "invalid_auth",
+  "token_revoked",
+  "account_inactive",
+  "token_expired",
+  "org_login_required",
+];
+
+const SLACK_RESTORE_VALIDATION_TIMEOUT_MS = 5_000;
+
+type SlackRestoreCredentials = { botToken: string; signingSecret: string };
+
+/**
+ * Validate Slack credentials before writing them into the gateway config.
+ *
+ * - If config is null/unconfigured, returns null (no Slack).
+ * - On success, returns `{ botToken, signingSecret }`.
+ * - On definitive auth failure (`invalid_auth`, `token_revoked`, etc.),
+ *   logs a warning, writes `lastError` to metadata, and returns null so
+ *   Slack is omitted from the gateway config (preventing a startup crash).
+ * - On timeout or transient errors, returns the credentials unchanged
+ *   (don't break Slack just because their API is slow or flaky).
+ */
+async function validateSlackCredentialsForRestore(
+  slackConfig: { botToken: string; signingSecret: string; [key: string]: unknown } | null | undefined,
+): Promise<SlackRestoreCredentials | null> {
+  if (!slackConfig) return null;
+
+  try {
+    const { fetchSlackAuthIdentity } = await import("@/server/channels/slack/auth");
+    // Use a custom fetch wrapper with a shorter timeout for restore
+    await fetchSlackAuthIdentity(slackConfig.botToken, (url, init) =>
+      globalThis.fetch(url, {
+        ...init,
+        signal: AbortSignal.timeout(SLACK_RESTORE_VALIDATION_TIMEOUT_MS),
+      }),
+    );
+    // Validation passed — token is valid
+    return { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret };
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+
+    // Check if this is a definitive auth failure
+    const isDefinitiveFailure = SLACK_DEFINITIVE_AUTH_ERRORS.some(
+      (code) => errorMessage.includes(code),
+    );
+
+    if (isDefinitiveFailure) {
+      logWarn("sandbox.restore.slack_credentials_invalid", {
+        error: errorMessage,
+        action: "omitting_slack_from_config",
+      });
+
+      // Persist the error to metadata so the admin UI shows the problem
+      try {
+        await mutateMeta((meta) => {
+          if (meta.channels.slack) {
+            meta.channels.slack.lastError = `Token validation failed during restore: ${errorMessage}`;
+          }
+        });
+      } catch {
+        // Best effort — don't let meta write failure block the restore
+      }
+
+      return null;
+    }
+
+    // Transient error or timeout — include the credentials anyway.
+    // Don't break Slack just because their API is temporarily unreachable.
+    logInfo("sandbox.restore.slack_validation_inconclusive", {
+      error: errorMessage,
+      action: "including_slack_credentials",
+    });
+    return { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Gateway restart helper
 // ---------------------------------------------------------------------------
 
@@ -1505,6 +1587,20 @@ export async function touchRunningSandbox(): Promise<SingleMeta> {
     return markSandboxUnavailable(`sandbox lookup failed: ${message}`, sandboxId);
   }
 
+  // If the SDK says the sandbox is no longer running (e.g. platform timeout),
+  // reconcile metadata immediately instead of attempting timeout extension.
+  if (sandbox.status !== "running") {
+    logInfo("sandbox.heartbeat_stale_detected", {
+      sandboxId,
+      sdkStatus: sandbox.status,
+      metaStatus: meta.status,
+    });
+    return markSandboxUnavailable(
+      `heartbeat detected sandbox status: ${sandbox.status}`,
+      sandboxId,
+    );
+  }
+
   const targetSleepAfterMs = getSandboxSleepAfterMs();
 
   try {
@@ -1540,6 +1636,39 @@ export async function touchRunningSandbox(): Promise<SingleMeta> {
         `extend timeout failed: ${message}`,
         sandboxId,
       );
+    }
+  }
+
+  // Internal gateway liveness check — runs curl inside the sandbox to detect
+  // a dead gateway process without hitting the external URL (which could wake
+  // a sleeping sandbox).  Only safe because we confirmed sandbox.status ===
+  // "running" above.  Skipped in test mode (FakeSandboxHandle doesn't have
+  // curl and would produce false negatives).
+  if (process.env.NODE_ENV !== "test") {
+    try {
+      const liveness = await sandbox.runCommand("sh", [
+        "-c",
+        "curl -sf -o /dev/null -w '%{http_code}' --max-time 3 http://localhost:3000/",
+      ]);
+      const stdout = await liveness.output("stdout");
+      const httpCode = parseInt(stdout.trim(), 10);
+      if (liveness.exitCode !== 0 || !httpCode || httpCode === 0) {
+        logWarn("sandbox.heartbeat_gateway_dead", {
+          sandboxId,
+          exitCode: liveness.exitCode,
+          httpCode,
+        });
+        return markSandboxUnavailable(
+          `heartbeat gateway liveness failed (exit ${liveness.exitCode}, http ${httpCode})`,
+          sandboxId,
+        );
+      }
+    } catch (error) {
+      // Don't mark unavailable on runCommand errors — could be transient
+      logWarn("sandbox.heartbeat_liveness_error", {
+        sandboxId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -1622,6 +1751,7 @@ export async function reconcileStaleRunningStatus(): Promise<SingleMeta> {
     return mutateMeta((next) => {
       next.status = "stopped";
       next.lastError = null;
+      next.lastGatewayProbeReady = false;
     });
   } catch {
     // get() throws when sandbox no longer exists — it's definitely stopped
@@ -1633,6 +1763,7 @@ export async function reconcileStaleRunningStatus(): Promise<SingleMeta> {
     return mutateMeta((next) => {
       next.status = "stopped";
       next.lastError = null;
+      next.lastGatewayProbeReady = false;
     });
   }
 }
@@ -2486,11 +2617,12 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
 
       const assetSyncStart = Date.now();
       const slackConfig = latest.channels.slack;
+      const validatedSlackCreds = await validateSlackCredentialsForRestore(slackConfig);
       await syncRestoreAssetsIfNeeded(sandbox, {
         origin,
         telegramBotToken: latest.channels.telegram?.botToken,
         telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
-        slackCredentials: slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
+        slackCredentials: validatedSlackCreds ?? undefined,
         whatsappConfig: toWhatsAppGatewayConfig(latest.channels.whatsapp),
       });
       const assetSyncMs = Date.now() - assetSyncStart;
@@ -2599,14 +2731,14 @@ async function createAndBootstrapSandboxWithinLifecycleLock(
     const latest = await getInitializedMeta();
     // Reuse the already-resolved credential for firewall policy transforms.
     const apiKey = credential?.token;
-    const slackCfg = latest.channels.slack;
+    const slackCfg = await validateSlackCredentialsForRestore(latest.channels.slack);
     const setupResult = await setupOpenClaw(sandbox, {
       gatewayToken: latest.gatewayToken,
       apiKey,
       proxyOrigin: origin,
       telegramBotToken: latest.channels.telegram?.botToken,
       telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
-      slackCredentials: slackCfg ? { botToken: slackCfg.botToken, signingSecret: slackCfg.signingSecret } : undefined,
+      slackCredentials: slackCfg ?? undefined,
       whatsappConfig: toWhatsAppGatewayConfig(latest.channels.whatsapp),
       progress,
     });
@@ -2807,7 +2939,9 @@ async function _restoreSandboxFromSnapshot(
     markPhase("getMeta2");
     const latest = await getInitializedMeta();
     logInfo("sandbox.restore.timing", { phase: "getMeta2", ms: elapsedSince("getMeta2") });
-    const slackConfig = latest.channels.slack;
+    markPhase("slackValidation");
+    const slackConfig = await validateSlackCredentialsForRestore(latest.channels.slack);
+    logPhase("slackValidation", { ms: elapsedSince("slackValidation"), hasSlack: slackConfig !== null });
 
     // Config JSON for the gateway — passed via env, written locally by script.
     // The config contains the same data that would be in openclaw.json on disk
@@ -2935,9 +3069,7 @@ async function _restoreSandboxFromSnapshot(
     const currentConfigHashInput: GatewayConfigHashInput = {
       telegramBotToken: latest.channels.telegram?.botToken,
       telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
-      slackCredentials: slackConfig
-        ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret }
-        : undefined,
+      slackCredentials: slackConfig ?? undefined,
       whatsappConfig: toWhatsAppGatewayConfig(latest.channels.whatsapp),
     };
     const currentConfigHash = computeGatewayConfigHash(currentConfigHashInput);
@@ -2974,7 +3106,7 @@ async function _restoreSandboxFromSnapshot(
           proxyOrigin: origin,
           telegramBotToken: latest.channels.telegram?.botToken,
           telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
-          slackCredentials: slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
+          slackCredentials: slackConfig ?? undefined,
           whatsappConfig: toWhatsAppGatewayConfig(latest.channels.whatsapp),
         }),
       );
@@ -3367,7 +3499,7 @@ async function _restoreSandboxFromSnapshot(
         origin,
         telegramBotToken: latest.channels.telegram?.botToken,
         telegramWebhookSecret: latest.channels.telegram?.webhookSecret,
-        slackCredentials: slackConfig ? { botToken: slackConfig.botToken, signingSecret: slackConfig.signingSecret } : undefined,
+        slackCredentials: slackConfig ?? undefined,
         whatsappConfig: toWhatsAppGatewayConfig(latest.channels.whatsapp),
       }).then(async (result) => {
         await mutateMeta((m) => {

@@ -101,6 +101,17 @@ export async function GET(request: Request): Promise<Response> {
       ) {
         responseMeta = await reconcileStaleRunningStatus();
       }
+
+      // When the cached gateway probe is older than 2x the heartbeat
+      // interval, the heartbeat may have stopped running.  Reconcile so
+      // the UI doesn't show a stale "running" status indefinitely.
+      if (
+        responseMeta.status === "running" &&
+        gatewayCheckedAt != null &&
+        Date.now() - gatewayCheckedAt > sleepConfig.heartbeatIntervalMs * 2
+      ) {
+        responseMeta = await reconcileStaleRunningStatus();
+      }
     }
 
     const restoreAttestation = buildRestoreTargetAttestation(responseMeta);
